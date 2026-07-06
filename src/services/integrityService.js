@@ -28,3 +28,11 @@ export function findMissingInfo(individuals) {
   const missingMandal = individuals.filter((ind) => !ind.mandal);
   return { missingPhone, missingMandal };
 }
+
+/** Members that belong to a household but have a blank `area` — the exact
+ * set the 1.1 backfill (`backfillMemberAreas`) targets. Standalone contacts
+ * (no `householdId`) are excluded: they have nowhere to inherit an area
+ * from, so a blank area on them isn't a fixable inconsistency here. */
+export function findMissingAreaInHousehold(individuals) {
+  return individuals.filter((ind) => ind.householdId && (!ind.area || !String(ind.area).trim()));
+}

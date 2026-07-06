@@ -43,7 +43,7 @@ const emptyForm = {
   samparkKaryakartaName: "", samparkKaryakartaNumber: "",
 };
 
-export default function IndividualForm({ individual, onSubmit, onCancel, withinHousehold = false }) {
+export default function IndividualForm({ individual, onSubmit, onCancel, withinHousehold = false, householdArea = "" }) {
   const isEdit = Boolean(individual);
   const { mandals } = useAreasAndMandals();
   const [form, setForm] = useState(() =>
@@ -106,7 +106,11 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       ...form,
       mobile: form.mobile.replace(/\D/g, ""),
       // Skipped fields shouldn't linger with stale/default values.
-      area: showArea ? form.area : "",
+      // Inside a household, Area is never asked (the field is hidden) but the
+      // member should still inherit the household's Area rather than saving
+      // blank — that's the 1.1 fix. Standalone: use whatever was picked (if
+      // this Mandal asks for Area at all), else blank.
+      area: withinHousehold ? householdArea : showArea ? form.area : "",
       dob: showDob ? form.dob : "",
       anniversary: showAnniversary ? form.anniversary : "",
       relation: showRelation ? form.relation : "member",

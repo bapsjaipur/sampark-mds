@@ -3,7 +3,7 @@
 // (canonical hook; `useAuth` is exported as an alias so this line barely changed).
 import { useEffect, useMemo, useState, useCallback } from "react";
 import {
-  collection, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, query, orderBy,
+  collection, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, query, orderBy, limit,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useToast } from "../contexts/ToastContext";
@@ -12,22 +12,43 @@ import { logActivity } from "../lib/activityLog";
 import { deleteHouseholdCascade } from "../services/householdService";
 import { friendlyFirestoreError } from "../lib/firestoreErrorMessage";
 
-export function useHouseholds() {
+/**
+ * @param {{ pageSize?: number }} [opts] — pass a pageSize (e.g. 20) to
+ *   paginate: a single real-time listener whose `limit` grows by pageSize
+ *   each `loadMore()`. Called with NO args (the default), it subscribes to
+ *   the whole collection exactly as before — so every non-list consumer
+ *   (HouseholdDetailPage's find-by-id, Batches/Events area lists) is
+ *   unaffected. See PHASE18-NOTES 1.4.
+ */
+export function useHouseholds({ pageSize } = {}) {
   const [households, setHouseholds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // null → no limit (full load, backward-compatible). A number → paginated.
+  const [limitCount, setLimitCount] = useState(pageSize || null);
+  const [hasMore, setHasMore] = useState(false);
   const { showToast } = useToast();
   const { volunteer } = useAuth();
 
   useEffect(() => {
-    const q = query(collection(db, "households"), orderBy("updatedAt", "desc"));
+    let q = query(collection(db, "households"), orderBy("updatedAt", "desc"));
+    if (limitCount) q = query(q, limit(limitCount));
     const unsub = onSnapshot(
       q,
-      (snap) => { setHouseholds(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); setLoading(false); },
+      (snap) => {
+        setHouseholds(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        // A full page came back → there may be more beyond it.
+        setHasMore(limitCount ? snap.size === limitCount : false);
+        setLoading(false);
+      },
       (err) => { console.error(err); setError(err); setLoading(false); showToast({ type: "error", message: friendlyFirestoreError(err, "households") }); }
     );
     return unsub;
-  }, [showToast]);
+  }, [showToast, limitCount]);
+
+  const loadMore = useCallback(() => {
+    if (pageSize) setLimitCount((c) => (c || 0) + pageSize);
+  }, [pageSize]);
 
   const createHousehold = useCallback(
     async (data) => {
@@ -89,7 +110,7 @@ export function useHouseholds() {
     [households, showToast, volunteer]
   );
 
-  return { households, loading, error, createHousehold, updateHousehold, deleteHousehold };
+  return { households, loading, error, hasMore, loadMore, createHousehold, updateHousehold, deleteHousehold };
 }
 
 export function useFilteredHouseholds(households, { area, searchTerm } = {}) {

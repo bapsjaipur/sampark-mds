@@ -122,7 +122,7 @@ export default function HouseholdDetailPage() {
       </Modal>
 
       <Modal open={memberModal.open} onClose={() => setMemberModal({ open: false, individual: null })} title={memberModal.individual ? "Edit member" : "Add family member"}>
-        <IndividualForm individual={memberModal.individual} onSubmit={handleMemberSubmit} onCancel={() => setMemberModal({ open: false, individual: null })} withinHousehold />
+        <IndividualForm individual={memberModal.individual} onSubmit={handleMemberSubmit} onCancel={() => setMemberModal({ open: false, individual: null })} withinHousehold householdArea={household.area || ""} />
       </Modal>
 
       <Modal open={linkModalOpen} onClose={() => setLinkModalOpen(false)} title="Link an existing contact">

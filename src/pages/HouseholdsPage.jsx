@@ -19,9 +19,11 @@ import { Card } from "../components/ui/Card";
 import { Select } from "../components/ui/Input";
 import { useToast } from "../contexts/ToastContext";
 
+const PAGE_SIZE = 20;
+
 export default function HouseholdsPage() {
-  const { households, loading, createHousehold } = useHouseholds();
-  const { mandals } = useAreasAndMandals();
+  const { households, loading, hasMore, loadMore, createHousehold } = useHouseholds({ pageSize: PAGE_SIZE });
+  const { areas: allAreas, mandals } = useAreasAndMandals();
   const { showToast } = useToast();
   const [areaFilter, setAreaFilter] = useState("");
   const [mandalFilter, setMandalFilter] = useState("");
@@ -38,7 +40,14 @@ export default function HouseholdsPage() {
   const filteredByHook = useFilteredHouseholds(households, { area: areaFilter, searchTerm: localSearch });
   const filtered = useMemo(() => mandalFilter ? filteredByHook.filter((h) => h.mandal === mandalFilter) : filteredByHook, [filteredByHook, mandalFilter]);
 
-  const areas = useMemo(() => [...new Set(households.map((h) => h.area).filter(Boolean))].sort(), [households]);
+  // Sourced from the reference collection (not loaded households) so the
+  // filter stays complete under pagination — loaded pages may not contain
+  // every area. Normalized to plain strings (useAreasAndMandals yields
+  // {name} objects; DEFAULT_AREAS may be strings).
+  const areas = useMemo(
+    () => [...new Set(allAreas.map((a) => (typeof a === "string" ? a : a.name)).filter(Boolean))].sort(),
+    [allAreas]
+  );
 
   const primaryNameByHousehold = useMemo(() => {
     const map = new Map();
@@ -77,7 +86,7 @@ export default function HouseholdsPage() {
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-slate-900 tracking-tight">Households</h1>
-          <p className="text-sm text-slate-400">{households.length} households on file</p>
+          <p className="text-sm text-slate-400">{households.length}{hasMore ? "+" : ""} households loaded</p>
         </div>
         <div className="flex items-center gap-2">
           <ExportButtons rows={individuals} label="contacts" />
@@ -154,6 +163,14 @@ export default function HouseholdsPage() {
               </Card>
             ))}
           </div>
+          {hasMore && (
+            <div className="mt-5 flex flex-col items-center gap-1">
+              <Button variant="secondary" onClick={loadMore}>Load more households</Button>
+              {(areaFilter || mandalFilter || localSearch) && (
+                <p className="text-xs text-slate-400">Filters apply to loaded households only — load more to search the rest.</p>
+              )}
+            </div>
+          )}
         </>
       )}
 

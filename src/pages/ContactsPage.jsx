@@ -19,8 +19,10 @@ import { Avatar } from "../components/ui/Avatar";
 import { Badge } from "../components/ui/Badge";
 import { useToast } from "../contexts/ToastContext";
 
+const PAGE_SIZE = 20;
+
 export default function ContactsPage() {
-  const { contacts, loading, createContact, updateContact, deleteContact } = useAllContacts();
+  const { contacts, loading, hasMore, loadMore, createContact, updateContact, deleteContact } = useAllContacts({ pageSize: PAGE_SIZE });
   const { areas, mandals } = useAreasAndMandals();
   const { showToast } = useToast();
   const [search, setSearch] = useState("");
@@ -94,7 +96,7 @@ export default function ContactsPage() {
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-slate-900 tracking-tight">All Contacts</h1>
-          <p className="text-sm text-slate-400">{contacts.length} people on file \u00b7 {contacts.filter((c) => !c.householdId).length} not yet grouped into a household</p>
+          <p className="text-sm text-slate-400">{contacts.length}{hasMore ? "+" : ""} people loaded \u00b7 {contacts.filter((c) => !c.householdId).length} not yet grouped into a household</p>
         </div>
         <div className="flex items-center gap-2">
           <ExportButtons rows={contacts} label="all-contacts" />
@@ -173,6 +175,15 @@ export default function ContactsPage() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {!loading && hasMore && (
+        <div className="mt-5 flex flex-col items-center gap-1">
+          <Button variant="secondary" onClick={loadMore}>Load more contacts</Button>
+          {(search || mandalFilter || areaFilter || householdFilter) && (
+            <p className="text-xs text-slate-400">Filters and search apply to loaded contacts only — load more to search the rest.</p>
+          )}
         </div>
       )}
 

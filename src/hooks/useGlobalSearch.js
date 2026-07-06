@@ -4,9 +4,17 @@ import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
 import { db } from "../lib/firebase";
 
-export function useGlobalSearch(searchTerm, households) {
+// `householdsHint` (optional) is a list the caller already has loaded — used
+// only as an immediate fallback before this hook's own full household load
+// resolves. Since HouseholdsPage now paginates (1.4), search must NOT rely on
+// that partial list: on first search it lazily loads the *entire* households
+// collection itself (same pattern it already uses for individuals), so global
+// search stays global regardless of how many list pages are loaded.
+export function useGlobalSearch(searchTerm, householdsHint = []) {
   const [allIndividuals, setAllIndividuals] = useState([]);
+  const [allHouseholds, setAllHouseholds] = useState([]);
   const [loaded, setLoaded] = useState(false);
+  const [householdsLoaded, setHouseholdsLoaded] = useState(false);
 
   useEffect(() => {
     if (!searchTerm?.trim() || loaded) return;
@@ -17,6 +25,20 @@ export function useGlobalSearch(searchTerm, households) {
     });
     return unsub;
   }, [searchTerm, loaded]);
+
+  useEffect(() => {
+    if (!searchTerm?.trim() || householdsLoaded) return;
+    const q = query(collection(db, "households"), orderBy("updatedAt", "desc"));
+    const unsub = onSnapshot(q, (snap) => {
+      setAllHouseholds(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setHouseholdsLoaded(true);
+    });
+    return unsub;
+  }, [searchTerm, householdsLoaded]);
+
+  // Prefer the hook's own full load once it's in; until then, fall back to the
+  // caller's hint so results aren't empty for the first frame.
+  const households = householdsLoaded ? allHouseholds : householdsHint;
 
   const householdsById = useMemo(() => {
     const map = new Map();
