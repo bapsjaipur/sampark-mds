@@ -1,0 +1,45 @@
+{
+  "indexes": [
+    { "collectionGroup": "individuals", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "mandal", "order": "ASCENDING" },
+      { "fieldPath": "dobMonthDay", "order": "ASCENDING" }
+    ]},
+    { "collectionGroup": "individuals", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "mandal", "order": "ASCENDING" },
+      { "fieldPath": "anniversaryMonthDay", "order": "ASCENDING" }
+    ]},
+    { "collectionGroup": "individuals", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "householdId", "order": "ASCENDING" },
+      { "fieldPath": "dobMonthDay", "order": "ASCENDING" }
+    ]},
+    { "collectionGroup": "individuals", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "householdId", "order": "ASCENDING" },
+      { "fieldPath": "anniversaryMonthDay", "order": "ASCENDING" }
+    ]},
+    { "collectionGroup": "individuals", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "householdId", "order": "ASCENDING" },
+      { "fieldPath": "isPrimary", "order": "DESCENDING" }
+    ]},
+    { "collectionGroup": "individuals", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "name", "order": "ASCENDING" }
+    ]},
+    { "collectionGroup": "households", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "area", "order": "ASCENDING" }
+    ]},
+    { "collectionGroup": "households", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "updatedAt", "order": "DESCENDING" }
+    ]},
+    { "collectionGroup": "events", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "date", "order": "ASCENDING" }
+    ]},
+    { "collectionGroup": "attendance", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "eventId", "order": "ASCENDING" },
+      { "fieldPath": "markedAt", "order": "ASCENDING" }
+    ]},
+    { "collectionGroup": "attendance", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "individualId", "order": "ASCENDING" },
+      { "fieldPath": "markedAt", "order": "DESCENDING" }
+    ]}
+  ],
+  "fieldOverrides": []
+}

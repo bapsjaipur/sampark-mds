@@ -1,0 +1,297 @@
+rules_version = '2';
+
+// MERGED firestore.rules — reconciles three versions written across Phase 2
+// and Phase 4. Decisions made at merge:
+//   1. Base logic = Phase 2's (correctly scoped individuals create/update).
+//      Phase 4's version left create/update ungated by area/mandal for
+//      scoped-only volunteers — that gap is closed here.
+//   2. Each match block computes volunteer+role context via ONE `let c =
+//      ctx();` inside a single combined function, instead of calling
+//      hasPermission()/hasAnyPermission() multiple times per allow line
+//      (each of which re-ran ctx()'s two get() calls independently in the
+//      original Phase 2 draft). Firestore caps get()/exists() at 10 per
+//      request — this keeps every rule well under that ceiling.
+//      NOTE: `let` is only valid inside a function body ending in `return`
+//      (Firestore rules functions: "single return statement" + "in rules
+//      version v2, functions can define variables using let") — it cannot
+//      be used inline inside an `allow ... : if (...)` condition directly,
+//      which is why every check below is wrapped in a named function.
+//   3. Phase 4's `batches` collection rules are added (new in Phase 4).
+//   4. `syncLogs` collection added (Phase 5) — written only by the Cloud
+//      Function via the Admin SDK (which bypasses rules entirely); this
+//      block only governs client reads.
+//
+// ASSUMPTION (unchanged from both source files): volunteers/{id} doc ID ===
+// request.auth.uid. See src/hooks/usePermissions.jsx for the client-side
+// mirror of this assumption.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function volunteerExists() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/volunteers/$(request.auth.uid));
+    }
+
+    // Bundles volunteer + role lookups into one function so callers pay the
+    // get() cost once per invocation, not once per field accessed. Always
+    // call this exactly ONCE per allow-line (assign to a local `let c`),
+    // never call it from inside a loop of independent permission checks.
+    function ctx() {
+      let v = get(/databases/$(database)/documents/volunteers/$(request.auth.uid)).data;
+      let hasRole = ('roleRef' in v) && v.roleRef != null;
+      let r = hasRole ? get(/databases/$(database)/documents/roles/$(v.roleRef)).data : {};
+      return {
+        'perms': ('permissions' in r) ? r.permissions : [],
+        'areas': ('assignedAreas' in v) ? v.assignedAreas : [],
+        'mandals': ('assignedMandals' in v) ? v.assignedMandals : [],
+      };
+    }
+
+    // ---------------------------------------------------------------------
+    // roles/{id}: name, permissions[]
+    // Read is open to any signed-in volunteer — restricting it would break
+    // every other rule's permission lookup for non-admins, since ctx()
+    // needs to read the caller's own role doc to resolve their permissions.
+    // ---------------------------------------------------------------------
+
+    function canManageRoles() {
+      let c = ctx();
+      return c.perms.hasAny(['manage_roles']);
+    }
+
+    match /roles/{roleId} {
+      allow read: if isSignedIn();
+      allow write: if volunteerExists() && canManageRoles();
+    }
+
+    // ---------------------------------------------------------------------
+    // volunteers/{id}: name, mobile, roleRef, assignedAreas[], assignedMandals[]
+    // ---------------------------------------------------------------------
+
+    function canManageUsers() {
+      let c = ctx();
+      return c.perms.hasAny(['manage_users']);
+    }
+
+    match /volunteers/{volunteerId} {
+      allow read: if isSignedIn() &&
+        (volunteerId == request.auth.uid || (volunteerExists() && canManageUsers()));
+      allow create, update, delete: if volunteerExists() && canManageUsers();
+    }
+
+    // ---------------------------------------------------------------------
+    // households/{id}: address, area, level, totalFamilyMembers,
+    //   samparkKaryakartaName, samparkKaryakartaNumber, remark, legacyId,
+    //   createdAt, updatedAt
+    // ---------------------------------------------------------------------
+
+    function canReadHousehold(data) {
+      let c = ctx();
+      return c.perms.hasAny(['view_all_contacts']) ||
+        (c.perms.hasAny(['view_assigned_contacts']) && data.area in c.areas);
+    }
+
+    function canCreateHousehold(data) {
+      let c = ctx();
+      return c.perms.hasAny(['edit_contacts']) &&
+        (c.perms.hasAny(['view_all_contacts']) || data.area in c.areas);
+    }
+
+    function canUpdateHousehold(oldData, newData) {
+      let c = ctx();
+      return c.perms.hasAny(['edit_contacts']) &&
+        (c.perms.hasAny(['view_all_contacts']) ||
+          (oldData.area in c.areas && newData.area in c.areas));
+    }
+
+    function canDeleteHousehold(data) {
+      let c = ctx();
+      return c.perms.hasAny(['edit_contacts']) &&
+        (c.perms.hasAny(['view_all_contacts']) || data.area in c.areas);
+    }
+
+    match /households/{householdId} {
+      allow read: if volunteerExists() && canReadHousehold(resource.data);
+      allow create: if volunteerExists() && canCreateHousehold(request.resource.data);
+      allow update: if volunteerExists() && canUpdateHousehold(resource.data, request.resource.data);
+      allow delete: if volunteerExists() && canDeleteHousehold(resource.data);
+    }
+
+    // ---------------------------------------------------------------------
+    // individuals/{id}: householdId, name, mobile, dob, dobMonthDay,
+    //   anniversary, anniversaryMonthDay, mandal, relation, isPrimary,
+    //   profilePhotoURL, status, reference, callCount, createdAt, updatedAt
+    //
+    // individuals don't carry `area` directly — only their parent household
+    // does — so a scoped check also looks at the household. mandal is
+    // checked first since it's free (already on the individual).
+    //
+    // MERGE FIX: Phase 4's rules left create/update ungated by area/mandal
+    // for scoped volunteers. Fixed below by applying the same scoping used
+    // for read to create and update as well.
+    // ---------------------------------------------------------------------
+
+    // Standalone contacts (no household — see Phase 13) have data.householdId
+    // == null but may now carry their own `area` field directly (Phase 16),
+    // so scoping checks that first before falling back to a household lookup.
+    function individualScopeOk(data, c) {
+      return data.mandal in c.mandals ||
+        (('area' in data) && data.area != null && data.area in c.areas) ||
+        (data.householdId != null &&
+          exists(/databases/$(database)/documents/households/$(data.householdId)) &&
+          get(/databases/$(database)/documents/households/$(data.householdId)).data.area in c.areas);
+    }
+
+    function canReadIndividual(data) {
+      let c = ctx();
+      return c.perms.hasAny(['view_all_contacts']) ||
+        (c.perms.hasAny(['view_assigned_contacts']) && individualScopeOk(data, c));
+    }
+
+    function canWriteIndividual(data) {
+      let c = ctx();
+      return c.perms.hasAny(['edit_contacts']) &&
+        (c.perms.hasAny(['view_all_contacts']) || individualScopeOk(data, c));
+    }
+
+    match /individuals/{individualId} {
+      allow read: if volunteerExists() && canReadIndividual(resource.data);
+      allow create: if volunteerExists() && canWriteIndividual(request.resource.data);
+      allow update: if volunteerExists() && canWriteIndividual(resource.data);
+
+      // Delete requires manage_users (Phase 4's stricter choice, kept
+      // deliberately at merge — removing a person is heavier than editing
+      // them, and karyekars with only edit_contacts shouldn't delete
+      // records, only correct them).
+      allow delete: if volunteerExists() && canManageUsers();
+    }
+
+    // ---------------------------------------------------------------------
+    // activity/{id}: timestamp, volunteerId, individualId, action, details
+    // Append-only audit log — no client-side edits or deletes, ever.
+    // ---------------------------------------------------------------------
+
+    function canReadActivity() {
+      let c = ctx();
+      return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts']);
+    }
+
+    match /activity/{activityId} {
+      allow read: if volunteerExists() && canReadActivity();
+      allow create: if volunteerExists() && request.resource.data.volunteerId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // batches/{id}: name, area, individualIds[], assignedVolunteerId,
+    //   createdBy, createdAt   (new collection, introduced in Phase 4)
+    // ---------------------------------------------------------------------
+
+    function canReadBatches() {
+      let c = ctx();
+      return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts']);
+    }
+
+    function canAssignBatches() {
+      let c = ctx();
+      return c.perms.hasAny(['assign_batches']);
+    }
+
+    match /batches/{batchId} {
+      allow read: if volunteerExists() && canReadBatches();
+      allow create, update, delete: if volunteerExists() && canAssignBatches();
+    }
+
+    // ---------------------------------------------------------------------
+    // events/{id}: title, date, time, durationMinutes, speaker, mandal,
+    //   area, createdBy, createdAt, updatedAt   (Phase 6)
+    // ---------------------------------------------------------------------
+
+    function canReadEvents() {
+      let c = ctx();
+      return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts']);
+    }
+
+    function canManageEvents() {
+      let c = ctx();
+      return c.perms.hasAny(['manage_events']);
+    }
+
+    match /events/{eventId} {
+      allow read: if volunteerExists() && canReadEvents();
+      allow create, update, delete: if volunteerExists() && canManageEvents();
+    }
+
+    // ---------------------------------------------------------------------
+    // attendance/{eventId_individualId}: eventId, individualId, status,
+    //   markedBy, markedAt   (Phase 6)
+    //
+    // Marking present uses edit_contacts (same permission level as editing
+    // a contact's Sampark status) — NOT manage_events, since any karyekar
+    // running the calling flow at a Sabha needs to mark people present, not
+    // just event organizers. The attendance TIME WINDOW is enforced only
+    // client-side (see src/lib/attendanceWindow.js) — see that file's
+    // comment for why it isn't duplicated here as a server-side check.
+    // ---------------------------------------------------------------------
+
+    function canMarkAttendance() {
+      let c = ctx();
+      return c.perms.hasAny(['edit_contacts']);
+    }
+
+    match /attendance/{attendanceId} {
+      allow read: if volunteerExists() && canReadEvents();
+      allow create, delete: if volunteerExists() && canMarkAttendance();
+      allow update: if false; // presence is a create/delete toggle, never edited in place
+    }
+
+    // ---------------------------------------------------------------------
+    // areas/{id}: name, code   |   mandals/{id}: name, code   (Phase 11)
+    // Read open to any signed-in volunteer (dropdowns need them everywhere).
+    // Write gated by manage_users — same admin tier as volunteer management,
+    // rather than inventing a new permission for a rarely-changed table.
+    // ---------------------------------------------------------------------
+
+    match /areas/{areaId} {
+      allow read: if volunteerExists();
+      allow write: if volunteerExists() && canManageUsers();
+    }
+
+    match /mandals/{mandalId} {
+      allow read: if volunteerExists();
+      allow write: if volunteerExists() && canManageUsers();
+    }
+
+    match /levels/{levelId} {
+      allow read: if volunteerExists();
+      allow write: if volunteerExists() && canManageUsers();
+    }
+
+    // ---------------------------------------------------------------------
+    // syncLogs/{id}: ranAt, totalMandals, totalRows, inserted, skipped, errors
+    // Written ONLY by the syncFirestoreToGAS Cloud Function via the Admin
+    // SDK, which bypasses these rules entirely — this block only governs
+    // client reads (so the admin UI can show sync history) and blocks any
+    // client-side write outright.
+    // ---------------------------------------------------------------------
+
+    function canReadSyncLogs() {
+      let c = ctx();
+      return c.perms.hasAny(['run_gas_sync', 'manage_users']);
+    }
+
+    match /syncLogs/{logId} {
+      allow read: if volunteerExists() && canReadSyncLogs();
+      allow write: if false;
+    }
+  }
+}

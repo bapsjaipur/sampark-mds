@@ -1,0 +1,57 @@
+rules_version = '2';
+
+// storage.rules — this did NOT exist before. Firestore and Storage are
+// separate products with separate rules files; firestore.rules never
+// covered Storage uploads, so profile photo uploads had no server-side
+// enforcement at all until now (client-side checks in PhotoUploader.jsx
+// were the only gate, which is not a real security boundary).
+//
+// IMPORTANT CONSTRAINT: Storage rules can access at most TWO Firestore
+// documents per rule evaluation (a hard Firebase limit, separate from
+// Firestore's own 10-get budget). hasPermission() below uses exactly 2 —
+// one get on the volunteer doc, one on their role doc — via `let`
+// bindings so each is fetched only once. An earlier draft of this file
+// called the volunteer doc twice (once directly, once again inside a
+// helper), which would have exceeded the limit and made every write
+// silently fail.
+//
+// Deploy with: firebase deploy --only storage
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function hasPermission(perm) {
+      let v = firestore.get(/databases/(default)/documents/volunteers/$(request.auth.uid)).data;
+      let r = firestore.get(/databases/(default)/documents/roles/$(v.roleRef)).data;
+      return request.auth != null && perm in r.permissions;
+    }
+
+    // profile-photos/{individualId}.jpg — matches the path PhotoUploader.jsx writes to.
+    match /profile-photos/{fileName} {
+      // Any signed-in volunteer can view photos. Storage rules can't cheaply
+      // replicate Firestore's area/mandal read-scoping here (that would need
+      // a 3rd document read — the individual doc itself — which exceeds the
+      // 2-document limit above). Trade-off: photo visibility is slightly
+      // broader than record visibility, but still never public — only your
+      // own signed-in volunteers.
+      allow read: if request.auth != null &&
+        firestore.exists(/databases/(default)/documents/volunteers/$(request.auth.uid));
+
+      // Write requires edit_contacts, same permission level as editing the
+      // contact record itself. Size-capped at 5MB as a backstop — the
+      // client already compresses to a 512x512 JPEG (typically 30-150KB);
+      // this cap guards against a bug or a bypassed client, not the primary
+      // size control.
+      allow write: if hasPermission('edit_contacts') &&
+        request.resource.size < 5 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/.*');
+
+      allow delete: if hasPermission('edit_contacts');
+    }
+
+    // Everything else in the bucket: closed by default.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
