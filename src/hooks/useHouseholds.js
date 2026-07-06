@@ -10,6 +10,7 @@ import { useToast } from "../contexts/ToastContext";
 import { useAuth } from "./usePermissions";
 import { logActivity } from "../lib/activityLog";
 import { deleteHouseholdCascade } from "../services/householdService";
+import { friendlyFirestoreError } from "../lib/firestoreErrorMessage";
 
 export function useHouseholds() {
   const [households, setHouseholds] = useState([]);
@@ -23,7 +24,7 @@ export function useHouseholds() {
     const unsub = onSnapshot(
       q,
       (snap) => { setHouseholds(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); setLoading(false); },
-      (err) => { console.error(err); setError(err); setLoading(false); showToast({ type: "error", message: "Couldn't load households. Check your connection." }); }
+      (err) => { console.error(err); setError(err); setLoading(false); showToast({ type: "error", message: friendlyFirestoreError(err, "households") }); }
     );
     return unsub;
   }, [showToast]);

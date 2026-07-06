@@ -5,39 +5,42 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { X } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { RequirePermission } from '../components/RequirePermission';
+import { useAreasAndMandals } from '../hooks/useAreasAndMandals';
 import { isValidPhone } from '../lib/authHelpers';
 import { Input, Select, Label } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import { Avatar } from '../components/ui/Avatar';
 
-function TagInput({ label, values, onChange, placeholder }) {
-  const [draft, setDraft] = useState('');
-
-  function commitDraft() {
-    const v = draft.trim();
-    if (v && !values.includes(v)) onChange([...values, v]);
-    setDraft('');
-  }
-
-  function handleKeyDown(e) {
-    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commitDraft(); }
-    else if (e.key === 'Backspace' && draft === '' && values.length > 0) onChange(values.slice(0, -1));
-  }
-
-  function removeValue(v) { onChange(values.filter((x) => x !== v)); }
-
+// Was a freeform text TagInput before — typing "Vaishali Nagar" here but
+// the household's Area dropdown having saved "Vaishali nagar" (different
+// case) or a trailing space meant `data.area in c.areas` in firestore.rules
+// would never match, silently hiding every contact in that area with no
+// error shown anywhere. This picks only from the actual saved Areas/
+// Mandals list (same source as every other dropdown in the app), so what's
+// assigned here can only ever be an exact match.
+function AreaMandalPicker({ label, values, onChange, options }) {
+  const available = options.filter((o) => !values.includes(o));
   return (
     <div>
       <Label>{label}</Label>
-      <div className="flex flex-wrap gap-1.5 rounded-lg border border-slate-200 px-2 py-1.5 focus-within:ring-1 focus-within:ring-slate-300">
+      <div className="flex flex-wrap gap-1.5 rounded-lg border border-slate-200 px-2 py-1.5 mb-1.5">
+        {values.length === 0 && <span className="px-1 py-0.5 text-sm text-slate-400">None assigned</span>}
         {values.map((v) => (
           <span key={v} className="inline-flex items-center gap-1 rounded-full bg-orange-50 px-2 py-0.5 text-xs text-orange-700">
             {v}
-            <button type="button" onClick={() => removeValue(v)} className="text-orange-400 hover:text-orange-700"><X className="h-3 w-3" /></button>
+            <button type="button" onClick={() => onChange(values.filter((x) => x !== v))} className="text-orange-400 hover:text-orange-700"><X className="h-3 w-3" /></button>
           </span>
         ))}
-        <input type="text" value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={handleKeyDown} onBlur={commitDraft} placeholder={values.length === 0 ? placeholder : ''} className="flex-1 min-w-[8ch] border-none px-1 py-0.5 text-sm focus:outline-none focus:ring-0" />
       </div>
+      <select
+        value=""
+        onChange={(e) => { if (e.target.value) onChange([...values, e.target.value]); }}
+        className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
+        disabled={available.length === 0}
+      >
+        <option value="">{available.length === 0 ? "All added" : `+ Add ${label.toLowerCase()}\u2026`}</option>
+        {available.map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
     </div>
   );
 }
@@ -93,6 +96,7 @@ function CreateVolunteerForm({ roles, onCreated }) {
 function VolunteerEditorInner() {
   const [volunteers, setVolunteers] = useState([]);
   const [roles, setRoles] = useState([]);
+  const { areas, mandals } = useAreasAndMandals();
   const [selectedId, setSelectedId] = useState(null);
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -183,8 +187,8 @@ function VolunteerEditorInner() {
               <p className="mt-1 text-xs text-slate-400">Permissions come entirely from the assigned role.</p>
             </div>
 
-            <TagInput label="Assigned Areas" values={draft.assignedAreas} onChange={(v) => setDraft({ ...draft, assignedAreas: v })} placeholder="Type an area, press Enter" />
-            <TagInput label="Assigned Mandals" values={draft.assignedMandals} onChange={(v) => setDraft({ ...draft, assignedMandals: v })} placeholder="Type a mandal, press Enter" />
+            <AreaMandalPicker label="Assigned Areas" values={draft.assignedAreas} onChange={(v) => setDraft({ ...draft, assignedAreas: v })} options={areas.map((a) => a.name)} />
+            <AreaMandalPicker label="Assigned Mandals" values={draft.assignedMandals} onChange={(v) => setDraft({ ...draft, assignedMandals: v })} options={mandals.map((m) => m.name)} />
 
             <div className="pt-2 flex justify-end">
               <Button variant="accent" onClick={handleSave} disabled={saving}>{saving ? 'Saving\u2026' : 'Save changes'}</Button>

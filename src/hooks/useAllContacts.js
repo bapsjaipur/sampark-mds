@@ -13,6 +13,7 @@ import { useToast } from "../contexts/ToastContext";
 import { useAuth } from "./usePermissions";
 import { logActivity } from "../lib/activityLog";
 import { toMonthDay } from "../lib/dateHelpers";
+import { friendlyFirestoreError } from "../lib/firestoreErrorMessage";
 
 export function useAllContacts() {
   const [contacts, setContacts] = useState([]);
@@ -26,7 +27,7 @@ export function useAllContacts() {
     const unsub = onSnapshot(
       q,
       (snap) => { setContacts(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); setLoading(false); },
-      (err) => { console.error(err); setError(err); setLoading(false); showToast({ type: "error", message: "Couldn't load contacts. Check your connection." }); }
+      (err) => { console.error(err); setError(err); setLoading(false); showToast({ type: "error", message: friendlyFirestoreError(err, "contacts") }); }
     );
     return unsub;
   }, [showToast]);

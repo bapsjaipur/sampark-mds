@@ -8,6 +8,7 @@ import { useToast } from "../contexts/ToastContext";
 import { useAuth } from "./usePermissions";
 import { logActivity } from "../lib/activityLog";
 import { toMonthDay } from "../lib/dateHelpers";
+import { friendlyFirestoreError } from "../lib/firestoreErrorMessage";
 
 export function useIndividuals(householdId) {
   const [individuals, setIndividuals] = useState([]);
@@ -23,7 +24,7 @@ export function useIndividuals(householdId) {
     const unsub = onSnapshot(
       q,
       (snap) => { setIndividuals(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); setLoading(false); },
-      (err) => { console.error(err); setError(err); setLoading(false); showToast({ type: "error", message: "Couldn't load family members. Check your connection." }); }
+      (err) => { console.error(err); setError(err); setLoading(false); showToast({ type: "error", message: friendlyFirestoreError(err, "family members") }); }
     );
     return unsub;
   }, [householdId, showToast]);
