@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { Link } from "react-router-dom";
-import { Plus, Upload, Users } from "lucide-react";
+import { Plus, Trash2, Upload, Users } from "lucide-react";
 import { useHouseholds, useFilteredHouseholds } from "../hooks/useHouseholds";
 import { useAuth } from "../hooks/usePermissions";
 import { useAreasAndMandals } from "../hooks/useAreasAndMandals";
@@ -22,10 +22,11 @@ const PAGE_SIZE = 20;
 const RECENTLY_ADDED_COUNT = 6;
 
 export default function HouseholdsPage() {
-  const { households, loading, hasMore, loadMore, createHousehold } = useHouseholds({ pageSize: PAGE_SIZE });
+  const { households, loading, hasMore, loadMore, createHousehold, deleteHousehold } = useHouseholds({ pageSize: PAGE_SIZE });
   const { areas: allAreas, mandals } = useAreasAndMandals();
   const { showToast } = useToast();
-  const { permissions } = useAuth();
+  const { permissions, hasPermission } = useAuth();
+  const canDelete = hasPermission("delete_contacts") || hasPermission("manage_users");
   const isViewAll = permissions.includes("view_all_contacts");
   const isViewAssigned = !isViewAll && (
     permissions.includes("view_assigned_contacts") || permissions.includes("edit_contacts")
@@ -36,6 +37,7 @@ export default function HouseholdsPage() {
   const [createdAfter, setCreatedAfter] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [individuals, setIndividuals] = useState([]);
   const [selected, setSelected] = useState(new Set());
 
@@ -135,6 +137,13 @@ export default function HouseholdsPage() {
     setSelected((prev) => (prev.size === filtered.length ? new Set() : new Set(filtered.map((h) => h.id))));
   }
 
+  async function handleBulkDelete() {
+    setConfirmBulkDelete(false);
+    const ids = [...selected];
+    for (const id of ids) await deleteHousehold(id);
+    setSelected(new Set());
+  }
+
 
   function HouseholdCard({ h }) {
     return (
@@ -218,6 +227,11 @@ export default function HouseholdsPage() {
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
             <ExportButtons rows={selectedHouseholdMembers} label={`${selected.size}-households`} />
+            {canDelete && (
+              <Button variant="ghost" size="sm" onClick={() => setConfirmBulkDelete(true)} className="text-rose-600 hover:bg-rose-50 hover:text-rose-700">
+                <Trash2 className="h-3.5 w-3.5" /> Delete {selected.size}
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -271,6 +285,14 @@ export default function HouseholdsPage() {
       </Modal>
 
       <ImportContactsWizard open={importOpen} onClose={() => setImportOpen(false)} mode="household" />
+
+      <Modal open={confirmBulkDelete} onClose={() => setConfirmBulkDelete(false)} title="Delete households?">
+        <p className="text-sm text-slate-600">This will permanently delete <strong>{selected.size} household{selected.size !== 1 ? "s" : ""}</strong> and all their members. This cannot be undone.</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => setConfirmBulkDelete(false)}>Cancel</Button>
+          <Button variant="accent" onClick={handleBulkDelete} className="bg-rose-600 hover:bg-rose-700">Delete {selected.size} household{selected.size !== 1 ? "s" : ""}</Button>
+        </div>
+      </Modal>
 
     </div>
   );
