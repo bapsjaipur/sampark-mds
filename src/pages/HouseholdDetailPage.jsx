@@ -262,6 +262,25 @@ export default function HouseholdDetailPage() {
     );
   }
 
+  // Propagate new area to all members whose area was blank or matched the old area
+  async function syncMemberAreas(newArea, oldArea) {
+    if (!newArea) return;
+    const toUpdate = individuals.filter((m) => !m.area || m.area === oldArea);
+    if (!toUpdate.length) return;
+    const batch = writeBatch(db);
+    toUpdate.forEach((m) => batch.update(doc(db, "individuals", m.id), { area: newArea, updatedAt: serverTimestamp() }));
+    await batch.commit();
+  }
+
+  const handleHouseholdUpdate = async (data) => {
+    const oldArea = household.area || "";
+    const ok = await updateHousehold(household.id, data);
+    if (ok && data.area && data.area !== oldArea) {
+      await syncMemberAreas(data.area, oldArea);
+    }
+    return ok;
+  };
+
   const handleMemberSubmit = async (data) => {
     if (memberModal.individual) return updateIndividual(memberModal.individual.id, data);
     const id = await createIndividual(data);
@@ -309,9 +328,26 @@ export default function HouseholdDetailPage() {
 
       <div className="mt-8 flex items-center justify-between">
         <h2 className="text-[15px] font-semibold text-slate-900">Family members</h2>
-        <RequirePermission permission="edit_contacts">
-          <Button variant="accent" size="sm" onClick={() => setAddChoiceOpen(true)}><Plus className="h-3.5 w-3.5" /> Add member</Button>
-        </RequirePermission>
+        <div className="flex items-center gap-2">
+          {/* Show fix button when household has an area but some members don't */}
+          {household.area && individuals.some((m) => !m.area) && (
+            <RequirePermission permission="edit_contacts">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={async () => {
+                  await syncMemberAreas(household.area, "");
+                  showToast({ type: "success", message: "Area applied to all members." });
+                }}
+              >
+                Fix missing area
+              </Button>
+            </RequirePermission>
+          )}
+          <RequirePermission permission="edit_contacts">
+            <Button variant="accent" size="sm" onClick={() => setAddChoiceOpen(true)}><Plus className="h-3.5 w-3.5" /> Add member</Button>
+          </RequirePermission>
+        </div>
       </div>
 
       <div className="mt-4 space-y-2">
@@ -321,15 +357,13 @@ export default function HouseholdDetailPage() {
           <p className="rounded-lg border border-dashed border-slate-200 py-10 text-center text-slate-400">No family members added yet.</p>
         ) : (
           individuals.map((ind, i) => (
-            <div key={ind.id} className="group relative">
-              <IndividualCard individual={ind} onEdit={(x) => setMemberModal({ open: true, individual: x })} onDelete={setConfirmDelete} />
-              <button
-                onClick={() => setViewerIndex(i)}
-                className="absolute left-0 top-0 h-full w-full rounded-lg opacity-0 group-hover:opacity-100 focus:opacity-100"
-                aria-label={`View ${ind.name} full screen`}
-                style={{ background: "transparent" }}
-              />
-            </div>
+            <IndividualCard
+              key={ind.id}
+              individual={ind}
+              onView={() => setViewerIndex(i)}
+              onEdit={(x) => setMemberModal({ open: true, individual: x })}
+              onDelete={setConfirmDelete}
+            />
           ))
         )}
       </div>
@@ -393,7 +427,7 @@ export default function HouseholdDetailPage() {
       </Modal>
 
       <Modal open={editHouseholdOpen} onClose={() => setEditHouseholdOpen(false)} title="Edit household">
-        <HouseholdForm household={household} onSubmit={(data) => updateHousehold(household.id, data)} onCancel={() => setEditHouseholdOpen(false)} />
+        <HouseholdForm household={household} onSubmit={handleHouseholdUpdate} onCancel={() => setEditHouseholdOpen(false)} />
       </Modal>
 
       {/* 1.7 Merge */}
