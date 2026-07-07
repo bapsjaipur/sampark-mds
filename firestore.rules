@@ -294,10 +294,15 @@ service cloud.firestore {
       return c.perms.hasAny(['edit_contacts']);
     }
 
+    function canDeletePadhramani() {
+      let c = ctx();
+      return c.perms.hasAny(['delete_contacts', 'manage_users']);
+    }
+
     match /padhramani/{visitId} {
       allow read: if volunteerExists() && canReadPadhramani();
       allow create, update: if volunteerExists() && canWritePadhramani();
-      allow delete: if volunteerExists() && canManageUsers();
+      allow delete: if volunteerExists() && canDeletePadhramani();
     }
 
     // padhramaniEvents/{id}: name, scheduledDate, volunteer fields, households[], status
