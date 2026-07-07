@@ -20,11 +20,16 @@ import AdminToolsPage from "./pages/AdminToolsPage";
 import RemindersDashboard from "./components/reminders/RemindersDashboard";
 import IndividualDetailPage from "./pages/IndividualDetailPage";
 import PadhramaniPage from "./pages/PadhramaniPage";
+import SantoSchedulePage from "./pages/SantoSchedulePage";
 
 // 4.1 — redirect to first route the volunteer actually has permission to see
 function DefaultRedirect() {
   const { permissions, loading } = useAuth();
   if (loading) return null;
+  // Santo role: lands on their personal schedule
+  if (permissions.includes("view_padhramani") && !permissions.includes("view_all_contacts") && !permissions.includes("edit_contacts")) {
+    return <Navigate to="/santo-schedule" replace />;
+  }
   if (permissions.includes("view_all_contacts") || permissions.includes("view_assigned_contacts")) {
     return <Navigate to="/contacts" replace />;
   }
@@ -51,6 +56,7 @@ export default function App() {
                 <Route path="/contacts" element={<ContactsPage />} />
                 <Route path="/contacts/:id" element={<IndividualDetailPage />} />
                 <Route path="/padhramani" element={<PadhramaniPage />} />
+                <Route path="/santo-schedule" element={<SantoSchedulePage />} />
                 <Route path="/events" element={<EventsPage />} />
                 <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
                 <Route path="/admin/batches" element={<BatchesPage />} />

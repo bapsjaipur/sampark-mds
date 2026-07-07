@@ -29,7 +29,7 @@ import RequirePermission from "../components/RequirePermission";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const HH_STATUSES = {
+export const HH_STATUSES = {
   pending:   { label: "Pending",   color: "bg-slate-100 text-slate-600 border-slate-200" },
   completed: { label: "Visited",   color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
   not_home:  { label: "Not home",  color: "bg-amber-50 text-amber-700 border-amber-200" },
@@ -424,6 +424,9 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
         secondVolunteerName: form.secondVolunteerName || null,
         santo2Id: form.santo2Id || null,
         santo2Name: form.santo2Name || null,
+        // santoRefs — array-contains index used by SantoSchedulePage to query
+        // "my schedule" without a composite index on multiple individual fields.
+        santoRefs: [form.secondVolunteerId, form.santo2Id].filter(Boolean),
         notes: form.notes || null,
         households: selected,
         updatedAt: serverTimestamp(),
@@ -631,12 +634,18 @@ function EditHouseholdsModal({ event, onClose }) {
 
 // ── EventCard ──────────────────────────────────────────────────────────────────
 
-function EventCard({ event, isAdmin, currentUserId, onEdit, onDelete, onUpdateHouseholdStatus }) {
+export function EventCard({ event, isAdmin, currentUserId, onEdit, onDelete, onUpdateHouseholdStatus }) {
   const [expanded, setExpanded] = useState(false);
   const hhs = event.households || [];
   const visited = hhs.filter((h) => h.status === "completed").length;
   const isAssignedKaryakarta = event.assignedVolunteerId === currentUserId;
-  const canAct = isAdmin || isAssignedKaryakarta;
+  // Santo volunteers can update household visit status but cannot edit/delete the event
+  const isSantoOnEvent =
+    event.santoRefs?.includes(currentUserId) ||
+    event.secondVolunteerId === currentUserId ||
+    event.santo2Id === currentUserId;
+  const canUpdateStatus = isAdmin || isAssignedKaryakarta || isSantoOnEvent;
+  const canEditEvent = isAdmin || isAssignedKaryakarta;
 
   const volunteerParts = [
     event.assignedVolunteerName,
@@ -711,7 +720,7 @@ function EventCard({ event, isAdmin, currentUserId, onEdit, onDelete, onUpdateHo
                         </p>
                       )}
                     </div>
-                    {canAct ? (
+                    {canUpdateStatus ? (
                       <select
                         value={hh.status || "pending"}
                         onChange={(e) => onUpdateHouseholdStatus(i, e.target.value)}
@@ -749,7 +758,7 @@ function EventCard({ event, isAdmin, currentUserId, onEdit, onDelete, onUpdateHo
             ) : null;
           })()}
 
-          {canAct && (
+          {canEditEvent && (
             <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-4 py-2.5">
               <Button variant="ghost" size="sm" onClick={() => onEdit(event)}>
                 <Pencil className="h-3.5 w-3.5" />

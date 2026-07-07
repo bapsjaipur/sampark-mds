@@ -23,6 +23,9 @@ export const PERMISSIONS = {
   RUN_GAS_SYNC: 'run_gas_sync',
   // Added in Phase 6 (Events/Sabha):
   MANAGE_EVENTS: 'manage_events',
+  // Section 8 — grants Santo role access to their personal "My Schedule" page.
+  // Does NOT give access to the full Padhramani admin page or contact editing.
+  VIEW_PADHRAMANI: 'view_padhramani',
 };
 
 export const PERMISSION_LABELS = {
@@ -38,6 +41,7 @@ export const PERMISSION_LABELS = {
   [PERMISSIONS.MANAGE_ROLES]: 'Manage Roles',
   [PERMISSIONS.RUN_GAS_SYNC]: 'Run Google Sheets Backup Sync',
   [PERMISSIONS.MANAGE_EVENTS]: 'Create/Edit Events & Sabha',
+  [PERMISSIONS.VIEW_PADHRAMANI]: 'View My Padhramani Schedule (Santo only)',
 };
 
 export const ALL_PERMISSIONS = Object.values(PERMISSIONS);
