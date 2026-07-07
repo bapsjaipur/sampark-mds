@@ -61,7 +61,7 @@ function SidebarContent({ collapsed, onNavigate }) {
 
       <nav className="flex-1 space-y-0.5 overflow-y-auto">
         <NavItem to="/households" icon={Home} collapsed={collapsed} onNavigate={onNavigate}>Households</NavItem>
-        <RequirePermission anyOf={['view_all_contacts', 'view_assigned_contacts']}>
+        <RequirePermission anyOf={['view_all_contacts', 'view_assigned_contacts', 'edit_contacts']}>
           <NavItem to="/contacts" icon={Users} collapsed={collapsed} onNavigate={onNavigate}>All Contacts</NavItem>
         </RequirePermission>
         <NavItem to="/events" icon={CalendarDays} collapsed={collapsed} onNavigate={onNavigate}>Events</NavItem>

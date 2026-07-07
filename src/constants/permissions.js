@@ -8,6 +8,8 @@ export const PERMISSIONS = {
   VIEW_ALL_CONTACTS: 'view_all_contacts',
   VIEW_ASSIGNED_CONTACTS: 'view_assigned_contacts',
   EDIT_CONTACTS: 'edit_contacts',
+  // Separate delete gate — allows roles like Area Coordinator to edit but not delete
+  DELETE_CONTACTS: 'delete_contacts',
   // 4.2 — granular page-level access
   VIEW_HOUSEHOLDS: 'view_households',
   EXPORT_DATA: 'export_data',
@@ -25,6 +27,7 @@ export const PERMISSION_LABELS = {
   [PERMISSIONS.VIEW_ALL_CONTACTS]: 'View All Contacts',
   [PERMISSIONS.VIEW_ASSIGNED_CONTACTS]: 'View Assigned Contacts (area/mandal only)',
   [PERMISSIONS.EDIT_CONTACTS]: 'Edit Contacts',
+  [PERMISSIONS.DELETE_CONTACTS]: 'Delete Contacts & Households',
   [PERMISSIONS.VIEW_HOUSEHOLDS]: 'View Households',
   [PERMISSIONS.EXPORT_DATA]: 'Export Data (CSV / PDF)',
   [PERMISSIONS.ASSIGN_BATCHES]: 'Assign Batches',

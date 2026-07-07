@@ -3,7 +3,7 @@
 // (canonical hook; `useAuth` is exported as an alias so this line barely changed).
 import { useEffect, useMemo, useState, useCallback } from "react";
 import {
-  collection, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, query, orderBy, limit,
+  collection, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, query, orderBy, limit, where,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useToast } from "../contexts/ToastContext";
@@ -24,27 +24,42 @@ export function useHouseholds({ pageSize } = {}) {
   const [households, setHouseholds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  // null → no limit (full load, backward-compatible). A number → paginated.
   const [limitCount, setLimitCount] = useState(pageSize || null);
   const [hasMore, setHasMore] = useState(false);
   const { showToast } = useToast();
-  const { volunteer } = useAuth();
+  const { volunteer, permissions, assignedAreas } = useAuth();
+
+  const isViewAll = permissions.includes("view_all_contacts");
+  // Scoped if they have view_assigned or edit_contacts but NOT view_all
+  const isViewAssigned = !isViewAll && (
+    permissions.includes("view_assigned_contacts") || permissions.includes("edit_contacts")
+  );
 
   useEffect(() => {
-    let q = query(collection(db, "households"), orderBy("updatedAt", "desc"));
+    // Scoped volunteer with no areas assigned — return empty immediately.
+    if (isViewAssigned && (!assignedAreas || assignedAreas.length === 0)) {
+      setHouseholds([]);
+      setLoading(false);
+      return;
+    }
+
+    let q = isViewAssigned
+      ? query(collection(db, "households"), where("area", "in", assignedAreas.slice(0, 30)), orderBy("area"))
+      : query(collection(db, "households"), orderBy("updatedAt", "desc"));
+
     if (limitCount) q = query(q, limit(limitCount));
+
     const unsub = onSnapshot(
       q,
       (snap) => {
         setHouseholds(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        // A full page came back → there may be more beyond it.
         setHasMore(limitCount ? snap.size === limitCount : false);
         setLoading(false);
       },
       (err) => { console.error(err); setError(err); setLoading(false); showToast({ type: "error", message: friendlyFirestoreError(err, "households") }); }
     );
     return unsub;
-  }, [showToast, limitCount]);
+  }, [showToast, limitCount, isViewAll, isViewAssigned, assignedAreas?.join(",")]);
 
   const loadMore = useCallback(() => {
     if (pageSize) setLimitCount((c) => (c || 0) + pageSize);

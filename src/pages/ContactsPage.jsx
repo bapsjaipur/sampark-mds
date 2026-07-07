@@ -192,18 +192,20 @@ export default function ContactsPage() {
       </div>
 
       {/* Bulk action bar */}
-      <RequirePermission permission="edit_contacts">
-        {selected.size > 0 && (
-          <div className="mb-3 flex items-center justify-between rounded-lg border border-orange-200 bg-orange-50 px-4 py-2.5">
-            <p className="text-sm font-medium text-orange-800">{selected.size} selected</p>
-            <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
+      {selected.size > 0 && (
+        <div className="mb-3 flex items-center justify-between rounded-lg border border-orange-200 bg-orange-50 px-4 py-2.5">
+          <p className="text-sm font-medium text-orange-800">{selected.size} selected</p>
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
+            <RequirePermission permission="edit_contacts">
               <Button variant="secondary" size="sm" onClick={() => setAssignAreaModal(true)}><MapPin className="h-3.5 w-3.5" /> Assign area</Button>
+            </RequirePermission>
+            <RequirePermission permission="delete_contacts">
               <Button variant="dangerSolid" size="sm" onClick={() => setConfirmBulkDelete(true)}><Trash2 className="h-3.5 w-3.5" /> Delete {selected.size}</Button>
-            </div>
+            </RequirePermission>
           </div>
-        )}
-      </RequirePermission>
+        </div>
+      )}
 
       {/* Contact list */}
       {loading ? (
@@ -240,6 +242,8 @@ export default function ContactsPage() {
                   <RequirePermission permission="edit_contacts">
                     <Button variant="ghost" size="icon" onClick={() => setAttachModal(c)} aria-label="Add to household"><Home className="h-3.5 w-3.5" /></Button>
                     <Button variant="ghost" size="icon" onClick={() => setFormModal({ open: true, contact: c })} aria-label="Edit"><Pencil className="h-3.5 w-3.5" /></Button>
+                  </RequirePermission>
+                  <RequirePermission permission="delete_contacts">
                     <Button variant="ghost" size="icon" onClick={() => setConfirmDelete(c)} aria-label="Delete" className="hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></Button>
                   </RequirePermission>
                 </div>

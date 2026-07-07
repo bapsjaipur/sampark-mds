@@ -6,7 +6,8 @@
 // useIndividuals.js's pattern but without a householdId dependency.
 import { useEffect, useState, useCallback } from "react";
 import {
-  collection, onSnapshot, addDoc, setDoc, updateDoc, deleteDoc, doc, serverTimestamp, query, orderBy, limit,
+  collection, onSnapshot, addDoc, setDoc, updateDoc, deleteDoc, doc,
+  serverTimestamp, query, orderBy, limit, where,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useToast } from "../contexts/ToastContext";
@@ -29,10 +30,29 @@ export function useAllContacts({ pageSize } = {}) {
   const [limitCount, setLimitCount] = useState(pageSize || null);
   const [hasMore, setHasMore] = useState(false);
   const { showToast } = useToast();
-  const { volunteer } = useAuth();
+  const { volunteer, permissions, assignedAreas } = useAuth();
+
+  const isViewAll = permissions.includes("view_all_contacts");
+  // Scoped if they have view_assigned or edit_contacts but NOT view_all
+  const isViewAssigned = !isViewAll && (
+    permissions.includes("view_assigned_contacts") || permissions.includes("edit_contacts")
+  );
 
   useEffect(() => {
+    // Scoped volunteers (view_assigned_contacts only): filter by their areas.
+    // Firestore `in` requires at least one value — if they have no areas assigned
+    // yet, return empty immediately rather than hitting a Firestore error.
+    if (isViewAssigned && (!assignedAreas || assignedAreas.length === 0)) {
+      setContacts([]);
+      setLoading(false);
+      return;
+    }
+
     let q = query(collection(db, "individuals"), orderBy("name"));
+    if (isViewAssigned) {
+      // Firestore `in` supports max 30 values; slice to be safe.
+      q = query(collection(db, "individuals"), where("area", "in", assignedAreas.slice(0, 30)), orderBy("area"));
+    }
     if (limitCount) q = query(q, limit(limitCount));
     const unsub = onSnapshot(
       q,
@@ -44,7 +64,7 @@ export function useAllContacts({ pageSize } = {}) {
       (err) => { console.error(err); setError(err); setLoading(false); showToast({ type: "error", message: friendlyFirestoreError(err, "contacts") }); }
     );
     return unsub;
-  }, [showToast, limitCount]);
+  }, [showToast, limitCount, isViewAll, isViewAssigned, assignedAreas?.join(",")]);
 
   const loadMore = useCallback(() => {
     if (pageSize) setLimitCount((c) => (c || 0) + pageSize);

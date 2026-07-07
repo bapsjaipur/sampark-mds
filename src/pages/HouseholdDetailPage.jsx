@@ -1,8 +1,8 @@
 // src/pages/HouseholdDetailPage.jsx — Phase 18: member viewer (1.2), activity timeline (1.5), merge (1.7)
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, Pencil, Trash2, Plus, Search, ChevronLeft, ChevronRight, X, Merge, Clock } from "lucide-react";
-import { collection, query, where, orderBy, onSnapshot, getDocs, writeBatch, serverTimestamp, doc } from "firebase/firestore";
+import { ArrowLeft, Pencil, Trash2, Plus, Search, ChevronLeft, ChevronRight, X, Merge, Clock, HeartHandshake } from "lucide-react";
+import { collection, query, where, orderBy, onSnapshot, getDocs, writeBatch, serverTimestamp, doc, updateDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useHouseholds } from "../hooks/useHouseholds";
 import { useIndividuals } from "../hooks/useIndividuals";
@@ -19,6 +19,7 @@ import { useToast } from "../contexts/ToastContext";
 import { formatDate } from "../lib/dateHelpers";
 import { logActivity } from "../lib/activityLog";
 import { useAuth } from "../hooks/usePermissions";
+import { SchedulePadhramaniModal } from "./PadhramaniPage";
 
 // ── 1.2 Member Viewer ──────────────────────────────────────────────────────
 function MemberViewer({ individuals, startIndex, onClose }) {
@@ -252,6 +253,20 @@ export default function HouseholdDetailPage() {
   const [viewerIndex, setViewerIndex] = useState(null); // 1.2
   const [mergeOpen, setMergeOpen] = useState(false); // 1.7
   const [showActivity, setShowActivity] = useState(false); // 1.5
+  const [scheduleVisitOpen, setScheduleVisitOpen] = useState(false);
+
+  // Auto-sync totalFamilyMembers to actual member count whenever it drifts.
+  // Fires silently (no toast) so it doesn't distract the user.
+  useEffect(() => {
+    if (!household || loading) return;
+    const actual = individuals.length;
+    if (actual !== household.totalFamilyMembers) {
+      updateDoc(doc(db, "households", household.id), {
+        totalFamilyMembers: actual,
+        updatedAt: serverTimestamp(),
+      }).catch(() => {});
+    }
+  }, [individuals.length, household?.id, household?.totalFamilyMembers, loading]);
 
   if (!household) {
     return (
@@ -317,13 +332,16 @@ export default function HouseholdDetailPage() {
           </div>
           {household.remark && <p className="mt-3 text-sm text-slate-400 italic">"{household.remark}"</p>}
         </div>
-        <RequirePermission permission="edit_contacts">
-          <div className="flex shrink-0 flex-wrap gap-2">
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <RequirePermission permission="edit_contacts">
             <Button variant="secondary" size="sm" onClick={() => setEditHouseholdOpen(true)}><Pencil className="h-3.5 w-3.5" /> Edit</Button>
             <Button variant="secondary" size="sm" onClick={() => setMergeOpen(true)}><Merge className="h-3.5 w-3.5" /> Merge</Button>
+            <Button variant="secondary" size="sm" onClick={() => setScheduleVisitOpen(true)}><HeartHandshake className="h-3.5 w-3.5" /> Schedule visit</Button>
+          </RequirePermission>
+          <RequirePermission permission="delete_contacts">
             <Button variant="danger" size="sm" onClick={() => setConfirmDeleteHousehold(true)}><Trash2 className="h-3.5 w-3.5" /> Delete</Button>
-          </div>
-        </RequirePermission>
+          </RequirePermission>
+        </div>
       </Card>
 
       <div className="mt-8 flex items-center justify-between">
@@ -458,6 +476,10 @@ export default function HouseholdDetailPage() {
           <Button variant="dangerSolid" onClick={handleDeleteHousehold} disabled={deletingHousehold}>{deletingHousehold ? 'Deleting…' : 'Delete household'}</Button>
         </div>
       </Modal>
+
+      {scheduleVisitOpen && (
+        <SchedulePadhramaniModal householdId={household.id} onClose={() => setScheduleVisitOpen(false)} />
+      )}
     </div>
   );
 }

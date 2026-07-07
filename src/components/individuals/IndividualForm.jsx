@@ -20,8 +20,8 @@
 // `doc(collection(db,'individuals'))` regardless of whether Photo ends up
 // being asked for this Mandal, so the id is stable and ready the moment the
 // Photo field *is* shown (e.g. if the person switches Mandal mid-form).
-import { useState } from "react";
-import { doc, collection } from "firebase/firestore";
+import { useState, useEffect, useRef } from "react";
+import { doc, collection, getDocs, query, orderBy } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import PhotoUploader from "../photo/PhotoUploader";
 import { MandalSelect, AreaSelect } from "../AreaMandalSelect";
@@ -29,6 +29,71 @@ import { useAreasAndMandals } from "../../hooks/useAreasAndMandals";
 import { FULL_MEMBER_FIELDS } from "../../lib/areaMandalCodes";
 import { Input, Select, Label, FieldError } from "../ui/Input";
 import { Button } from "../ui/Button";
+
+// Sampark Karyakarta name input with volunteer autocomplete.
+// Typing shows matching volunteers; selecting one auto-fills the mobile number.
+// Free text still works — if no volunteer is chosen both fields stay editable.
+function SamparkPicker({ name, number, onChangeName, onChangeNumber }) {
+  const [volunteers, setVolunteers] = useState([]);
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    getDocs(query(collection(db, "volunteers"), orderBy("name"))).then((snap) => {
+      setVolunteers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+  }, []);
+
+  const filtered = volunteers.filter((v) =>
+    v.name?.toLowerCase().includes(name.toLowerCase())
+  );
+
+  return (
+    <div className="grid grid-cols-2 gap-4">
+      <div className="relative" ref={ref}>
+        <Label>Sampark Karyakarta name</Label>
+        <Input
+          value={name}
+          onChange={(e) => { onChangeName(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          placeholder="Type name or pick volunteer…"
+          autoComplete="off"
+        />
+        {open && filtered.length > 0 && (
+          <ul className="absolute z-20 left-0 right-0 mt-0.5 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg divide-y divide-slate-50">
+            {filtered.slice(0, 8).map((v) => (
+              <li key={v.id}>
+                <button
+                  type="button"
+                  onMouseDown={() => {
+                    onChangeName(v.name);
+                    onChangeNumber(v.mobile || "");
+                    setOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-orange-50"
+                >
+                  <span className="font-medium text-slate-800">{v.name}</span>
+                  {v.mobile && <span className="text-xs text-slate-400 ml-auto">{v.mobile}</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div>
+        <Label>Sampark Karyakarta number</Label>
+        <Input
+          value={number}
+          onChange={(e) => onChangeNumber(e.target.value)}
+          inputMode="numeric"
+          maxLength={10}
+          placeholder="10-digit mobile"
+        />
+      </div>
+    </div>
+  );
+}
 
 const RELATIONS = [
   { value: "head", label: "Head of household" },
@@ -201,10 +266,12 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
 
       {showSamparkKaryakarta && (
         <div>
-          <div className="grid grid-cols-2 gap-4">
-            <div><Label>Sampark Karyakarta name</Label><Input value={form.samparkKaryakartaName} onChange={update("samparkKaryakartaName")} /></div>
-            <div><Label>Sampark Karyakarta number</Label><Input value={form.samparkKaryakartaNumber} onChange={update("samparkKaryakartaNumber")} inputMode="numeric" maxLength={10} /></div>
-          </div>
+          <SamparkPicker
+            name={form.samparkKaryakartaName}
+            number={form.samparkKaryakartaNumber}
+            onChangeName={(v) => setForm((f) => ({ ...f, samparkKaryakartaName: v }))}
+            onChangeNumber={(v) => setForm((f) => ({ ...f, samparkKaryakartaNumber: v }))}
+          />
           <p className="mt-1 text-xs text-slate-400">
             {form.isPrimary
               ? "As the Primary contact, this Sampark Karyakarta represents the whole household by default."

@@ -48,6 +48,8 @@ export default function IndividualCard({ individual, onEdit, onDelete, onView })
           <Button variant="ghost" size="icon" onClick={() => onEdit(individual)} aria-label="Edit">
             <Pencil className="h-3.5 w-3.5" />
           </Button>
+        </RequirePermission>
+        <RequirePermission permission="delete_contacts">
           <Button variant="ghost" size="icon" onClick={() => onDelete(individual)} aria-label="Delete" className="hover:bg-rose-50 hover:text-rose-500">
             <Trash2 className="h-3.5 w-3.5" />
           </Button>

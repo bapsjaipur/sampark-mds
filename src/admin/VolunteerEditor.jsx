@@ -71,10 +71,10 @@ function ContactSearchPicker({ onPick }) {
     if (!term) return;
     setSearching(true);
     try {
-      const snap = await getDocs(
-        query(collection(db, 'individuals'), orderBy('name'), limit(20))
-      );
       const lower = term.toLowerCase();
+      // Load all contacts (small org) then filter client-side so any name or
+      // mobile number is found regardless of alphabetical position or case.
+      const snap = await getDocs(query(collection(db, 'individuals'), orderBy('name'), limit(500)));
       const matches = snap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
         .filter((c) => c.name?.toLowerCase().includes(lower) || c.mobile?.includes(term));
