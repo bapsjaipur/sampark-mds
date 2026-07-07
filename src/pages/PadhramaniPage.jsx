@@ -16,11 +16,11 @@ import { useToast } from "../contexts/ToastContext";
 
 // ── constants ──────────────────────────────────────────────────────────────────
 const OUTCOMES = {
-  scheduled: { label: "Scheduled", color: "bg-blue-50 text-blue-700 border-blue-200" },
-  completed: { label: "Completed", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  not_home:  { label: "Not home",  color: "bg-amber-50 text-amber-700 border-amber-200" },
+  scheduled:   { label: "Scheduled",   color: "bg-blue-50 text-blue-700 border-blue-200" },
+  completed:   { label: "Completed",   color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  not_home:    { label: "Not home",    color: "bg-amber-50 text-amber-700 border-amber-200" },
   rescheduled: { label: "Rescheduled", color: "bg-purple-50 text-purple-700 border-purple-200" },
-  cancelled: { label: "Cancelled", color: "bg-slate-100 text-slate-500 border-slate-200" },
+  cancelled:   { label: "Cancelled",  color: "bg-slate-100 text-slate-500 border-slate-200" },
 };
 
 function OutcomeBadge({ status }) {
@@ -50,13 +50,30 @@ function overdue(str, status) {
   return new Date(str).getTime() < Date.now();
 }
 
-// Compact list of volunteer names for display in a card
+// Build a readable "who's going" line from all three name fields
 function volunteerLine(v) {
-  const parts = [v.assignedVolunteerName, v.secondVolunteerName].filter(Boolean);
-  return parts.length ? parts.join(" & ") : null;
+  const parts = [v.assignedVolunteerName, v.secondVolunteerName, v.santo2Name].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
 }
 
-// Shared volunteer dropdown row used in both modals
+// ── Data helpers ──────────────────────────────────────────────────────────────
+// Load volunteers + roles, return { allVolunteers, santoVolunteers }
+async function loadVolunteersAndRoles() {
+  const [volSnap, roleSnap] = await Promise.all([
+    getDocs(query(collection(db, "volunteers"), orderBy("name"))),
+    getDocs(collection(db, "roles")),
+  ]);
+  const allVolunteers = volSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const roles = roleSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  // Santo role = any role whose name contains "santo" (case-insensitive)
+  const santoRoleIds = new Set(
+    roles.filter((r) => r.name?.toLowerCase().includes("santo")).map((r) => r.id)
+  );
+  const santoVolunteers = allVolunteers.filter((v) => santoRoleIds.has(v.roleRef));
+  return { allVolunteers, santoVolunteers };
+}
+
+// ── Reusable volunteer dropdown ───────────────────────────────────────────────
 function VolunteerDropdown({ label, value, onChange, volunteers }) {
   return (
     <div>
@@ -74,23 +91,26 @@ function VolunteerDropdown({ label, value, onChange, volunteers }) {
 }
 
 // ── Schedule visit modal (6.2) ─────────────────────────────────────────────────
-// prefillHouseholdId — passed from HouseholdDetailPage to pre-select the household
 function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
-  const { volunteer } = useAuth();
+  const { volunteer: currentUser } = useAuth();
   const { showToast } = useToast();
   const [households, setHouseholds] = useState([]);
-  const [volunteers, setVolunteers] = useState([]);
+  const [allVolunteers, setAllVolunteers] = useState([]);
+  const [santoVolunteers, setSantoVolunteers] = useState([]);
   const [scheduledHhIds, setScheduledHhIds] = useState(new Set());
   const [form, setForm] = useState({
     householdId: prefillHouseholdId || "",
     householdAddress: "",
     scheduledDate: "",
-    // first volunteer (primary karyekar / santo)
-    assignedVolunteerId: volunteer?.id || "",
-    assignedVolunteerName: volunteer?.name || "",
-    // second volunteer (second santo / companion)
+    // Volunteer — any role, the karyakarta coordinating the visit
+    assignedVolunteerId: currentUser?.id || "",
+    assignedVolunteerName: currentUser?.name || "",
+    // Santo 1 — filtered to Santo role only
     secondVolunteerId: "",
     secondVolunteerName: "",
+    // Santo 2 — filtered to Santo role only
+    santo2Id: "",
+    santo2Name: "",
     area: "",
     notes: "",
   });
@@ -99,20 +119,18 @@ function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
   useEffect(() => {
     Promise.all([
       getDocs(query(collection(db, "households"), orderBy("address"))),
-      getDocs(collection(db, "volunteers")),
+      loadVolunteersAndRoles(),
       getDocs(query(collection(db, "padhramani"), where("status", "==", "scheduled"))),
-    ]).then(([hhSnap, volSnap, padSnap]) => {
+    ]).then(([hhSnap, { allVolunteers: av, santoVolunteers: sv }, padSnap]) => {
       const allHh = hhSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setHouseholds(allHh);
-      setVolunteers(volSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setAllVolunteers(av);
+      setSantoVolunteers(sv);
       const scheduled = new Set(padSnap.docs.map((d) => d.data().householdId).filter(Boolean));
       setScheduledHhIds(scheduled);
-
       if (prefillHouseholdId) {
         const hh = allHh.find((h) => h.id === prefillHouseholdId);
-        if (hh) {
-          setForm((f) => ({ ...f, householdAddress: hh.address || "", area: hh.area || "" }));
-        }
+        if (hh) setForm((f) => ({ ...f, householdAddress: hh.address || "", area: hh.area || "" }));
       }
     });
   }, [prefillHouseholdId]);
@@ -122,9 +140,9 @@ function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
     setForm((f) => ({ ...f, householdId: id, householdAddress: hh?.address || "", area: hh?.area || f.area }));
   }
 
-  function handleVolunteerPick(field, nameField, id) {
-    const v = volunteers.find((x) => x.id === id);
-    setForm((f) => ({ ...f, [field]: id, [nameField]: v?.name || "" }));
+  function pickFromList(list, idField, nameField, id) {
+    const v = list.find((x) => x.id === id);
+    setForm((f) => ({ ...f, [idField]: id, [nameField]: v?.name || "" }));
   }
 
   async function handleSave() {
@@ -142,6 +160,8 @@ function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
         assignedVolunteerName: form.assignedVolunteerName || null,
         secondVolunteerId: form.secondVolunteerId || null,
         secondVolunteerName: form.secondVolunteerName || null,
+        santo2Id: form.santo2Id || null,
+        santo2Name: form.santo2Name || null,
         area: form.area || null,
         notes: form.notes || null,
         status: "scheduled",
@@ -157,8 +177,6 @@ function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
     }
   }
 
-  // Exclude households that already have an active scheduled visit
-  // (except the prefilled one so re-scheduling is allowed)
   const availableHouseholds = households.filter(
     (h) => !scheduledHhIds.has(h.id) || h.id === prefillHouseholdId
   );
@@ -166,6 +184,8 @@ function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
   return (
     <Modal open onClose={onClose} title="Schedule Padhramani visit">
       <div className="space-y-3">
+
+        {/* Household */}
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">Household</label>
           {prefillHouseholdId ? (
@@ -191,26 +211,40 @@ function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
           )}
         </div>
 
+        {/* Date */}
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">Scheduled date</label>
           <Input type="date" value={form.scheduledDate} onChange={(e) => setForm({ ...form, scheduledDate: e.target.value })} />
         </div>
 
+        {/* Volunteer (all roles) */}
+        <VolunteerDropdown
+          label="Volunteer (karyakarta)"
+          value={form.assignedVolunteerId}
+          onChange={(id) => pickFromList(allVolunteers, "assignedVolunteerId", "assignedVolunteerName", id)}
+          volunteers={allVolunteers}
+        />
+
+        {/* Santo 1 & Santo 2 — filtered to Santo role */}
         <div className="grid grid-cols-2 gap-3">
           <VolunteerDropdown
-            label="Santo 1 / Primary"
-            value={form.assignedVolunteerId}
-            onChange={(id) => handleVolunteerPick("assignedVolunteerId", "assignedVolunteerName", id)}
-            volunteers={volunteers}
+            label={`Santo 1${santoVolunteers.length === 0 ? " (no Santo role found)" : ""}`}
+            value={form.secondVolunteerId}
+            onChange={(id) => pickFromList(santoVolunteers, "secondVolunteerId", "secondVolunteerName", id)}
+            volunteers={santoVolunteers}
           />
           <VolunteerDropdown
-            label="Santo 2 / Companion"
-            value={form.secondVolunteerId}
-            onChange={(id) => handleVolunteerPick("secondVolunteerId", "secondVolunteerName", id)}
-            volunteers={volunteers}
+            label={`Santo 2${santoVolunteers.length === 0 ? " (no Santo role found)" : ""}`}
+            value={form.santo2Id}
+            onChange={(id) => pickFromList(santoVolunteers, "santo2Id", "santo2Name", id)}
+            volunteers={santoVolunteers}
           />
         </div>
+        {santoVolunteers.length === 0 && allVolunteers.length > 0 && (
+          <p className="text-xs text-amber-600">No volunteers with a "Santo" role found. Create a role named "Santo" and assign it to volunteers first.</p>
+        )}
 
+        {/* Notes */}
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">Notes</label>
           <textarea
@@ -221,6 +255,7 @@ function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
             placeholder="Optional notes…"
           />
         </div>
+
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="accent" onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Schedule visit"}</Button>
@@ -230,8 +265,8 @@ function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
   );
 }
 
-// ── Edit visit modal — change volunteer(s), date, notes ───────────────────────
-function EditVisitModal({ visit, volunteers, onClose }) {
+// ── Edit visit modal ──────────────────────────────────────────────────────────
+function EditVisitModal({ visit, allVolunteers, santoVolunteers, onClose }) {
   const { showToast } = useToast();
   const [form, setForm] = useState({
     scheduledDate: visit.scheduledDate || "",
@@ -239,13 +274,15 @@ function EditVisitModal({ visit, volunteers, onClose }) {
     assignedVolunteerName: visit.assignedVolunteerName || "",
     secondVolunteerId: visit.secondVolunteerId || "",
     secondVolunteerName: visit.secondVolunteerName || "",
+    santo2Id: visit.santo2Id || "",
+    santo2Name: visit.santo2Name || "",
     notes: visit.notes || "",
   });
   const [saving, setSaving] = useState(false);
 
-  function handleVolunteerPick(field, nameField, id) {
-    const v = volunteers.find((x) => x.id === id);
-    setForm((f) => ({ ...f, [field]: id, [nameField]: v?.name || "" }));
+  function pickFromList(list, idField, nameField, id) {
+    const v = list.find((x) => x.id === id);
+    setForm((f) => ({ ...f, [idField]: id, [nameField]: v?.name || "" }));
   }
 
   async function handleSave() {
@@ -257,6 +294,8 @@ function EditVisitModal({ visit, volunteers, onClose }) {
         assignedVolunteerName: form.assignedVolunteerName || null,
         secondVolunteerId: form.secondVolunteerId || null,
         secondVolunteerName: form.secondVolunteerName || null,
+        santo2Id: form.santo2Id || null,
+        santo2Name: form.santo2Name || null,
         notes: form.notes || null,
         updatedAt: serverTimestamp(),
       });
@@ -276,20 +315,29 @@ function EditVisitModal({ visit, volunteers, onClose }) {
           <label className="mb-1 block text-xs font-medium text-slate-600">Scheduled date</label>
           <Input type="date" value={form.scheduledDate} onChange={(e) => setForm({ ...form, scheduledDate: e.target.value })} />
         </div>
+
+        <VolunteerDropdown
+          label="Volunteer (karyakarta)"
+          value={form.assignedVolunteerId}
+          onChange={(id) => pickFromList(allVolunteers, "assignedVolunteerId", "assignedVolunteerName", id)}
+          volunteers={allVolunteers}
+        />
+
         <div className="grid grid-cols-2 gap-3">
           <VolunteerDropdown
-            label="Santo 1 / Primary"
-            value={form.assignedVolunteerId}
-            onChange={(id) => handleVolunteerPick("assignedVolunteerId", "assignedVolunteerName", id)}
-            volunteers={volunteers}
+            label="Santo 1"
+            value={form.secondVolunteerId}
+            onChange={(id) => pickFromList(santoVolunteers, "secondVolunteerId", "secondVolunteerName", id)}
+            volunteers={santoVolunteers}
           />
           <VolunteerDropdown
-            label="Santo 2 / Companion"
-            value={form.secondVolunteerId}
-            onChange={(id) => handleVolunteerPick("secondVolunteerId", "secondVolunteerName", id)}
-            volunteers={volunteers}
+            label="Santo 2"
+            value={form.santo2Id}
+            onChange={(id) => pickFromList(santoVolunteers, "santo2Id", "santo2Name", id)}
+            volunteers={santoVolunteers}
           />
         </div>
+
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">Notes</label>
           <textarea
@@ -329,6 +377,8 @@ function OutcomeModal({ visit, onClose }) {
           assignedVolunteerName: visit.assignedVolunteerName || null,
           secondVolunteerId: visit.secondVolunteerId || null,
           secondVolunteerName: visit.secondVolunteerName || null,
+          santo2Id: visit.santo2Id || null,
+          santo2Name: visit.santo2Name || null,
           area: visit.area || null,
           notes: `Rescheduled from ${formatDate(visit.scheduledDate)}`,
           status: "scheduled",
@@ -393,7 +443,6 @@ function SummaryCards({ visits }) {
   const completed = visits.filter((v) => v.status === "completed").length;
   const scheduled = visits.filter((v) => v.status === "scheduled").length;
   const overdue_ = visits.filter((v) => overdue(v.scheduledDate, v.status)).length;
-
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
       {[
@@ -413,13 +462,14 @@ function SummaryCards({ visits }) {
 
 // ── CSV export (6.8) ───────────────────────────────────────────────────────────
 function exportCSV(rows) {
-  const headers = ["Household", "Area", "Scheduled Date", "Santo 1", "Santo 2", "Status", "Notes"];
+  const headers = ["Household", "Area", "Scheduled Date", "Volunteer", "Santo 1", "Santo 2", "Status", "Notes"];
   const lines = rows.map((r) => [
     r.householdAddress || "",
     r.area || "",
     r.scheduledDate || "",
     r.assignedVolunteerName || "",
     r.secondVolunteerName || "",
+    r.santo2Name || "",
     r.status || "",
     (r.notes || "").replace(/"/g, '""'),
   ].map((v) => `"${v}"`).join(","));
@@ -440,15 +490,17 @@ export default function PadhramaniPage() {
   const [outcomeVisit, setOutcomeVisit] = useState(null);
   const [editVisit, setEditVisit] = useState(null);
   const [allVolunteers, setAllVolunteers] = useState([]);
+  const [santoVolunteers, setSantoVolunteers] = useState([]);
   const [areaFilter, setAreaFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [volunteerFilter, setVolunteerFilter] = useState("");
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState("visits"); // 'visits' | 'by-household' | 'by-volunteer'
+  const [tab, setTab] = useState("visits");
 
   useEffect(() => {
-    getDocs(collection(db, "volunteers")).then((snap) => {
-      setAllVolunteers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    loadVolunteersAndRoles().then(({ allVolunteers: av, santoVolunteers: sv }) => {
+      setAllVolunteers(av);
+      setSantoVolunteers(sv);
     });
   }, []);
 
@@ -457,7 +509,9 @@ export default function PadhramaniPage() {
     if (areaFilter) rows = rows.filter((v) => v.area === areaFilter);
     if (statusFilter) rows = rows.filter((v) => v.status === statusFilter);
     if (volunteerFilter) rows = rows.filter(
-      (v) => v.assignedVolunteerName === volunteerFilter || v.secondVolunteerName === volunteerFilter
+      (v) => v.assignedVolunteerName === volunteerFilter ||
+             v.secondVolunteerName === volunteerFilter ||
+             v.santo2Name === volunteerFilter
     );
     if (search.trim()) {
       const q = search.trim().toLowerCase();
@@ -465,6 +519,7 @@ export default function PadhramaniPage() {
         v.householdAddress?.toLowerCase().includes(q) ||
         v.assignedVolunteerName?.toLowerCase().includes(q) ||
         v.secondVolunteerName?.toLowerCase().includes(q) ||
+        v.santo2Name?.toLowerCase().includes(q) ||
         v.notes?.toLowerCase().includes(q)
       );
     }
@@ -481,6 +536,7 @@ export default function PadhramaniPage() {
     visits.forEach((v) => {
       if (v.assignedVolunteerName) names.add(v.assignedVolunteerName);
       if (v.secondVolunteerName) names.add(v.secondVolunteerName);
+      if (v.santo2Name) names.add(v.santo2Name);
     });
     return [...names].sort();
   }, [visits]);
@@ -588,11 +644,7 @@ export default function PadhramaniPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    onClick={() => setEditVisit(v)}
-                    title="Edit date / volunteer"
-                    className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-                  >
+                  <button onClick={() => setEditVisit(v)} title="Edit visit" className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
                   <Button variant="ghost" size="sm" onClick={() => setOutcomeVisit(v)}>Update</Button>
@@ -661,7 +713,14 @@ export default function PadhramaniPage() {
 
       {scheduleOpen && <ScheduleVisitModal onClose={() => setScheduleOpen(false)} />}
       {outcomeVisit && <OutcomeModal visit={outcomeVisit} onClose={() => setOutcomeVisit(null)} />}
-      {editVisit && <EditVisitModal visit={editVisit} volunteers={allVolunteers} onClose={() => setEditVisit(null)} />}
+      {editVisit && (
+        <EditVisitModal
+          visit={editVisit}
+          allVolunteers={allVolunteers}
+          santoVolunteers={santoVolunteers}
+          onClose={() => setEditVisit(null)}
+        />
+      )}
     </div>
   );
 }

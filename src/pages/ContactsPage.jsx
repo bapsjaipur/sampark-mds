@@ -33,7 +33,7 @@ function isThisMonth(dateStr) {
 }
 
 export default function ContactsPage() {
-  const { contacts, loading, hasMore, loadMore, createContact, updateContact, deleteContact } = useAllContacts({ pageSize: PAGE_SIZE });
+  const { contacts, loading, hasMore, loadMore, createContact, updateContact, deleteContact, serverTotal, serverUngrouped, isViewAll, isViewAssigned } = useAllContacts({ pageSize: PAGE_SIZE });
   const { areas, mandals } = useAreasAndMandals();
   const { showToast } = useToast();
   const [search, setSearch] = useState("");
@@ -139,9 +139,18 @@ export default function ContactsPage() {
         <div>
           <h1 className="text-xl font-semibold text-slate-900 tracking-tight">All Contacts</h1>
           <p className="text-sm text-slate-400">
-            {contacts.length}{hasMore ? "+" : ""} people loaded{" "}
-            {hasActiveFilters && <span className="text-orange-600">&middot; {filtered.length} match filters</span>}
-            {!hasActiveFilters && <span>&middot; {contacts.filter((c) => !c.householdId).length} not yet grouped</span>}
+            {serverTotal !== null
+              ? <>{serverTotal} {isViewAll ? "total" : "in your area"}</>
+              : <>{contacts.length}{hasMore ? "+" : ""} loaded</>
+            }
+            {hasActiveFilters
+              ? <> &middot; <span className="text-orange-600">{filtered.length} match filters</span></>
+              : serverUngrouped !== null
+                ? <> &middot; <span className="text-orange-500">{serverUngrouped} not yet grouped</span></>
+                : !hasMore && contacts.some((c) => !c.householdId)
+                  ? <> &middot; {contacts.filter((c) => !c.householdId).length} not yet grouped</>
+                  : null
+            }
           </p>
         </div>
         <div className="flex items-center gap-2">

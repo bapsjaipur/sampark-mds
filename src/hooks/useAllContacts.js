@@ -7,7 +7,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   collection, onSnapshot, addDoc, setDoc, updateDoc, deleteDoc, doc,
-  serverTimestamp, query, orderBy, limit, where,
+  serverTimestamp, query, orderBy, limit, where, getCountFromServer,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useToast } from "../contexts/ToastContext";
@@ -29,6 +29,9 @@ export function useAllContacts({ pageSize } = {}) {
   const [error, setError] = useState(null);
   const [limitCount, setLimitCount] = useState(pageSize || null);
   const [hasMore, setHasMore] = useState(false);
+  // True counts fetched from server (not limited to loaded page)
+  const [serverTotal, setServerTotal] = useState(null);
+  const [serverUngrouped, setServerUngrouped] = useState(null);
   const { showToast } = useToast();
   const { volunteer, permissions, assignedAreas } = useAuth();
 
@@ -65,6 +68,32 @@ export function useAllContacts({ pageSize } = {}) {
     );
     return unsub;
   }, [showToast, limitCount, isViewAll, isViewAssigned, assignedAreas?.join(",")]);
+
+  // Fetch true server-side counts (not limited by pagination)
+  useEffect(() => {
+    if (isViewAssigned && (!assignedAreas || assignedAreas.length === 0)) {
+      setServerTotal(0);
+      setServerUngrouped(null);
+      return;
+    }
+    const colRef = collection(db, "individuals");
+    if (isViewAll) {
+      // Admin: count all docs + count ungrouped (householdId == null)
+      Promise.all([
+        getCountFromServer(query(colRef)),
+        getCountFromServer(query(colRef, where("householdId", "==", null))),
+      ]).then(([totSnap, ungSnap]) => {
+        setServerTotal(totSnap.data().count);
+        setServerUngrouped(ungSnap.data().count);
+      }).catch(console.error);
+    } else {
+      // Area volunteer: count only their area's docs
+      getCountFromServer(
+        query(colRef, where("area", "in", assignedAreas.slice(0, 30)))
+      ).then((s) => setServerTotal(s.data().count)).catch(console.error);
+      setServerUngrouped(null); // compound index not guaranteed; skip
+    }
+  }, [isViewAll, isViewAssigned, assignedAreas?.join(",")]); // eslint-disable-line
 
   const loadMore = useCallback(() => {
     if (pageSize) setLimitCount((c) => (c || 0) + pageSize);
@@ -149,5 +178,5 @@ export function useAllContacts({ pageSize } = {}) {
     [contacts, showToast, volunteer]
   );
 
-  return { contacts, loading, error, hasMore, loadMore, createContact, updateContact, deleteContact };
+  return { contacts, loading, error, hasMore, loadMore, createContact, updateContact, deleteContact, serverTotal, serverUngrouped, isViewAll, isViewAssigned };
 }

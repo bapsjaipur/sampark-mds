@@ -1,6 +1,6 @@
 // src/pages/AdminDashboardPage.jsx — Attio redesign.
 import { useEffect, useMemo, useState } from 'react';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { computeOverviewStats, computeVolunteerStats } from '../services/statsService';
 import { getHouseholdIdsForAreas } from '../services/reminderService';
@@ -20,13 +20,26 @@ function AdminDashboardInner() {
   const unscoped = permissions.includes('view_all_contacts');
 
   useEffect(() => {
+    // Area-scoped volunteers only load their area's individuals; admins load all
+    let indQ;
+    if (unscoped) {
+      indQ = collection(db, 'individuals');
+    } else if (assignedAreas?.length > 0) {
+      indQ = query(collection(db, 'individuals'), where('area', 'in', assignedAreas.slice(0, 30)));
+    } else {
+      // No areas assigned yet — show empty stats
+      setIndividuals([]);
+      setLoading(false);
+      return;
+    }
+
     const unsubs = [
-      onSnapshot(collection(db, 'individuals'), (snap) => { setIndividuals(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); setLoading(false); }),
+      onSnapshot(indQ, (snap) => { setIndividuals(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); setLoading(false); }),
       onSnapshot(collection(db, 'volunteers'), (snap) => setVolunteers(snap.docs.map((d) => ({ id: d.id, ...d.data() })))),
       onSnapshot(collection(db, 'batches'), (snap) => setBatches(snap.docs.map((d) => ({ id: d.id, ...d.data() })))),
     ];
     return () => unsubs.forEach((u) => u());
-  }, []);
+  }, [unscoped, assignedAreas?.join(',')]);
 
   useEffect(() => {
     if (unscoped) { setHouseholdIds([]); return; }
@@ -47,8 +60,14 @@ function AdminDashboardInner() {
   return (
     <div className="mx-auto max-w-5xl px-6 py-8 space-y-8">
       <div>
-        <h1 className="text-xl font-semibold text-slate-900 tracking-tight">{unscoped ? 'Admin Dashboard' : 'Moderator Dashboard'}</h1>
-        <p className="text-sm text-slate-400">{unscoped ? 'Live overview across all Mandals and volunteers' : `Scoped to your assigned areas: ${(assignedAreas || []).join(', ') || 'none set'}`}</p>
+        <h1 className="text-xl font-semibold text-slate-900 tracking-tight">{unscoped ? 'Admin Dashboard' : 'Area Dashboard'}</h1>
+        <p className="text-sm text-slate-400">
+          {unscoped
+            ? 'Live overview across all areas and Mandals'
+            : assignedAreas?.length
+              ? `Showing stats for: ${assignedAreas.join(', ')}`
+              : 'No areas assigned to your account yet'}
+        </p>
       </div>
 
       <div className="grid grid-cols-3 gap-4">
