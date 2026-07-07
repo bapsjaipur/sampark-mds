@@ -28,6 +28,7 @@ export default function HouseholdsPage() {
   const [areaFilter, setAreaFilter] = useState("");
   const [mandalFilter, setMandalFilter] = useState("");
   const [localSearch, setLocalSearch] = useState("");
+  const [createdAfter, setCreatedAfter] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [individuals, setIndividuals] = useState([]);
@@ -38,7 +39,17 @@ export default function HouseholdsPage() {
   useEffect(() => onSnapshot(collection(db, "individuals"), (snap) => setIndividuals(snap.docs.map((d) => ({ id: d.id, ...d.data() })))), []);
 
   const filteredByHook = useFilteredHouseholds(households, { area: areaFilter, searchTerm: localSearch });
-  const filtered = useMemo(() => mandalFilter ? filteredByHook.filter((h) => h.mandal === mandalFilter) : filteredByHook, [filteredByHook, mandalFilter]);
+  const filtered = useMemo(() => {
+    let result = mandalFilter ? filteredByHook.filter((h) => h.mandal === mandalFilter) : filteredByHook;
+    if (createdAfter) {
+      const cutoff = new Date(createdAfter).getTime();
+      result = result.filter((h) => {
+        const ts = h.createdAt?.toMillis?.() ?? (h.createdAt instanceof Date ? h.createdAt.getTime() : 0);
+        return ts >= cutoff;
+      });
+    }
+    return result;
+  }, [filteredByHook, mandalFilter, createdAfter]);
 
   const areas = useMemo(
     () => [...new Set(allAreas.map((a) => (typeof a === "string" ? a : a.name)).filter(Boolean))].sort(),

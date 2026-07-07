@@ -70,7 +70,8 @@ async function loadVolunteersAndRoles() {
     roles.filter((r) => r.name?.toLowerCase().includes("santo")).map((r) => r.id)
   );
   const santoVolunteers = allVolunteers.filter((v) => santoRoleIds.has(v.roleRef));
-  return { allVolunteers, santoVolunteers };
+  const nonSantoVolunteers = allVolunteers.filter((v) => !santoRoleIds.has(v.roleRef));
+  return { allVolunteers, santoVolunteers, nonSantoVolunteers };
 }
 
 // ── Reusable volunteer dropdown ───────────────────────────────────────────────
@@ -95,7 +96,7 @@ function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
   const { volunteer: currentUser } = useAuth();
   const { showToast } = useToast();
   const [households, setHouseholds] = useState([]);
-  const [allVolunteers, setAllVolunteers] = useState([]);
+  const [nonSantoVolunteers, setNonSantoVolunteers] = useState([]);
   const [santoVolunteers, setSantoVolunteers] = useState([]);
   const [scheduledHhIds, setScheduledHhIds] = useState(new Set());
   const [form, setForm] = useState({
@@ -118,10 +119,10 @@ function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
       getDocs(query(collection(db, "households"), orderBy("address"))),
       loadVolunteersAndRoles(),
       getDocs(query(collection(db, "padhramani"), where("status", "==", "scheduled"))),
-    ]).then(([hhSnap, { allVolunteers: av, santoVolunteers: sv }, padSnap]) => {
+    ]).then(([hhSnap, { nonSantoVolunteers: nsv, santoVolunteers: sv }, padSnap]) => {
       const allHh = hhSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setHouseholds(allHh);
-      setAllVolunteers(av);
+      setNonSantoVolunteers(nsv);
       setSantoVolunteers(sv);
       const scheduled = new Set(padSnap.docs.map((d) => d.data().householdId).filter(Boolean));
       setScheduledHhIds(scheduled);
@@ -210,8 +211,8 @@ function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
           <Input type="date" value={form.scheduledDate} onChange={(e) => setForm({ ...form, scheduledDate: e.target.value })} />
         </div>
         <VolunteerDropdown label="Volunteer (karyakarta)" value={form.assignedVolunteerId}
-          onChange={(id) => pickFromList(allVolunteers, "assignedVolunteerId", "assignedVolunteerName", id)}
-          volunteers={allVolunteers} />
+          onChange={(id) => pickFromList(nonSantoVolunteers, "assignedVolunteerId", "assignedVolunteerName", id)}
+          volunteers={nonSantoVolunteers} />
         <div className="grid grid-cols-2 gap-3">
           <VolunteerDropdown label={`Santo 1${santoVolunteers.length === 0 ? " (no Santo role)" : ""}`}
             value={form.secondVolunteerId}
@@ -222,7 +223,7 @@ function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
             onChange={(id) => pickFromList(santoVolunteers, "santo2Id", "santo2Name", id)}
             volunteers={santoVolunteers} />
         </div>
-        {santoVolunteers.length === 0 && allVolunteers.length > 0 && (
+        {santoVolunteers.length === 0 && nonSantoVolunteers.length > 0 && (
           <p className="text-xs text-amber-600">No volunteers with a "Santo" role found. Create a role named "Santo" first.</p>
         )}
         <div>
@@ -407,15 +408,26 @@ function CreateEventModal({ onClose, allVolunteers, santoVolunteers }) {
     notes: "",
   });
   const [allHouseholds, setAllHouseholds] = useState([]);
+  const [primaryNames, setPrimaryNames] = useState({}); // householdId → member name
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState([]); // [{ householdId, address, area }]
+  const [selected, setSelected] = useState([]); // [{ householdId, address, area, primaryName }]
   const [saving, setSaving] = useState(false);
   const [dragIdx, setDragIdx] = useState(null);
   const [overIdx, setOverIdx] = useState(null);
 
   useEffect(() => {
-    getDocs(query(collection(db, "households"), orderBy("address"))).then((snap) => {
-      setAllHouseholds(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    Promise.all([
+      getDocs(query(collection(db, "households"), orderBy("address"))),
+      getDocs(collection(db, "individuals")),
+    ]).then(([hhSnap, indSnap]) => {
+      setAllHouseholds(hhSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const names = {};
+      indSnap.docs.forEach((d) => {
+        const ind = d.data();
+        if (!ind.householdId) return;
+        if (ind.isPrimary || !names[ind.householdId]) names[ind.householdId] = ind.name;
+      });
+      setPrimaryNames(names);
     });
   }, []);
 
@@ -433,7 +445,7 @@ function CreateEventModal({ onClose, allVolunteers, santoVolunteers }) {
   });
 
   function addHousehold(hh) {
-    setSelected((prev) => [...prev, { householdId: hh.id, address: hh.address || "", area: hh.area || "" }]);
+    setSelected((prev) => [...prev, { householdId: hh.id, address: hh.address || "", area: hh.area || "", primaryName: primaryNames[hh.id] || "" }]);
   }
 
   function removeHousehold(id) {
@@ -553,8 +565,8 @@ function CreateEventModal({ onClose, allVolunteers, santoVolunteers }) {
                     className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-orange-50 transition-colors">
                     <Plus className="h-3.5 w-3.5 shrink-0 text-orange-400" />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm text-slate-800">{h.address || "No address"}</p>
-                      {h.area && <p className="text-xs text-slate-400">{h.area}</p>}
+                      <p className="truncate text-sm font-medium text-slate-800">{primaryNames[h.id] || h.address || "No address"}</p>
+                      <p className="truncate text-xs text-slate-400">{h.address || ""}{h.area ? ` · ${h.area}` : ""}</p>
                     </div>
                   </button>
                 ))}
@@ -593,8 +605,8 @@ function CreateEventModal({ onClose, allVolunteers, santoVolunteers }) {
                     <GripVertical className="h-4 w-4 shrink-0 text-slate-300" />
                     <span className="w-5 shrink-0 text-center text-xs font-semibold text-slate-400">{i + 1}</span>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm text-slate-800">{hh.address || "—"}</p>
-                      {hh.area && <p className="text-xs text-slate-400">{hh.area}</p>}
+                      <p className="truncate text-sm text-slate-800">{hh.primaryName || hh.address || "—"}</p>
+                      {hh.address && <p className="truncate text-xs text-slate-400">{hh.address}{hh.area ? ` · ${hh.area}` : ""}</p>}
                     </div>
                     <button type="button" onClick={() => removeHousehold(hh.householdId)}
                       className="shrink-0 rounded p-0.5 text-slate-300 hover:text-rose-400 transition-colors">
@@ -687,8 +699,11 @@ function EventCard({ event, onScheduleAll, onExport }) {
                 <div key={hh.householdId} className="flex items-center gap-2 px-3 py-2 text-xs text-slate-600">
                   <span className="w-6 shrink-0 font-semibold text-slate-400">{i + 1}.</span>
                   <Home className="h-3 w-3 shrink-0 text-slate-300" />
-                  <span className="flex-1 truncate">{hh.address || "—"}</span>
-                  {hh.area && <span className="text-slate-400">{hh.area}</span>}
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate font-medium text-slate-700">{hh.primaryName || hh.address || "—"}</p>
+                    {hh.primaryName && hh.address && <p className="truncate text-slate-400">{hh.address}</p>}
+                  </div>
+                  {hh.area && <span className="shrink-0 text-slate-400">{hh.area}</span>}
                 </div>
               ))}
             </div>
@@ -759,7 +774,7 @@ export default function PadhramaniPage() {
   const { areas } = useAreasAndMandals();
   const { showToast } = useToast();
 
-  const [allVolunteers, setAllVolunteers] = useState([]);
+  const [nonSantoVolunteers, setNonSantoVolunteers] = useState([]);
   const [santoVolunteers, setSantoVolunteers] = useState([]);
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(true);
@@ -776,8 +791,8 @@ export default function PadhramaniPage() {
   const [tab, setTab] = useState("visits");
 
   useEffect(() => {
-    loadVolunteersAndRoles().then(({ allVolunteers: av, santoVolunteers: sv }) => {
-      setAllVolunteers(av);
+    loadVolunteersAndRoles().then(({ nonSantoVolunteers: nsv, santoVolunteers: sv }) => {
+      setNonSantoVolunteers(nsv);
       setSantoVolunteers(sv);
     });
   }, []);
@@ -1080,12 +1095,12 @@ export default function PadhramaniPage() {
       {scheduleOpen && <ScheduleVisitModal onClose={() => setScheduleOpen(false)} />}
       {outcomeVisit && <OutcomeModal visit={outcomeVisit} onClose={() => setOutcomeVisit(null)} />}
       {editVisit && (
-        <EditVisitModal visit={editVisit} allVolunteers={allVolunteers}
+        <EditVisitModal visit={editVisit} allVolunteers={nonSantoVolunteers}
           santoVolunteers={santoVolunteers} onClose={() => setEditVisit(null)} />
       )}
       {createEventOpen && (
         <CreateEventModal onClose={() => setCreateEventOpen(false)}
-          allVolunteers={allVolunteers} santoVolunteers={santoVolunteers} />
+          allVolunteers={nonSantoVolunteers} santoVolunteers={santoVolunteers} />
       )}
     </div>
   );

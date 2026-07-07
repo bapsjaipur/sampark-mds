@@ -346,7 +346,7 @@ export default function HouseholdDetailPage() {
           <RequirePermission permission="edit_contacts">
             <Button variant="secondary" size="sm" onClick={() => setEditHouseholdOpen(true)}><Pencil className="h-3.5 w-3.5" /> Edit</Button>
             <Button variant="secondary" size="sm" onClick={() => setMergeOpen(true)}><Merge className="h-3.5 w-3.5" /> Merge</Button>
-            <Button variant="secondary" size="sm" onClick={() => setScheduleVisitOpen(true)}><HeartHandshake className="h-3.5 w-3.5" /> Schedule visit</Button>
+            <Button variant="secondary" size="sm" onClick={() => setScheduleVisitOpen(true)}><HeartHandshake className="h-3.5 w-3.5" /> Schedule Padhramani event</Button>
           </RequirePermission>
           <RequirePermission permission="delete_contacts">
             <Button variant="danger" size="sm" onClick={() => setConfirmDeleteHousehold(true)}><Trash2 className="h-3.5 w-3.5" /> Delete</Button>

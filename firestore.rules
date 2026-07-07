@@ -300,6 +300,13 @@ service cloud.firestore {
       allow delete: if volunteerExists() && canManageUsers();
     }
 
+    // padhramaniEvents/{id}: name, scheduledDate, volunteer fields, households[], status
+    match /padhramaniEvents/{eventId} {
+      allow read: if volunteerExists() && canReadPadhramani();
+      allow create, update: if volunteerExists() && canWritePadhramani();
+      allow delete: if volunteerExists() && canManageUsers();
+    }
+
     // ---------------------------------------------------------------------
     // syncLogs/{id}: ranAt, totalMandals, totalRows, inserted, skipped, errors
     // Written ONLY by the syncFirestoreToGAS Cloud Function via the Admin
