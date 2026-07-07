@@ -209,7 +209,7 @@ export default function ContactsPage() {
             <RequirePermission permission="edit_contacts">
               <Button variant="secondary" size="sm" onClick={() => setAssignAreaModal(true)}><MapPin className="h-3.5 w-3.5" /> Assign area</Button>
             </RequirePermission>
-            <RequirePermission permission="delete_contacts">
+            <RequirePermission permission="bulk_delete_contacts">
               <Button variant="dangerSolid" size="sm" onClick={() => setConfirmBulkDelete(true)}><Trash2 className="h-3.5 w-3.5" /> Delete {selected.size}</Button>
             </RequirePermission>
           </div>

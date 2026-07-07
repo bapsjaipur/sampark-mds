@@ -302,9 +302,19 @@ export default function HouseholdDetailPage() {
     return Boolean(id);
   };
 
+  // "Delete" inside a household just removes the household link — the contact
+  // stays in All Contacts with householdId: null. No data is permanently deleted.
   const handleConfirmDelete = async () => {
     if (!confirmDelete) return;
-    await deleteIndividual(confirmDelete.id);
+    try {
+      await updateDoc(doc(db, "individuals", confirmDelete.id), {
+        householdId: null,
+        updatedAt: serverTimestamp(),
+      });
+      showToast({ type: "success", message: `${confirmDelete.name} removed from this household.` });
+    } catch (err) {
+      showToast({ type: "error", message: "Couldn't remove member. Check your permissions." });
+    }
     setConfirmDelete(null);
   };
 
@@ -381,6 +391,8 @@ export default function HouseholdDetailPage() {
               onView={() => setViewerIndex(i)}
               onEdit={(x) => setMemberModal({ open: true, individual: x })}
               onDelete={setConfirmDelete}
+              deletePermission="edit_contacts"
+              deleteLabel="Remove from household"
             />
           ))
         )}
@@ -459,11 +471,14 @@ export default function HouseholdDetailPage() {
         />
       </Modal>
 
-      <Modal open={Boolean(confirmDelete)} onClose={() => setConfirmDelete(null)} title="Remove family member?" size="sm">
-        <p className="text-sm text-slate-500">This removes <span className="font-medium text-slate-700">{confirmDelete?.name}</span> from this household. This can't be undone.</p>
+      <Modal open={Boolean(confirmDelete)} onClose={() => setConfirmDelete(null)} title="Remove from household?" size="sm">
+        <p className="text-sm text-slate-500">
+          <span className="font-medium text-slate-700">{confirmDelete?.name}</span> will be unlinked from this household.
+          They will still appear in <strong>All Contacts</strong> and no data will be lost.
+        </p>
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setConfirmDelete(null)}>Cancel</Button>
-          <Button variant="dangerSolid" onClick={handleConfirmDelete}>Remove</Button>
+          <Button variant="dangerSolid" onClick={handleConfirmDelete}>Remove from household</Button>
         </div>
       </Modal>
 

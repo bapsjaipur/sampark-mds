@@ -8,7 +8,7 @@ import { Button } from "../ui/Button";
 
 const RELATION_LABEL = { head: "Head", spouse: "Spouse", member: "Member" };
 
-export default function IndividualCard({ individual, onEdit, onDelete, onView }) {
+export default function IndividualCard({ individual, onEdit, onDelete, onView, deletePermission = "delete_contacts", deleteLabel = "Delete" }) {
   return (
     <div className={`flex items-center gap-3 rounded-lg border border-slate-100 p-3.5 hover:bg-slate-50/50 ${individual._pending ? "opacity-60" : ""}`}>
       {/* Clicking the avatar opens the viewer */}
@@ -49,8 +49,8 @@ export default function IndividualCard({ individual, onEdit, onDelete, onView })
             <Pencil className="h-3.5 w-3.5" />
           </Button>
         </RequirePermission>
-        <RequirePermission permission="delete_contacts">
-          <Button variant="ghost" size="icon" onClick={() => onDelete(individual)} aria-label="Delete" className="hover:bg-rose-50 hover:text-rose-500">
+        <RequirePermission permission={deletePermission}>
+          <Button variant="ghost" size="icon" onClick={() => onDelete(individual)} aria-label={deleteLabel} className="hover:bg-rose-50 hover:text-rose-500">
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         </RequirePermission>
