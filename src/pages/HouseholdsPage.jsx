@@ -1,5 +1,4 @@
-// src/pages/HouseholdsPage.jsx — Phase 16: added Mandal filter + bulk
-// (cascade) delete, same pattern as ContactsPage.
+// src/pages/HouseholdsPage.jsx — Phase 18: two-section sort (1.3), pagination (1.4)
 import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "../lib/firebase";
@@ -20,6 +19,7 @@ import { Select } from "../components/ui/Input";
 import { useToast } from "../contexts/ToastContext";
 
 const PAGE_SIZE = 20;
+const RECENTLY_ADDED_COUNT = 6;
 
 export default function HouseholdsPage() {
   const { households, loading, hasMore, loadMore, createHousehold } = useHouseholds({ pageSize: PAGE_SIZE });
@@ -40,10 +40,6 @@ export default function HouseholdsPage() {
   const filteredByHook = useFilteredHouseholds(households, { area: areaFilter, searchTerm: localSearch });
   const filtered = useMemo(() => mandalFilter ? filteredByHook.filter((h) => h.mandal === mandalFilter) : filteredByHook, [filteredByHook, mandalFilter]);
 
-  // Sourced from the reference collection (not loaded households) so the
-  // filter stays complete under pagination — loaded pages may not contain
-  // every area. Normalized to plain strings (useAreasAndMandals yields
-  // {name} objects; DEFAULT_AREAS may be strings).
   const areas = useMemo(
     () => [...new Set(allAreas.map((a) => (typeof a === "string" ? a : a.name)).filter(Boolean))].sort(),
     [allAreas]
@@ -54,6 +50,30 @@ export default function HouseholdsPage() {
     individuals.forEach((ind) => { if (ind.isPrimary || !map.has(ind.householdId)) map.set(ind.householdId, ind.name); });
     return map;
   }, [individuals]);
+
+  const hasActiveFilters = Boolean(areaFilter || mandalFilter || localSearch);
+
+  // 1.3 — split into Recently Added + All Households (alpha) when no filters.
+  const { recentSection, allSection } = useMemo(() => {
+    if (hasActiveFilters) return { recentSection: [], allSection: filtered };
+
+    const byCreatedAt = [...filtered].sort((a, b) => {
+      const ta = a.createdAt?.toMillis?.() ?? (a.createdAt instanceof Date ? a.createdAt.getTime() : 0);
+      const tb = b.createdAt?.toMillis?.() ?? (b.createdAt instanceof Date ? b.createdAt.getTime() : 0);
+      return tb - ta;
+    });
+    const recentIds = new Set(byCreatedAt.slice(0, RECENTLY_ADDED_COUNT).map((h) => h.id));
+
+    const rest = filtered
+      .filter((h) => !recentIds.has(h.id))
+      .sort((a, b) => {
+        const nameA = (primaryNameByHousehold.get(a.id) || a.address || "").toLowerCase();
+        const nameB = (primaryNameByHousehold.get(b.id) || b.address || "").toLowerCase();
+        return nameA.localeCompare(nameB);
+      });
+
+    return { recentSection: byCreatedAt.slice(0, RECENTLY_ADDED_COUNT), allSection: rest };
+  }, [filtered, hasActiveFilters, primaryNameByHousehold]);
 
   useEffect(() => {
     const filteredIds = new Set(filtered.map((h) => h.id));
@@ -79,6 +99,29 @@ export default function HouseholdsPage() {
     } finally {
       setBulkDeleting(false);
     }
+  }
+
+  function HouseholdCard({ h }) {
+    return (
+      <Card className={`relative p-4 transition hover:border-slate-200 hover:shadow-sm ${h._pending ? "opacity-60" : ""}`}>
+        <RequirePermission permission="edit_contacts">
+          <input
+            type="checkbox"
+            checked={selected.has(h.id)}
+            onChange={(e) => { e.preventDefault(); toggleOne(h.id); }}
+            className="absolute right-3 top-3 h-4 w-4 rounded accent-orange-600"
+          />
+        </RequirePermission>
+        <Link to={`/households/${h.id}`} className="block pr-6">
+          <p className="font-medium text-slate-900">{primaryNameByHousehold.get(h.id) || h.address || "Unnamed household"}</p>
+          <p className="text-sm text-slate-400">{h.area}{h.mandal ? ` · ${h.mandal}` : ""}</p>
+          <div className="mt-2 flex items-center gap-3 text-xs text-slate-400">
+            <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {h.totalFamilyMembers || 0}</span>
+            {h.level && <span>· {h.level}</span>}
+          </div>
+        </Link>
+      </Card>
+    );
   }
 
   return (
@@ -112,7 +155,7 @@ export default function HouseholdsPage() {
         <input
           value={localSearch}
           onChange={(e) => setLocalSearch(e.target.value)}
-          placeholder="Filter this list\u2026"
+          placeholder="Filter this list…"
           className="h-9 w-48 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-600 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300"
         />
       </div>
@@ -132,7 +175,7 @@ export default function HouseholdsPage() {
       {loading ? (
         <ListSkeleton />
       ) : filtered.length === 0 ? (
-        <EmptyState hasFilters={Boolean(areaFilter || mandalFilter || localSearch)} />
+        <EmptyState hasFilters={hasActiveFilters} />
       ) : (
         <>
           <RequirePermission permission="edit_contacts">
@@ -141,32 +184,31 @@ export default function HouseholdsPage() {
               <span className="text-xs font-medium text-slate-500">Select all {filtered.length} filtered</span>
             </div>
           </RequirePermission>
-          <div className="grid gap-2.5 sm:grid-cols-2">
-            {filtered.map((h) => (
-              <Card key={h.id} className={`relative p-4 transition hover:border-slate-200 hover:shadow-sm ${h._pending ? "opacity-60" : ""}`}>
-                <RequirePermission permission="edit_contacts">
-                  <input
-                    type="checkbox"
-                    checked={selected.has(h.id)}
-                    onChange={(e) => { e.preventDefault(); toggleOne(h.id); }}
-                    className="absolute right-3 top-3 h-4 w-4 rounded accent-orange-600"
-                  />
-                </RequirePermission>
-                <Link to={`/households/${h.id}`} className="block pr-6">
-                  <p className="font-medium text-slate-900">{primaryNameByHousehold.get(h.id) || h.address || "Unnamed household"}</p>
-                  <p className="text-sm text-slate-400">{h.area}{h.mandal ? ` \u00b7 ${h.mandal}` : ""}</p>
-                  <div className="mt-2 flex items-center gap-3 text-xs text-slate-400">
-                    <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {h.totalFamilyMembers || 0}</span>
-                    {h.level && <span>\u00b7 {h.level}</span>}
-                  </div>
-                </Link>
-              </Card>
-            ))}
-          </div>
+
+          {!hasActiveFilters && recentSection.length > 0 && (
+            <div className="mb-6">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Recently Added</p>
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                {recentSection.map((h) => <HouseholdCard key={h.id} h={h} />)}
+              </div>
+            </div>
+          )}
+
+          {allSection.length > 0 && (
+            <div>
+              {!hasActiveFilters && recentSection.length > 0 && (
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">All Households</p>
+              )}
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                {allSection.map((h) => <HouseholdCard key={h.id} h={h} />)}
+              </div>
+            </div>
+          )}
+
           {hasMore && (
             <div className="mt-5 flex flex-col items-center gap-1">
               <Button variant="secondary" onClick={loadMore}>Load more households</Button>
-              {(areaFilter || mandalFilter || localSearch) && (
+              {hasActiveFilters && (
                 <p className="text-xs text-slate-400">Filters apply to loaded households only — load more to search the rest.</p>
               )}
             </div>
@@ -181,10 +223,10 @@ export default function HouseholdsPage() {
       <ImportContactsWizard open={importOpen} onClose={() => setImportOpen(false)} mode="household" />
 
       <Modal open={confirmBulkDelete} onClose={() => setConfirmBulkDelete(false)} title={`Delete ${selected.size} households?`} size="sm">
-        <p className="text-sm text-slate-500">This permanently deletes all {selected.size} selected households AND every member in each of them. This can't be undone.</p>
+        <p className="text-sm text-slate-500">This permanently deletes all {selected.size} selected households AND every member in each of them. This can’t be undone.</p>
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setConfirmBulkDelete(false)}>Cancel</Button>
-          <Button variant="dangerSolid" onClick={handleBulkDelete} disabled={bulkDeleting}>{bulkDeleting ? "Deleting\u2026" : `Delete ${selected.size}`}</Button>
+          <Button variant="dangerSolid" onClick={handleBulkDelete} disabled={bulkDeleting}>{bulkDeleting ? "Deleting…" : `Delete ${selected.size}`}</Button>
         </div>
       </Modal>
     </div>
