@@ -308,9 +308,11 @@ service cloud.firestore {
     }
 
     // padhramaniEvents/{id}: name, scheduledDate, volunteer fields, households[], status
+    // Read/write open to any registered volunteer — no area-scoping needed
+    // since Padhramani is coordinated at the org level, not per-area.
     match /padhramaniEvents/{eventId} {
-      allow read: if volunteerExists() && canReadPadhramani();
-      allow create, update: if volunteerExists() && canWritePadhramani();
+      allow read: if volunteerExists();
+      allow create, update: if volunteerExists();
       allow delete: if volunteerExists() && canManageUsers();
     }
 

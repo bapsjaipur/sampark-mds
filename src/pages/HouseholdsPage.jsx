@@ -1,10 +1,11 @@
 // src/pages/HouseholdsPage.jsx — Phase 18: two-section sort (1.3), pagination (1.4)
 import { useEffect, useMemo, useState } from "react";
-import { collection, onSnapshot } from "firebase/firestore";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { Link } from "react-router-dom";
 import { Plus, Upload, Users } from "lucide-react";
 import { useHouseholds, useFilteredHouseholds } from "../hooks/useHouseholds";
+import { useAuth } from "../hooks/usePermissions";
 import { useAreasAndMandals } from "../hooks/useAreasAndMandals";
 import GlobalSearchBar from "../components/search/GlobalSearchBar";
 import HouseholdForm from "../components/households/HouseholdForm";
@@ -24,6 +25,11 @@ export default function HouseholdsPage() {
   const { households, loading, hasMore, loadMore, createHousehold } = useHouseholds({ pageSize: PAGE_SIZE });
   const { areas: allAreas, mandals } = useAreasAndMandals();
   const { showToast } = useToast();
+  const { permissions } = useAuth();
+  const isViewAll = permissions.includes("view_all_contacts");
+  const isViewAssigned = !isViewAll && (
+    permissions.includes("view_assigned_contacts") || permissions.includes("edit_contacts")
+  );
   const [areaFilter, setAreaFilter] = useState("");
   const [mandalFilter, setMandalFilter] = useState("");
   const [localSearch, setLocalSearch] = useState("");
@@ -33,7 +39,35 @@ export default function HouseholdsPage() {
   const [individuals, setIndividuals] = useState([]);
   const [selected, setSelected] = useState(new Set());
 
-  useEffect(() => onSnapshot(collection(db, "individuals"), (snap) => setIndividuals(snap.docs.map((d) => ({ id: d.id, ...d.data() })))), []);
+  // For admins (view_all_contacts): query all individuals.
+  // For scoped roles: Firestore denies an unfiltered collection query, so we
+  // scope to the household IDs already loaded by useHouseholds (which is
+  // already area-filtered). This ensures primary names show for all roles.
+  const householdIdsKey = households.map((h) => h.id).join(",");
+  useEffect(() => {
+    if (isViewAll) {
+      return onSnapshot(
+        collection(db, "individuals"),
+        (snap) => setIndividuals(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+      );
+    }
+    const ids = households.map((h) => h.id);
+    if (!ids.length) { setIndividuals([]); return; }
+    const batches = [];
+    for (let i = 0; i < ids.length; i += 30) batches.push(ids.slice(i, i + 30));
+    const resultsMap = new Map();
+    const unsubs = batches.map((batch) =>
+      onSnapshot(
+        query(collection(db, "individuals"), where("householdId", "in", batch)),
+        (snap) => {
+          snap.docs.forEach((d) => resultsMap.set(d.id, { id: d.id, ...d.data() }));
+          setIndividuals([...resultsMap.values()]);
+        }
+      )
+    );
+    return () => unsubs.forEach((u) => u());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isViewAll, isViewAssigned, householdIdsKey]);
 
   const filteredByHook = useFilteredHouseholds(households, { area: areaFilter, searchTerm: localSearch });
   const filtered = useMemo(() => {
