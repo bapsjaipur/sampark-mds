@@ -288,17 +288,17 @@ service cloud.firestore {
 
     function canReadPadhramani() {
       let c = ctx();
-      return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts', 'edit_contacts']);
+      return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts', 'edit_contacts', 'manage_users']);
     }
 
     function canWritePadhramani() {
       let c = ctx();
-      return c.perms.hasAny(['edit_contacts']);
+      return c.perms.hasAny(['edit_contacts', 'manage_users', 'view_all_contacts']);
     }
 
     function canDeletePadhramani() {
       let c = ctx();
-      return c.perms.hasAny(['delete_contacts', 'manage_users']);
+      return c.perms.hasAny(['delete_contacts', 'manage_users', 'edit_contacts']);
     }
 
     match /padhramani/{visitId} {
