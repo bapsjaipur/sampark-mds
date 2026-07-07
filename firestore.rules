@@ -277,6 +277,29 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
+    // padhramani/{id}: householdId, scheduledDate, assignedVolunteerId,
+    //   area, status, notes, createdAt, updatedAt
+    // Read: any volunteer who can view contacts.
+    // Write: any volunteer who can edit contacts.
+    // ---------------------------------------------------------------------
+
+    function canReadPadhramani() {
+      let c = ctx();
+      return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts', 'edit_contacts']);
+    }
+
+    function canWritePadhramani() {
+      let c = ctx();
+      return c.perms.hasAny(['edit_contacts']);
+    }
+
+    match /padhramani/{visitId} {
+      allow read: if volunteerExists() && canReadPadhramani();
+      allow create, update: if volunteerExists() && canWritePadhramani();
+      allow delete: if volunteerExists() && canManageUsers();
+    }
+
+    // ---------------------------------------------------------------------
     // syncLogs/{id}: ranAt, totalMandals, totalRows, inserted, skipped, errors
     // Written ONLY by the syncFirestoreToGAS Cloud Function via the Admin
     // SDK, which bypasses these rules entirely — this block only governs
