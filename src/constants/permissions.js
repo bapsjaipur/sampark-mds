@@ -8,6 +8,9 @@ export const PERMISSIONS = {
   VIEW_ALL_CONTACTS: 'view_all_contacts',
   VIEW_ASSIGNED_CONTACTS: 'view_assigned_contacts',
   EDIT_CONTACTS: 'edit_contacts',
+  // 4.2 — granular page-level access
+  VIEW_HOUSEHOLDS: 'view_households',
+  EXPORT_DATA: 'export_data',
   ASSIGN_BATCHES: 'assign_batches',
   MANAGE_USERS: 'manage_users',
   MANAGE_ROLES: 'manage_roles',
@@ -22,6 +25,8 @@ export const PERMISSION_LABELS = {
   [PERMISSIONS.VIEW_ALL_CONTACTS]: 'View All Contacts',
   [PERMISSIONS.VIEW_ASSIGNED_CONTACTS]: 'View Assigned Contacts (area/mandal only)',
   [PERMISSIONS.EDIT_CONTACTS]: 'Edit Contacts',
+  [PERMISSIONS.VIEW_HOUSEHOLDS]: 'View Households',
+  [PERMISSIONS.EXPORT_DATA]: 'Export Data (CSV / PDF)',
   [PERMISSIONS.ASSIGN_BATCHES]: 'Assign Batches',
   [PERMISSIONS.MANAGE_USERS]: 'Manage Users (volunteers)',
   [PERMISSIONS.MANAGE_ROLES]: 'Manage Roles',

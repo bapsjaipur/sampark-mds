@@ -14,6 +14,7 @@ import { signOut } from 'firebase/auth';
 import {
   Home, Users, CalendarDays, Bell, ListChecks, LayoutDashboard,
   ShieldCheck, UserCog, MapPin, Wrench, LogOut, Menu, X, ChevronsLeft, ChevronsRight,
+  HeartHandshake,
 } from 'lucide-react';
 import { auth } from '../lib/firebase';
 import { useAuth } from '../hooks/usePermissions';
@@ -60,8 +61,11 @@ function SidebarContent({ collapsed, onNavigate }) {
 
       <nav className="flex-1 space-y-0.5 overflow-y-auto">
         <NavItem to="/households" icon={Home} collapsed={collapsed} onNavigate={onNavigate}>Households</NavItem>
-        <NavItem to="/contacts" icon={Users} collapsed={collapsed} onNavigate={onNavigate}>All Contacts</NavItem>
+        <RequirePermission anyOf={['view_all_contacts', 'view_assigned_contacts']}>
+          <NavItem to="/contacts" icon={Users} collapsed={collapsed} onNavigate={onNavigate}>All Contacts</NavItem>
+        </RequirePermission>
         <NavItem to="/events" icon={CalendarDays} collapsed={collapsed} onNavigate={onNavigate}>Events</NavItem>
+        <NavItem to="/padhramani" icon={HeartHandshake} collapsed={collapsed} onNavigate={onNavigate}>Padhramani</NavItem>
         <NavItem to="/reminders" icon={Bell} collapsed={collapsed} onNavigate={onNavigate}>Reminders</NavItem>
 
         <RequirePermission anyOf={['assign_batches', 'view_all_contacts', 'view_assigned_contacts', 'manage_users', 'manage_roles', 'run_gas_sync']}>
