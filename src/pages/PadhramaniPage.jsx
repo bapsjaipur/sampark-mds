@@ -17,7 +17,9 @@ import {
 import {
   Plus, Download, Pencil, Trash2, ChevronDown,
   Home, CalendarDays, Users, GripVertical, X, MapPin, Route,
+  FileDown, FileText,
 } from "lucide-react";
+import { exportPadhramaniDayPdf, exportBlankFormPdf } from "../lib/pdfExports";
 import { db } from "../lib/firebase";
 import { useAuth } from "../hooks/usePermissions";
 import { useAreasAndMandals } from "../hooks/useAreasAndMandals";
@@ -636,6 +638,12 @@ function EditHouseholdsModal({ event, onClose }) {
 
 export function EventCard({ event, isAdmin, currentUserId, onEdit, onDelete, onUpdateHouseholdStatus }) {
   const [expanded, setExpanded] = useState(false);
+  const [printing, setPrinting] = useState(false);
+
+  async function handlePrint() {
+    setPrinting(true);
+    try { await exportPadhramaniDayPdf(event); } finally { setPrinting(false); }
+  }
   const hhs = event.households || [];
   const visited = hhs.filter((h) => h.status === "completed").length;
   const isAssignedKaryakarta = event.assignedVolunteerId === currentUserId;
@@ -741,11 +749,11 @@ export function EventCard({ event, isAdmin, currentUserId, onEdit, onDelete, onU
             )}
           </div>
 
-          {/* 7.3 — Route link when households have stored locations */}
-          {(() => {
-            const url = buildMapsRouteUrl(hhs);
-            return url ? (
-              <div className="border-t border-slate-100 px-4 py-2">
+          {/* Footer: route link + print button, then edit controls */}
+          <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2">
+            {(() => {
+              const url = buildMapsRouteUrl(hhs);
+              return url ? (
                 <a
                   href={url}
                   target="_blank"
@@ -754,9 +762,18 @@ export function EventCard({ event, isAdmin, currentUserId, onEdit, onDelete, onU
                 >
                   <MapPin className="h-3.5 w-3.5" /> View route on Google Maps
                 </a>
-              </div>
-            ) : null;
-          })()}
+              ) : <span />;
+            })()}
+            <button
+              type="button"
+              onClick={handlePrint}
+              disabled={printing}
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-50"
+            >
+              <FileDown className="h-3.5 w-3.5" />
+              {printing ? "Generating…" : "Print schedule"}
+            </button>
+          </div>
 
           {canEditEvent && (
             <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-4 py-2.5">
@@ -901,6 +918,9 @@ export default function PadhramaniPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => exportBlankFormPdf()}>
+            <FileText className="h-3.5 w-3.5" /> Blank form
+          </Button>
           <Button variant="secondary" onClick={exportCSV}>
             <Download className="h-3.5 w-3.5" /> Export CSV
           </Button>

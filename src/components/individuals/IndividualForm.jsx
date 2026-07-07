@@ -124,6 +124,7 @@ const emptyForm = {
   relation: "member", isPrimary: false, profilePhotoURL: "",
   study: "", profession: "", skill: "",
   samparkKaryakartaName: "", samparkKaryakartaNumber: "",
+  photoPending: false,
 };
 
 export default function IndividualForm({ individual, onSubmit, onCancel, withinHousehold = false, householdArea = "" }) {
@@ -138,6 +139,7 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
           isPrimary: Boolean(individual.isPrimary), profilePhotoURL: individual.profilePhotoURL || "",
           study: individual.study || "", profession: individual.profession || "", skill: individual.skill || "",
           samparkKaryakartaName: individual.samparkKaryakartaName || "", samparkKaryakartaNumber: individual.samparkKaryakartaNumber || "",
+          photoPending: Boolean(individual.photoPending),
         }
       : emptyForm
   );
@@ -204,6 +206,8 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       samparkKaryakartaName: showSamparkKaryakarta ? form.samparkKaryakartaName : "",
       samparkKaryakartaNumber: showSamparkKaryakarta ? form.samparkKaryakartaNumber : "",
       profilePhotoURL: showPhoto ? form.profilePhotoURL : "",
+      // photoPending: true only when photo is expected but not yet uploaded
+      photoPending: showPhoto && !form.profilePhotoURL ? Boolean(form.photoPending) : false,
     };
     if (!isEdit) payload.id = draftId;
     const ok = await onSubmit(payload);
@@ -301,7 +305,22 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       {showPhoto && (
         <div>
           <Label>Photo</Label>
-          <PhotoUploader individualId={photoId} currentPhotoURL={form.profilePhotoURL} onUploaded={(url) => setForm((prev) => ({ ...prev, profilePhotoURL: url }))} />
+          <PhotoUploader
+            individualId={photoId}
+            currentPhotoURL={form.profilePhotoURL}
+            onUploaded={(url) => setForm((prev) => ({ ...prev, profilePhotoURL: url, photoPending: false }))}
+          />
+          {!form.profilePhotoURL && (
+            <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-slate-500">
+              <input
+                type="checkbox"
+                checked={form.photoPending}
+                onChange={(e) => setForm((f) => ({ ...f, photoPending: e.target.checked }))}
+                className="h-3.5 w-3.5 rounded accent-orange-600"
+              />
+              Add photo later (mark as pending)
+            </label>
+          )}
         </div>
       )}
 

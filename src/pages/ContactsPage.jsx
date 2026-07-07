@@ -72,6 +72,7 @@ export default function ContactsPage() {
   const [householdFilter, setHouseholdFilter] = useState("");
   const [birthdayMonth, setBirthdayMonth] = useState(false);
   const [anniversaryMonth, setAnniversaryMonth] = useState(false);
+  const [missingPhotos, setMissingPhotos] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [formModal, setFormModal] = useState({ open: false, contact: null });
   const [attachModal, setAttachModal] = useState(null);
@@ -91,6 +92,7 @@ export default function ContactsPage() {
     if (householdFilter === "without") rows = rows.filter((c) => !c.householdId);
     if (birthdayMonth) rows = rows.filter((c) => isThisMonth(c.dob));
     if (anniversaryMonth) rows = rows.filter((c) => isThisMonth(c.anniversary));
+    if (missingPhotos) rows = rows.filter((c) => c.photoPending === true);
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       rows = rows.filter((c) => c.name?.toLowerCase().includes(q) || c.mobile?.includes(q));
@@ -99,7 +101,7 @@ export default function ContactsPage() {
   }, [contacts, search, mandalFilter, areaFilter, householdFilter, birthdayMonth, anniversaryMonth]);
 
   // Reset to page 1 on any filter change
-  useEffect(() => { setCurrentPage(1); }, [mandalFilter, areaFilter, householdFilter, birthdayMonth, anniversaryMonth, search]);
+  useEffect(() => { setCurrentPage(1); }, [mandalFilter, areaFilter, householdFilter, birthdayMonth, anniversaryMonth, missingPhotos, search]);
 
   // Drop selections that no longer appear in the filtered list
   useEffect(() => {
@@ -142,7 +144,7 @@ export default function ContactsPage() {
     if (ok) { setSelected(new Set()); setBulkDeleteOpen(false); }
   }
 
-  const hasActiveFilters = Boolean(search || mandalFilter || areaFilter || householdFilter || birthdayMonth || anniversaryMonth);
+  const hasActiveFilters = Boolean(search || mandalFilter || areaFilter || householdFilter || birthdayMonth || anniversaryMonth || missingPhotos);
   const totalCount = serverTotal ?? contacts.length;
 
   return (
@@ -186,12 +188,12 @@ export default function ContactsPage() {
           <option value="without">Not grouped yet</option>
         </Select>
         {hasActiveFilters && (
-          <button onClick={() => { setSearch(""); setMandalFilter(""); setAreaFilter(""); setHouseholdFilter(""); setBirthdayMonth(false); setAnniversaryMonth(false); }}
+          <button onClick={() => { setSearch(""); setMandalFilter(""); setAreaFilter(""); setHouseholdFilter(""); setBirthdayMonth(false); setAnniversaryMonth(false); setMissingPhotos(false); }}
             className="text-xs text-orange-600 hover:underline">Clear all</button>
         )}
       </div>
 
-      {/* Birthday / Anniversary toggles */}
+      {/* Birthday / Anniversary / Missing photos toggles */}
       <div className="mb-4 flex flex-wrap gap-2">
         <button onClick={() => setBirthdayMonth((v) => !v)}
           className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition ${birthdayMonth ? "border-orange-400 bg-orange-50 text-orange-700" : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"}`}>
@@ -202,6 +204,11 @@ export default function ContactsPage() {
           className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition ${anniversaryMonth ? "border-pink-400 bg-pink-50 text-pink-700" : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"}`}>
           💍 Anniversaries this month
           {anniversaryMonth && <X className="h-3 w-3" onClick={(e) => { e.stopPropagation(); setAnniversaryMonth(false); }} />}
+        </button>
+        <button onClick={() => setMissingPhotos((v) => !v)}
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition ${missingPhotos ? "border-violet-400 bg-violet-50 text-violet-700" : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"}`}>
+          📷 Missing photos
+          {missingPhotos && <X className="h-3 w-3" onClick={(e) => { e.stopPropagation(); setMissingPhotos(false); }} />}
         </button>
       </div>
 

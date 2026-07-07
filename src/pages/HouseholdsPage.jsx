@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { Link } from "react-router-dom";
-import { Plus, Trash2, Upload, Users, ChevronLeft, ChevronRight, BarChart2 } from "lucide-react";
+import { Plus, Trash2, Upload, Users, ChevronLeft, ChevronRight, BarChart2, FileText } from "lucide-react";
 import { useHouseholds, useFilteredHouseholds } from "../hooks/useHouseholds";
 import { useAuth } from "../hooks/usePermissions";
 import { useAreasAndMandals } from "../hooks/useAreasAndMandals";
@@ -13,6 +13,7 @@ import Modal from "../components/ui/Modal";
 import RequirePermission from "../components/RequirePermission";
 import ImportContactsWizard from "../components/import-export/ImportContactsWizard";
 import ExportButtons from "../components/import-export/ExportButtons";
+import { exportBlankFormPdf } from "../lib/pdfExports";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Select } from "../components/ui/Input";
@@ -233,6 +234,9 @@ export default function HouseholdsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="secondary" onClick={() => exportBlankFormPdf()}>
+            <FileText className="h-3.5 w-3.5" /> Blank form
+          </Button>
           <ExportButtons rows={individuals} label="contacts" />
           <RequirePermission permission="edit_contacts">
             <Button variant="secondary" onClick={() => setImportOpen(true)}><Upload className="h-3.5 w-3.5" /> Import</Button>
