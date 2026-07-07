@@ -94,7 +94,8 @@ function VolunteerDropdown({ label, value, onChange, volunteers }) {
 
 // ── Schedule visit modal (single visit) ───────────────────────────────────────
 function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
-  const { volunteer: currentUser } = useAuth();
+  const { volunteer: currentUser, hasPermission } = useAuth();
+  const isViewAll = hasPermission("view_all_contacts");
   const { showToast } = useToast();
   const [households, setHouseholds] = useState([]);
   const [nonSantoVolunteers, setNonSantoVolunteers] = useState([]);
@@ -116,8 +117,16 @@ function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    if (!currentUser) return;
+    const myAreas = currentUser.assignedAreas || [];
+    const hhQuery = isViewAll
+      ? query(collection(db, "households"), orderBy("address"))
+      : myAreas.length > 0
+        ? query(collection(db, "households"), where("area", "in", myAreas.slice(0, 30)))
+        : null;
+    if (!hhQuery) return;
     Promise.all([
-      getDocs(query(collection(db, "households"), orderBy("address"))),
+      getDocs(hhQuery),
       loadVolunteersAndRoles(),
       getDocs(query(collection(db, "padhramani"), where("status", "==", "scheduled"))),
     ]).then(([hhSnap, { nonSantoVolunteers: nsv, santoVolunteers: sv }, padSnap]) => {
@@ -132,7 +141,7 @@ function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
         if (hh) setForm((f) => ({ ...f, householdAddress: hh.address || "", area: hh.area || "" }));
       }
     });
-  }, [prefillHouseholdId]);
+  }, [prefillHouseholdId, currentUser?.id, isViewAll]);
 
   function handleHouseholdPick(id) {
     const hh = households.find((h) => h.id === id);
@@ -774,6 +783,8 @@ export default function PadhramaniPage() {
   const { visits, loading } = usePadhramani();
   const { areas } = useAreasAndMandals();
   const { showToast } = useToast();
+  const { volunteer: currentUser, hasPermission } = useAuth();
+  const isViewAll = hasPermission("view_all_contacts");
 
   const [nonSantoVolunteers, setNonSantoVolunteers] = useState([]);
   const [santoVolunteers, setSantoVolunteers] = useState([]);
@@ -791,15 +802,27 @@ export default function PadhramaniPage() {
   const [tab, setTab] = useState("visits");
 
   useEffect(() => {
+    if (!currentUser) return;
     loadVolunteersAndRoles().then(({ nonSantoVolunteers: nsv, santoVolunteers: sv }) => {
       setNonSantoVolunteers(nsv);
       setSantoVolunteers(sv);
     });
-    // Load primary member info and mandal for each household
-    Promise.all([
-      getDocs(collection(db, "individuals")),
-      getDocs(collection(db, "households")),
-    ]).then(([indSnap, hhSnap]) => {
+    // Load primary member info and mandal, scoped to the user's areas so the
+    // Firestore security rule (which requires area-filtered queries for non-admins)
+    // doesn't reject the reads with "Missing or insufficient permissions".
+    const myAreas = currentUser.assignedAreas || [];
+    const indQ = isViewAll
+      ? collection(db, "individuals")
+      : myAreas.length > 0
+        ? query(collection(db, "individuals"), where("area", "in", myAreas.slice(0, 30)))
+        : null;
+    const hhQ = isViewAll
+      ? collection(db, "households")
+      : myAreas.length > 0
+        ? query(collection(db, "households"), where("area", "in", myAreas.slice(0, 30)))
+        : null;
+    if (!indQ || !hhQ) return;
+    Promise.all([getDocs(indQ), getDocs(hhQ)]).then(([indSnap, hhSnap]) => {
       const members = {};
       indSnap.docs.forEach((d) => {
         const ind = d.data();
@@ -813,7 +836,7 @@ export default function PadhramaniPage() {
       hhSnap.docs.forEach((d) => { if (d.data().mandal) mand[d.id] = d.data().mandal; });
       setMandalByHousehold(mand);
     });
-  }, []);
+  }, [currentUser?.id, isViewAll]);
 
   async function handleDeleteVisit(visitId) {
     try {
