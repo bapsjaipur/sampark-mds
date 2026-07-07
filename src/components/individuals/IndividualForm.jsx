@@ -23,6 +23,7 @@
 import { useState, useEffect, useRef } from "react";
 import { doc, collection, getDocs, query, orderBy } from "firebase/firestore";
 import { db } from "../../lib/firebase";
+import { useAuth } from "../../hooks/usePermissions";
 import PhotoUploader from "../photo/PhotoUploader";
 import { MandalSelect, AreaSelect } from "../AreaMandalSelect";
 import { useAreasAndMandals } from "../../hooks/useAreasAndMandals";
@@ -34,15 +35,26 @@ import { Button } from "../ui/Button";
 // Typing shows matching volunteers; selecting one auto-fills the mobile number.
 // Free text still works — if no volunteer is chosen both fields stay editable.
 function SamparkPicker({ name, number, onChangeName, onChangeNumber }) {
+  const { volunteer: currentUser } = useAuth();
   const [volunteers, setVolunteers] = useState([]);
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
   useEffect(() => {
     getDocs(query(collection(db, "volunteers"), orderBy("name"))).then((snap) => {
-      setVolunteers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const myAreas = currentUser?.assignedAreas || [];
+      if (myAreas.length === 0) {
+        setVolunteers(all); // admin: show everyone
+      } else {
+        setVolunteers(all.filter((v) => {
+          const vAreas = v.assignedAreas || [];
+          // show volunteers with no area restriction, or sharing at least one area
+          return vAreas.length === 0 || vAreas.some((a) => myAreas.includes(a));
+        }));
+      }
     });
-  }, []);
+  }, [currentUser?.id]);
 
   const filtered = volunteers.filter((v) =>
     v.name?.toLowerCase().includes(name.toLowerCase())

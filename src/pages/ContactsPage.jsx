@@ -1,12 +1,12 @@
 // src/pages/ContactsPage.jsx
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, Home, Pencil, Trash2, Upload, Eye, MapPin, X } from "lucide-react";
-import { writeBatch, doc, serverTimestamp } from "firebase/firestore";
+import { Plus, Home, Pencil, Trash2, Upload, Eye, X } from "lucide-react";
+import { collection, getDocs, query, orderBy, where } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAllContacts } from "../hooks/useAllContacts";
 import { useAreasAndMandals } from "../hooks/useAreasAndMandals";
-import { bulkDeleteIndividuals } from "../services/bulkService";
+import { useAuth } from "../hooks/usePermissions";
 import IndividualForm from "../components/individuals/IndividualForm";
 import AddToHousehold from "../components/individuals/AddToHousehold";
 import ImportContactsWizard from "../components/import-export/ImportContactsWizard";
@@ -35,6 +35,7 @@ function isThisMonth(dateStr) {
 export default function ContactsPage() {
   const { contacts, loading, hasMore, loadMore, createContact, updateContact, deleteContact, serverTotal, serverUngrouped, isViewAll, isViewAssigned } = useAllContacts({ pageSize: PAGE_SIZE });
   const { areas, mandals } = useAreasAndMandals();
+  const { volunteer: currentUser } = useAuth();
   const { showToast } = useToast();
   const [search, setSearch] = useState("");
   const [mandalFilter, setMandalFilter] = useState("");
@@ -47,11 +48,6 @@ export default function ContactsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [selected, setSelected] = useState(new Set());
-  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
-  const [bulkDeleting, setBulkDeleting] = useState(false);
-  const [assignAreaModal, setAssignAreaModal] = useState(false);
-  const [assigningArea, setAssigningArea] = useState("");
-  const [assigningBusy, setAssigningBusy] = useState(false);
 
   const filtered = useMemo(() => {
     let rows = contacts;
@@ -67,6 +63,11 @@ export default function ContactsPage() {
     }
     return rows;
   }, [contacts, search, mandalFilter, areaFilter, householdFilter, birthdayMonth, anniversaryMonth]);
+
+  const selectedContacts = useMemo(
+    () => filtered.filter((c) => selected.has(c.id)),
+    [filtered, selected]
+  );
 
   useEffect(() => {
     const filteredIds = new Set(filtered.map((c) => c.id));
@@ -93,42 +94,19 @@ export default function ContactsPage() {
     setConfirmDelete(null);
   }
 
-  async function handleBulkDelete() {
-    setBulkDeleting(true);
-    try {
-      const count = await bulkDeleteIndividuals([...selected]);
-      showToast({ type: "success", message: `${count} contact(s) deleted.` });
-      setSelected(new Set());
-      setConfirmBulkDelete(false);
-    } catch (err) {
-      showToast({ type: "error", message: "Bulk delete failed partway through. Check your permissions." });
-    } finally {
-      setBulkDeleting(false);
+  // Fetch ALL contacts from Firestore (no pagination) for full export
+  async function fetchAllContacts() {
+    const assignedAreas = currentUser?.assignedAreas || [];
+    let q;
+    if (isViewAll) {
+      q = query(collection(db, "individuals"), orderBy("name"));
+    } else if (assignedAreas.length > 0) {
+      q = query(collection(db, "individuals"), where("area", "in", assignedAreas.slice(0, 30)), orderBy("area"));
+    } else {
+      return [];
     }
-  }
-
-  async function handleBulkAssignArea() {
-    if (!assigningArea) return;
-    setAssigningBusy(true);
-    try {
-      const ids = [...selected];
-      const CHUNK = 400;
-      for (let i = 0; i < ids.length; i += CHUNK) {
-        const batch = writeBatch(db);
-        ids.slice(i, i + CHUNK).forEach((id) => {
-          batch.update(doc(db, "individuals", id), { area: assigningArea, updatedAt: serverTimestamp() });
-        });
-        await batch.commit();
-      }
-      showToast({ type: "success", message: `Area updated for ${ids.length} contact(s).` });
-      setSelected(new Set());
-      setAssignAreaModal(false);
-      setAssigningArea("");
-    } catch {
-      showToast({ type: "error", message: "Area assignment failed. Check your permissions." });
-    } finally {
-      setAssigningBusy(false);
-    }
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   }
 
   const hasActiveFilters = Boolean(search || mandalFilter || areaFilter || householdFilter || birthdayMonth || anniversaryMonth);
@@ -154,7 +132,7 @@ export default function ContactsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <ExportButtons rows={filtered} label="contacts" />
+          <ExportButtons rows={filtered} label="contacts" fetchAllRows={fetchAllContacts} />
           <RequirePermission permission="edit_contacts">
             <Button variant="secondary" onClick={() => setImportOpen(true)}><Upload className="h-3.5 w-3.5" /> Import</Button>
           </RequirePermission>
@@ -182,7 +160,7 @@ export default function ContactsPage() {
         </Select>
       </div>
 
-      {/* 2.4 — Birthday / Anniversary this-month toggles */}
+      {/* Birthday / Anniversary toggles */}
       <div className="mb-4 flex flex-wrap gap-2">
         <button
           onClick={() => setBirthdayMonth((v) => !v)}
@@ -200,18 +178,13 @@ export default function ContactsPage() {
         </button>
       </div>
 
-      {/* Bulk action bar */}
+      {/* Selection export bar */}
       {selected.size > 0 && (
         <div className="mb-3 flex items-center justify-between rounded-lg border border-orange-200 bg-orange-50 px-4 py-2.5">
           <p className="text-sm font-medium text-orange-800">{selected.size} selected</p>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
-            <RequirePermission permission="edit_contacts">
-              <Button variant="secondary" size="sm" onClick={() => setAssignAreaModal(true)}><MapPin className="h-3.5 w-3.5" /> Assign area</Button>
-            </RequirePermission>
-            <RequirePermission permission="bulk_delete_contacts">
-              <Button variant="dangerSolid" size="sm" onClick={() => setConfirmBulkDelete(true)}><Trash2 className="h-3.5 w-3.5" /> Delete {selected.size}</Button>
-            </RequirePermission>
+            <ExportButtons rows={selectedContacts} label={`${selected.size}-contacts`} />
           </div>
         </div>
       )}
@@ -226,7 +199,7 @@ export default function ContactsPage() {
           <RequirePermission permission="edit_contacts">
             <div className="flex items-center gap-3 border-b border-slate-100 bg-slate-50/60 px-3 py-2">
               <input type="checkbox" checked={selected.size === filtered.length && filtered.length > 0} onChange={toggleAllFiltered} className="h-4 w-4 rounded accent-orange-600" />
-              <span className="text-xs font-medium text-slate-500">Select all {filtered.length} filtered</span>
+              <span className="text-xs font-medium text-slate-500">Select all {filtered.length} loaded · use CSV/PDF above to export all</span>
             </div>
           </RequirePermission>
           <div className="divide-y divide-slate-50">
@@ -266,7 +239,7 @@ export default function ContactsPage() {
         <div className="mt-5 flex flex-col items-center gap-1">
           <Button variant="secondary" onClick={loadMore}>Load more contacts</Button>
           {hasActiveFilters && (
-            <p className="text-xs text-slate-400">Filters apply to loaded contacts only — load more to widen the search.</p>
+            <p className="text-xs text-slate-400">Filters apply to loaded contacts only — use CSV/PDF export above to get all contacts.</p>
           )}
         </div>
       )}
@@ -290,30 +263,6 @@ export default function ContactsPage() {
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setConfirmDelete(null)}>Cancel</Button>
           <Button variant="dangerSolid" onClick={handleConfirmDelete}>Delete</Button>
-        </div>
-      </Modal>
-
-      {/* Bulk delete */}
-      <Modal open={confirmBulkDelete} onClose={() => setConfirmBulkDelete(false)} title={`Delete ${selected.size} contacts?`} size="sm">
-        <p className="text-sm text-slate-500">This permanently deletes all {selected.size} selected contacts. This can't be undone.</p>
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => setConfirmBulkDelete(false)}>Cancel</Button>
-          <Button variant="dangerSolid" onClick={handleBulkDelete} disabled={bulkDeleting}>{bulkDeleting ? "Deleting…" : `Delete ${selected.size}`}</Button>
-        </div>
-      </Modal>
-
-      {/* 2.5 — Bulk assign area */}
-      <Modal open={assignAreaModal} onClose={() => { setAssignAreaModal(false); setAssigningArea(""); }} title={`Assign area to ${selected.size} contact(s)`} size="sm">
-        <p className="mb-3 text-sm text-slate-500">All selected contacts will be moved to this area.</p>
-        <Select value={assigningArea} onChange={(e) => setAssigningArea(e.target.value)} className="w-full">
-          <option value="">Pick an area…</option>
-          {areas.map((a) => <option key={a.code || a.name} value={a.name}>{a.name}</option>)}
-        </Select>
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => { setAssignAreaModal(false); setAssigningArea(""); }}>Cancel</Button>
-          <Button variant="accent" onClick={handleBulkAssignArea} disabled={!assigningArea || assigningBusy}>
-            {assigningBusy ? "Saving…" : `Assign to ${selected.size}`}
-          </Button>
         </div>
       </Modal>
     </div>

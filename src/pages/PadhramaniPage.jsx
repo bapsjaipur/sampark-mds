@@ -1,13 +1,14 @@
 // src/pages/PadhramaniPage.jsx — 6.1–6.9 Padhramani (home visit) tracking
 import { useEffect, useMemo, useState } from "react";
 import {
-  collection, addDoc, updateDoc, doc, getDocs, onSnapshot,
+  collection, addDoc, updateDoc, deleteDoc, doc, getDocs, onSnapshot,
   serverTimestamp, query, orderBy, where, writeBatch,
 } from "firebase/firestore";
 import {
-  Plus, CheckCircle2, XCircle, Clock, Home, Download, Bell, Pencil,
-  GripVertical, ChevronDown, CalendarDays, X,
+  Plus, CheckCircle2, XCircle, Clock, Home, Download, Bell, Pencil, Trash2,
+  GripVertical, ChevronDown, CalendarDays, X, Phone,
 } from "lucide-react";
+import RequirePermission from "../components/RequirePermission";
 import { db } from "../lib/firebase";
 import { usePadhramani } from "../hooks/usePadhramani";
 import { useAreasAndMandals } from "../hooks/useAreasAndMandals";
@@ -776,11 +777,10 @@ export default function PadhramaniPage() {
 
   const [nonSantoVolunteers, setNonSantoVolunteers] = useState([]);
   const [santoVolunteers, setSantoVolunteers] = useState([]);
-  const [events, setEvents] = useState([]);
-  const [eventsLoading, setEventsLoading] = useState(true);
+  const [memberByHousehold, setMemberByHousehold] = useState({}); // hhId → {name, mobile}
+  const [mandalByHousehold, setMandalByHousehold] = useState({}); // hhId → mandal
 
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [createEventOpen, setCreateEventOpen] = useState(false);
   const [outcomeVisit, setOutcomeVisit] = useState(null);
   const [editVisit, setEditVisit] = useState(null);
 
@@ -795,49 +795,32 @@ export default function PadhramaniPage() {
       setNonSantoVolunteers(nsv);
       setSantoVolunteers(sv);
     });
+    // Load primary member info and mandal for each household
+    Promise.all([
+      getDocs(collection(db, "individuals")),
+      getDocs(collection(db, "households")),
+    ]).then(([indSnap, hhSnap]) => {
+      const members = {};
+      indSnap.docs.forEach((d) => {
+        const ind = d.data();
+        if (!ind.householdId) return;
+        if (ind.isPrimary || !members[ind.householdId]) {
+          members[ind.householdId] = { name: ind.name, mobile: ind.mobile };
+        }
+      });
+      setMemberByHousehold(members);
+      const mand = {};
+      hhSnap.docs.forEach((d) => { if (d.data().mandal) mand[d.id] = d.data().mandal; });
+      setMandalByHousehold(mand);
+    });
   }, []);
 
-  useEffect(() => {
-    const unsub = onSnapshot(
-      query(collection(db, "padhramaniEvents"), orderBy("createdAt", "desc")),
-      (snap) => { setEvents(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); setEventsLoading(false); },
-      (err) => { console.error(err); setEventsLoading(false); }
-    );
-    return unsub;
-  }, []);
-
-  async function handleScheduleAll(event) {
+  async function handleDeleteVisit(visitId) {
     try {
-      const batch = writeBatch(db);
-      (event.households || []).forEach((hh, i) => {
-        const ref = doc(collection(db, "padhramani"));
-        batch.set(ref, {
-          householdId: hh.householdId,
-          householdAddress: hh.address,
-          scheduledDate: event.scheduledDate,
-          assignedVolunteerId: event.assignedVolunteerId || null,
-          assignedVolunteerName: event.assignedVolunteerName || null,
-          secondVolunteerId: event.secondVolunteerId || null,
-          secondVolunteerName: event.secondVolunteerName || null,
-          santo2Id: event.santo2Id || null,
-          santo2Name: event.santo2Name || null,
-          area: hh.area || null,
-          notes: event.notes || null,
-          sequenceNo: i + 1,
-          eventId: event.id,
-          status: "scheduled",
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      });
-      batch.update(doc(db, "padhramaniEvents", event.id), {
-        status: "scheduled",
-        updatedAt: serverTimestamp(),
-      });
-      await batch.commit();
-      showToast({ type: "success", message: `${event.households?.length || 0} visits scheduled from "${event.name}".` });
+      await deleteDoc(doc(db, "padhramani", visitId));
+      showToast({ type: "success", message: "Visit removed." });
     } catch (err) {
-      showToast({ type: "error", message: err.message || "Couldn't schedule visits." });
+      showToast({ type: "error", message: err.message || "Couldn't remove visit." });
     }
   }
 
@@ -897,11 +880,17 @@ export default function PadhramaniPage() {
     return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
   }, [filtered]);
 
+  // Total visit count per household across ALL visits (not just filtered)
+  const visitCountByHousehold = useMemo(() => {
+    const map = {};
+    visits.forEach((v) => { if (v.householdId) map[v.householdId] = (map[v.householdId] || 0) + 1; });
+    return map;
+  }, [visits]);
+
   const TABS = [
     { key: "visits",       label: "All visits" },
     { key: "by-household", label: "By household" },
     { key: "by-volunteer", label: "By volunteer" },
-    { key: "events",       label: events.length ? `Events (${events.length})` : "Events" },
   ];
 
   return (
@@ -920,20 +909,12 @@ export default function PadhramaniPage() {
           <p className="text-sm text-slate-400">{visits.length} visit record(s)</p>
         </div>
         <div className="flex gap-2">
-          {tab === "events" ? (
-            <Button variant="accent" onClick={() => setCreateEventOpen(true)}>
-              <CalendarDays className="h-3.5 w-3.5" /> New Event
-            </Button>
-          ) : (
-            <>
-              <Button variant="secondary" onClick={() => exportCSV(filtered)}><Download className="h-3.5 w-3.5" /> Export</Button>
-              <Button variant="accent" onClick={() => setScheduleOpen(true)}><Plus className="h-3.5 w-3.5" /> Schedule visit</Button>
-            </>
-          )}
+          <Button variant="secondary" onClick={() => exportCSV(filtered)}><Download className="h-3.5 w-3.5" /> Export</Button>
+          <Button variant="accent" onClick={() => setScheduleOpen(true)}><Plus className="h-3.5 w-3.5" /> Schedule visit</Button>
         </div>
       </div>
 
-      {tab !== "events" && <SummaryCards visits={visits} />}
+      <SummaryCards visits={visits} />
 
       {/* Tab bar */}
       <div className="mb-4 flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 w-fit">
@@ -945,94 +926,83 @@ export default function PadhramaniPage() {
         ))}
       </div>
 
-      {/* ── Events tab ─────────────────────────────────────────────────────── */}
-      {tab === "events" ? (
-        <div>
-          <p className="mb-4 text-sm text-slate-400">
-            Create an event once with a shared date, volunteer, and santos — then add all households and set the visit order by dragging. Hit <strong>Schedule All</strong> to create visits in one go.
-          </p>
-          {eventsLoading ? (
-            <div className="space-y-3">{[1, 2, 3].map((i) => <div key={i} className="h-20 animate-pulse rounded-xl bg-slate-100" />)}</div>
-          ) : events.length === 0 ? (
-            <div className="rounded-xl border-2 border-dashed border-slate-200 py-16 text-center">
-              <CalendarDays className="mx-auto h-8 w-8 text-slate-300 mb-3" />
-              <p className="text-sm font-medium text-slate-500">No events yet</p>
-              <p className="mt-1 text-xs text-slate-400">Create an event to bulk-schedule 20–30 household visits at once</p>
-              <Button variant="accent" className="mt-4" onClick={() => setCreateEventOpen(true)}>
-                <Plus className="h-3.5 w-3.5" /> Create first event
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {events.map((ev) => (
-                <EventCard key={ev.id} event={ev}
-                  onScheduleAll={handleScheduleAll}
-                  onExport={exportEventCSV} />
-              ))}
-            </div>
-          )}
+      {/* ── Visits tabs ─────────────────────────────────────────────────────── */}
+      <>
+        <div className="mb-4 flex flex-wrap gap-3">
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, address, volunteer…" className="w-52" />
+          <Select value={areaFilter} onChange={(e) => setAreaFilter(e.target.value)} className="w-36">
+            <option value="">All areas</option>
+            {areas.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
+          </Select>
+          <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-36">
+            <option value="">All statuses</option>
+            {Object.entries(OUTCOMES).map(([k, o]) => <option key={k} value={k}>{o.label}</option>)}
+          </Select>
+          <Select value={volunteerFilter} onChange={(e) => setVolunteerFilter(e.target.value)} className="w-40">
+            <option value="">All volunteers</option>
+            {volunteerNames.map((n) => <option key={n} value={n}>{n}</option>)}
+          </Select>
         </div>
 
-      ) : (
-        /* ── Visits tabs ───────────────────────────────────────────────────── */
-        <>
-          <div className="mb-4 flex flex-wrap gap-3">
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search household, volunteer…" className="w-52" />
-            <Select value={areaFilter} onChange={(e) => setAreaFilter(e.target.value)} className="w-36">
-              <option value="">All areas</option>
-              {areas.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
-            </Select>
-            <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-36">
-              <option value="">All statuses</option>
-              {Object.entries(OUTCOMES).map(([k, o]) => <option key={k} value={k}>{o.label}</option>)}
-            </Select>
-            <Select value={volunteerFilter} onChange={(e) => setVolunteerFilter(e.target.value)} className="w-40">
-              <option value="">All volunteers</option>
-              {volunteerNames.map((n) => <option key={n} value={n}>{n}</option>)}
-            </Select>
-          </div>
-
-          {loading ? (
-            <div className="space-y-2">{[1,2,3,4,5].map((i) => <div key={i} className="h-12 animate-pulse rounded-lg bg-slate-100" />)}</div>
-          ) : filtered.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-slate-200 py-16 text-center text-slate-400">No visits match your filters.</p>
-          ) : tab === "visits" ? (
-            <div className="rounded-lg border border-slate-100 divide-y divide-slate-50">
-              {filtered.map((v) => {
-                const vLine = volunteerLine(v);
-                return (
-                  <div key={v.id} className={`flex items-start gap-3 px-4 py-3 hover:bg-slate-50/70 ${overdue(v.scheduledDate, v.status) ? "bg-rose-50/30" : ""}`}>
-                    <div className="mt-0.5">
-                      {v.status === "completed" ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> :
-                        v.status === "not_home" ? <XCircle className="h-4 w-4 text-amber-500" /> :
-                          <Clock className="h-4 w-4 text-blue-400" />}
+        {loading ? (
+          <div className="space-y-2">{[1,2,3,4,5].map((i) => <div key={i} className="h-20 animate-pulse rounded-xl bg-slate-100" />)}</div>
+        ) : filtered.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-slate-200 py-16 text-center text-slate-400">No visits match your filters.</p>
+        ) : tab === "visits" ? (
+          <div className="space-y-2">
+            {filtered.map((v) => {
+              const member = memberByHousehold[v.householdId] || {};
+              const mandal = mandalByHousehold[v.householdId];
+              const visitCount = visitCountByHousehold[v.householdId] || 1;
+              const vLine = volunteerLine(v);
+              return (
+                <div key={v.id} className={`rounded-xl border bg-white p-4 shadow-sm ${overdue(v.scheduledDate, v.status) ? "border-rose-200 bg-rose-50/20" : "border-slate-100"}`}>
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 shrink-0">
+                      {v.status === "completed" ? <CheckCircle2 className="h-5 w-5 text-emerald-500" /> :
+                        v.status === "not_home" ? <XCircle className="h-5 w-5 text-amber-500" /> :
+                          <Clock className="h-5 w-5 text-blue-400" />}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-medium text-slate-900">{v.householdAddress || "Unknown household"}</p>
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
+                        <p className="text-sm font-semibold text-slate-900">{member.name || v.householdAddress || "Unknown household"}</p>
                         <OutcomeBadge status={v.status} />
                         {overdue(v.scheduledDate, v.status) && <span className="text-xs font-medium text-rose-600">Overdue</span>}
                         {dueSoon(v.scheduledDate) && v.status === "scheduled" && <span className="text-xs font-medium text-amber-600">Due soon</span>}
+                        {visitCount > 1 && <span className="text-xs font-medium text-orange-600">{visitCount} visits total</span>}
                       </div>
-                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5 text-xs text-slate-400">
-                        <span>{formatDate(v.scheduledDate)}</span>
-                        {v.area && <span>{v.area}</span>}
-                        {vLine && <span className="font-medium text-slate-600">{vLine}</span>}
-                        {v.notes && <span className="italic truncate max-w-xs">{v.notes}</span>}
+                      <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-500">
+                        {member.mobile && <span className="inline-flex items-center gap-1"><Phone className="h-3 w-3" />{member.mobile}</span>}
+                        <span className="inline-flex items-center gap-1"><CalendarDays className="h-3 w-3" />{formatDate(v.scheduledDate)}</span>
+                        {(v.householdAddress || v.area || mandal) && (
+                          <span className="inline-flex items-center gap-1">
+                            <Home className="h-3 w-3" />
+                            {[v.householdAddress, v.area, mandal].filter(Boolean).join(" · ")}
+                          </span>
+                        )}
                       </div>
+                      {vLine && <p className="mt-0.5 text-xs font-medium text-slate-600">{vLine}</p>}
+                      {v.notes && <p className="mt-0.5 text-xs italic text-slate-400 truncate max-w-sm">{v.notes}</p>}
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
+                    <div className="flex shrink-0 items-center gap-1">
                       <button onClick={() => setEditVisit(v)} title="Edit"
                         className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
                       <Button variant="ghost" size="sm" onClick={() => setOutcomeVisit(v)}>Update</Button>
+                      <RequirePermission permission="delete_contacts">
+                        <button onClick={() => handleDeleteVisit(v.id)} title="Remove visit"
+                          className="rounded p-1.5 text-slate-300 hover:bg-rose-50 hover:text-rose-500 transition-colors">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </RequirePermission>
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          ) : tab === "by-household" ? (
+                </div>
+              );
+            })}
+          </div>
+        ) : tab === "by-household" ? (
             <div className="space-y-3">
               {byHousehold.map(([hhId, hh]) => (
                 <div key={hhId} className="rounded-lg border border-slate-100 p-4">
@@ -1090,17 +1060,12 @@ export default function PadhramaniPage() {
             </div>
           )}
         </>
-      )}
 
       {scheduleOpen && <ScheduleVisitModal onClose={() => setScheduleOpen(false)} />}
       {outcomeVisit && <OutcomeModal visit={outcomeVisit} onClose={() => setOutcomeVisit(null)} />}
       {editVisit && (
         <EditVisitModal visit={editVisit} allVolunteers={nonSantoVolunteers}
           santoVolunteers={santoVolunteers} onClose={() => setEditVisit(null)} />
-      )}
-      {createEventOpen && (
-        <CreateEventModal onClose={() => setCreateEventOpen(false)}
-          allVolunteers={nonSantoVolunteers} santoVolunteers={santoVolunteers} />
       )}
     </div>
   );

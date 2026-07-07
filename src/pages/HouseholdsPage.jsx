@@ -3,10 +3,9 @@ import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { Link } from "react-router-dom";
-import { Plus, Upload, Users, Trash2 } from "lucide-react";
+import { Plus, Upload, Users } from "lucide-react";
 import { useHouseholds, useFilteredHouseholds } from "../hooks/useHouseholds";
 import { useAreasAndMandals } from "../hooks/useAreasAndMandals";
-import { bulkDeleteHouseholdsCascade } from "../services/bulkService";
 import GlobalSearchBar from "../components/search/GlobalSearchBar";
 import HouseholdForm from "../components/households/HouseholdForm";
 import Modal from "../components/ui/Modal";
@@ -33,8 +32,6 @@ export default function HouseholdsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [individuals, setIndividuals] = useState([]);
   const [selected, setSelected] = useState(new Set());
-  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
-  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   useEffect(() => onSnapshot(collection(db, "individuals"), (snap) => setIndividuals(snap.docs.map((d) => ({ id: d.id, ...d.data() })))), []);
 
@@ -62,7 +59,7 @@ export default function HouseholdsPage() {
     return map;
   }, [individuals]);
 
-  const hasActiveFilters = Boolean(areaFilter || mandalFilter || localSearch);
+  const hasActiveFilters = Boolean(areaFilter || mandalFilter || localSearch || createdAfter);
 
   // 1.3 — split into Recently Added + All Households (alpha) when no filters.
   const { recentSection, allSection } = useMemo(() => {
@@ -91,6 +88,12 @@ export default function HouseholdsPage() {
     setSelected((prev) => new Set([...prev].filter((id) => filteredIds.has(id))));
   }, [filtered]);
 
+  // Members of selected households — exported when user clicks Export Selected
+  const selectedHouseholdMembers = useMemo(
+    () => individuals.filter((ind) => selected.has(ind.householdId)),
+    [individuals, selected]
+  );
+
   function toggleOne(id) {
     setSelected((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   }
@@ -98,19 +101,6 @@ export default function HouseholdsPage() {
     setSelected((prev) => (prev.size === filtered.length ? new Set() : new Set(filtered.map((h) => h.id))));
   }
 
-  async function handleBulkDelete() {
-    setBulkDeleting(true);
-    try {
-      const { householdsRemoved, individualsRemoved } = await bulkDeleteHouseholdsCascade([...selected]);
-      showToast({ type: "success", message: `${householdsRemoved} household(s) and ${individualsRemoved} member(s) deleted.` });
-      setSelected(new Set());
-      setConfirmBulkDelete(false);
-    } catch (err) {
-      showToast({ type: "error", message: "Bulk delete failed partway through. Check your permissions." });
-    } finally {
-      setBulkDeleting(false);
-    }
-  }
 
   function HouseholdCard({ h }) {
     return (
@@ -126,9 +116,13 @@ export default function HouseholdsPage() {
         <Link to={`/households/${h.id}`} className="block pr-6">
           <p className="font-medium text-slate-900">{primaryNameByHousehold.get(h.id) || h.address || "Unnamed household"}</p>
           <p className="text-sm text-slate-400">{h.area}{h.mandal ? ` · ${h.mandal}` : ""}</p>
-          <div className="mt-2 flex items-center gap-3 text-xs text-slate-400">
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-400">
             <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {h.totalFamilyMembers || 0}</span>
             {h.level && <span>· {h.level}</span>}
+            {h.createdAt && (() => {
+              const d = h.createdAt?.toDate?.() ?? (h.createdAt instanceof Date ? h.createdAt : null);
+              return d ? <span>· Added {d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</span> : null;
+            })()}
           </div>
         </Link>
       </Card>
@@ -169,19 +163,30 @@ export default function HouseholdsPage() {
           placeholder="Filter this list…"
           className="h-9 w-48 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-600 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300"
         />
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs text-slate-500 whitespace-nowrap">Added after</label>
+          <input
+            type="date"
+            value={createdAfter}
+            onChange={(e) => setCreatedAfter(e.target.value)}
+            className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-600 focus:outline-none focus:ring-1 focus:ring-slate-300"
+          />
+          {createdAfter && (
+            <button onClick={() => setCreatedAfter("")}
+              className="rounded p-0.5 text-sm leading-none text-slate-400 hover:text-slate-700">✕</button>
+          )}
+        </div>
       </div>
 
-      <RequirePermission permission="edit_contacts">
-        {selected.size > 0 && (
-          <div className="mb-3 flex items-center justify-between rounded-lg border border-orange-200 bg-orange-50 px-4 py-2.5">
-            <p className="text-sm font-medium text-orange-800">{selected.size} selected</p>
-            <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
-              <Button variant="dangerSolid" size="sm" onClick={() => setConfirmBulkDelete(true)}><Trash2 className="h-3.5 w-3.5" /> Delete {selected.size}</Button>
-            </div>
+      {selected.size > 0 && (
+        <div className="mb-3 flex items-center justify-between rounded-lg border border-orange-200 bg-orange-50 px-4 py-2.5">
+          <p className="text-sm font-medium text-orange-800">{selected.size} household{selected.size !== 1 ? "s" : ""} selected ({selectedHouseholdMembers.length} member{selectedHouseholdMembers.length !== 1 ? "s" : ""})</p>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
+            <ExportButtons rows={selectedHouseholdMembers} label={`${selected.size}-households`} />
           </div>
-        )}
-      </RequirePermission>
+        </div>
+      )}
 
       {loading ? (
         <ListSkeleton />
@@ -233,13 +238,6 @@ export default function HouseholdsPage() {
 
       <ImportContactsWizard open={importOpen} onClose={() => setImportOpen(false)} mode="household" />
 
-      <Modal open={confirmBulkDelete} onClose={() => setConfirmBulkDelete(false)} title={`Delete ${selected.size} households?`} size="sm">
-        <p className="text-sm text-slate-500">This permanently deletes all {selected.size} selected households AND every member in each of them. This can’t be undone.</p>
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => setConfirmBulkDelete(false)}>Cancel</Button>
-          <Button variant="dangerSolid" onClick={handleBulkDelete} disabled={bulkDeleting}>{bulkDeleting ? "Deleting…" : `Delete ${selected.size}`}</Button>
-        </div>
-      </Modal>
     </div>
   );
 }
