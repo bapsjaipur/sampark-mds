@@ -1,8 +1,8 @@
 // src/admin/VolunteerEditor.jsx
 import { useEffect, useMemo, useState } from 'react';
-import { collection, doc, onSnapshot, updateDoc, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
+import { collection, doc, onSnapshot, updateDoc, deleteDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { X, KeyRound, Clock } from 'lucide-react';
+import { X, KeyRound, Clock, Trash2 } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { RequirePermission } from '../components/RequirePermission';
 import { useAreasAndMandals } from '../hooks/useAreasAndMandals';
@@ -265,6 +265,8 @@ function VolunteerEditorInner() {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [resetTarget, setResetTarget] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     const unsubVol = onSnapshot(collection(db, 'volunteers'), (snap) => setVolunteers(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
@@ -310,6 +312,29 @@ function VolunteerEditorInner() {
 
   const selectedVolunteer = volunteers.find((v) => v.id === selectedId);
 
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      // Try calling the Cloud Function to also delete the Firebase Auth user.
+      // If the function doesn't exist yet, fall back to just deleting the Firestore doc.
+      try {
+        const functions = getFunctions();
+        const deleteVolunteerAccount = httpsCallable(functions, 'deleteVolunteerAccount');
+        await deleteVolunteerAccount({ volunteerId: deleteTarget.id });
+      } catch {
+        // Function not deployed — delete Firestore doc only
+        await deleteDoc(doc(db, 'volunteers', deleteTarget.id));
+      }
+      if (selectedId === deleteTarget.id) setSelectedId(null);
+      setDeleteTarget(null);
+    } catch (err) {
+      setError(err.message || 'Delete failed.');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-5xl px-6 py-8 grid grid-cols-1 md:grid-cols-3 gap-6">
       <div className="md:col-span-1">
@@ -318,28 +343,35 @@ function VolunteerEditorInner() {
         <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or mobile" className="mb-3" />
         <div className="rounded-lg border border-slate-100 divide-y divide-slate-50 max-h-[70vh] overflow-y-auto">
           {filteredVolunteers.map((v) => (
-            <button
+            <div
               key={v.id}
-              onClick={() => setSelectedId(v.id)}
-              className={`flex w-full items-center gap-2.5 text-left px-3 py-2.5 text-sm hover:bg-slate-50 ${selectedId === v.id ? 'bg-slate-50 border-l-2 border-orange-500' : ''}`}
+              className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-sm hover:bg-slate-50 ${selectedId === v.id ? 'bg-slate-50 border-l-2 border-orange-500' : ''}`}
             >
-              <Avatar name={v.name} size="sm" />
-              <div className="min-w-0 flex-1">
-                <div className="font-medium text-slate-900 truncate">{v.name || 'Unnamed'}</div>
-                <div className="text-xs text-slate-400 truncate">
-                  {v.mobile || 'no number'} &middot; {roleName(v.roleRef)}
-                </div>
-                {/* 3.3 — last login indicator */}
-                {v.lastLoginAt ? (
-                  <div className="flex items-center gap-1 text-xs text-slate-300 mt-0.5">
-                    <Clock className="h-3 w-3" />
-                    {formatLastLogin(v.lastLoginAt)}
+              <button onClick={() => setSelectedId(v.id)} className="flex flex-1 items-center gap-2.5 text-left min-w-0">
+                <Avatar name={v.name} size="sm" />
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-slate-900 truncate">{v.name || 'Unnamed'}</div>
+                  <div className="text-xs text-slate-400 truncate">
+                    {v.mobile || 'no number'} &middot; {roleName(v.roleRef)}
                   </div>
-                ) : (
-                  <div className="text-xs text-slate-300 mt-0.5">Never logged in</div>
-                )}
-              </div>
-            </button>
+                  {v.lastLoginAt ? (
+                    <div className="flex items-center gap-1 text-xs text-slate-300 mt-0.5">
+                      <Clock className="h-3 w-3" />
+                      {formatLastLogin(v.lastLoginAt)}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-slate-300 mt-0.5">Never logged in</div>
+                  )}
+                </div>
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setDeleteTarget(v); }}
+                className="shrink-0 rounded p-1 text-slate-300 hover:bg-rose-50 hover:text-rose-500"
+                aria-label={`Remove ${v.name}`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
           ))}
           {filteredVolunteers.length === 0 && (
             <div className="px-3 py-6 text-center text-sm text-slate-400">No volunteers found.</div>
@@ -366,14 +398,14 @@ function VolunteerEditorInner() {
                   </p>
                 )}
               </div>
-              {/* 3.2 — reset password */}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setResetTarget(selectedVolunteer)}
-              >
-                <KeyRound className="h-3.5 w-3.5" /> Reset password
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="secondary" size="sm" onClick={() => setResetTarget(selectedVolunteer)}>
+                  <KeyRound className="h-3.5 w-3.5" /> Reset password
+                </Button>
+                <Button variant="danger" size="sm" onClick={() => setDeleteTarget(selectedVolunteer)}>
+                  <Trash2 className="h-3.5 w-3.5" /> Remove
+                </Button>
+              </div>
             </div>
 
             {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
@@ -400,6 +432,19 @@ function VolunteerEditorInner() {
       {resetTarget && (
         <ResetPasswordModal volunteer={resetTarget} onClose={() => setResetTarget(null)} />
       )}
+
+      <Modal open={Boolean(deleteTarget)} onClose={() => setDeleteTarget(null)} title="Remove volunteer?" size="sm">
+        <p className="text-sm text-slate-500">
+          This removes <span className="font-medium text-slate-700">{deleteTarget?.name}</span> as a volunteer and revokes their login access. This cannot be undone.
+        </p>
+        {error && <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => { setDeleteTarget(null); setError(null); }}>Cancel</Button>
+          <Button variant="dangerSolid" onClick={handleDelete} disabled={deleting}>
+            {deleting ? 'Removing…' : 'Remove volunteer'}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }
