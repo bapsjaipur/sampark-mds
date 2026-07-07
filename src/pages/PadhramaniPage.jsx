@@ -16,7 +16,7 @@ import {
 } from "firebase/firestore";
 import {
   Plus, Download, Pencil, Trash2, ChevronDown,
-  Home, CalendarDays, Users, GripVertical, X,
+  Home, CalendarDays, Users, GripVertical, X, MapPin, Route,
 } from "lucide-react";
 import { db } from "../lib/firebase";
 import { useAuth } from "../hooks/usePermissions";
@@ -58,8 +58,48 @@ function downloadCSV(csv, filename) {
   URL.revokeObjectURL(url);
 }
 
-async function loadVolunteersAndRoles() {
-  const [volSnap, roleSnap] = await Promise.all([
+// 7.4 — Nearest-neighbor TSP heuristic for "Suggest order"
+function geoDistSq(a, b) {
+  const dlat = a.lat - b.lat;
+  const dlng = a.lng - b.lng;
+  return dlat * dlat + dlng * dlng;
+}
+
+function nearestNeighborSort(items) {
+  const withLoc = items.filter((h) => h.location?.lat && h.location?.lng);
+  const noLoc = items.filter((h) => !h.location?.lat || !h.location?.lng);
+  if (withLoc.length < 2) return items;
+  const remaining = [...withLoc];
+  const result = [remaining.splice(0, 1)[0]];
+  while (remaining.length > 0) {
+    const last = result[result.length - 1];
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    remaining.forEach((h, i) => {
+      const d = geoDistSq(last.location, h.location);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    });
+    result.push(remaining.splice(bestIdx, 1)[0]);
+  }
+  return [...result, ...noLoc];
+}
+
+// 7.3 — Build Google Maps directions URL from an ordered list of locations
+function buildMapsRouteUrl(households) {
+  const locs = households.map((h) => h.location).filter((l) => l?.lat && l?.lng);
+  if (locs.length === 0) return null;
+  if (locs.length === 1) return `https://www.google.com/maps?q=${locs[0].lat},${locs[0].lng}`;
+  const origin = locs[0];
+  const dest = locs[locs.length - 1];
+  const waypoints = locs.slice(1, -1).slice(0, 8); // Maps URL supports up to 8 waypoints
+  let url = `https://www.google.com/maps/dir/?api=1&origin=${origin.lat},${origin.lng}&destination=${dest.lat},${dest.lng}`;
+  if (waypoints.length > 0) {
+    url += `&waypoints=${waypoints.map((l) => `${l.lat},${l.lng}`).join("|")}`;
+  }
+  return url;
+}
+
+async function loadVolunteersAndRoles() {  const [volSnap, roleSnap] = await Promise.all([
     getDocs(query(collection(db, "volunteers"), orderBy("name"))),
     getDocs(collection(db, "roles")),
   ]);
@@ -165,6 +205,7 @@ function HouseholdPicker({ selected, setSelected, allHouseholds, primaryNames })
         area: hh.area || "",
         primaryName: primaryNames[hh.id] || "",
         status: "pending",
+        location: hh.location || null, // 7.3/7.4 — stored for map view and route sorting
       },
     ]);
   }
@@ -219,12 +260,27 @@ function HouseholdPicker({ selected, setSelected, allHouseholds, primaryNames })
       </div>
 
       <div className="flex flex-1 flex-col min-w-0">
-        <p className="mb-1.5 text-xs font-semibold text-slate-600">
-          Visit order
-          {selected.length > 0 && (
-            <span className="ml-1 font-normal text-slate-400">{selected.length} · drag to reorder</span>
+        <div className="mb-1.5 flex items-center justify-between">
+          <p className="text-xs font-semibold text-slate-600">
+            Visit order
+            {selected.length > 0 && (
+              <span className="ml-1 font-normal text-slate-400">{selected.length} · drag to reorder</span>
+            )}
+          </p>
+          {selected.length >= 2 && (
+            <button
+              type="button"
+              onClick={() => setSelected(nearestNeighborSort(selected.map((hh) => {
+                const data = allHouseholds.find((h) => h.id === hh.householdId);
+                return { ...hh, location: hh.location ?? data?.location ?? null };
+              })))}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 transition hover:bg-orange-50 hover:border-orange-300 hover:text-orange-700"
+              title="Sort by nearest-neighbor route"
+            >
+              <Route className="h-3 w-3" /> Suggest order
+            </button>
           )}
-        </p>
+        </div>
         <div className="flex-1 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-50">
           {selected.length === 0 ? (
             <p className="py-10 text-center text-xs text-slate-400">← Pick households on the left</p>
@@ -263,6 +319,20 @@ function HouseholdPicker({ selected, setSelected, allHouseholds, primaryNames })
             ))
           )}
         </div>
+        {/* 7.3 — Map link when at least one household has a geocoded location */}
+        {(() => {
+          const url = buildMapsRouteUrl(selected);
+          return url ? (
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:underline"
+            >
+              <MapPin className="h-3 w-3" /> View route on Google Maps
+            </a>
+          ) : null;
+        })()}
       </div>
     </div>
   );
@@ -631,6 +701,9 @@ function EventCard({ event, isAdmin, currentUserId, onEdit, onDelete, onUpdateHo
                     <div className="flex-1 min-w-0">
                       <p className="truncate text-sm font-medium text-slate-800">
                         {hh.primaryName || hh.address || "—"}
+                        {hh.location?.lat && (
+                          <MapPin className="ml-1 inline h-3 w-3 text-emerald-400" />
+                        )}
                       </p>
                       {hh.primaryName && hh.address && (
                         <p className="truncate text-xs text-slate-400">
@@ -658,6 +731,23 @@ function EventCard({ event, isAdmin, currentUserId, onEdit, onDelete, onUpdateHo
               </div>
             )}
           </div>
+
+          {/* 7.3 — Route link when households have stored locations */}
+          {(() => {
+            const url = buildMapsRouteUrl(hhs);
+            return url ? (
+              <div className="border-t border-slate-100 px-4 py-2">
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:underline"
+                >
+                  <MapPin className="h-3.5 w-3.5" /> View route on Google Maps
+                </a>
+              </div>
+            ) : null;
+          })()}
 
           {canAct && (
             <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-4 py-2.5">

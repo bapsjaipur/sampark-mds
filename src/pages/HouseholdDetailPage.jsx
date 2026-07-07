@@ -1,7 +1,7 @@
 // src/pages/HouseholdDetailPage.jsx — Phase 18: member viewer (1.2), activity timeline (1.5), merge (1.7)
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, Pencil, Trash2, Plus, Search, ChevronLeft, ChevronRight, X, Merge, Clock, HeartHandshake } from "lucide-react";
+import { ArrowLeft, Pencil, Trash2, Plus, Search, ChevronLeft, ChevronRight, X, Merge, Clock, HeartHandshake, MapPin } from "lucide-react";
 import { collection, query, where, orderBy, onSnapshot, getDocs, writeBatch, serverTimestamp, doc, updateDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useHouseholds } from "../hooks/useHouseholds";
@@ -348,6 +348,16 @@ export default function HouseholdDetailPage() {
             {householdSamparkName && <span>Sampark: {householdSamparkName}{householdSamparkNumber ? ` (${householdSamparkNumber})` : ""}</span>}
           </div>
           {household.remark && <p className="mt-3 text-sm text-slate-400 italic">"{household.remark}"</p>}
+          {household.location?.lat && household.location?.lng && (
+            <a
+              href={`https://www.google.com/maps/dir/?api=1&destination=${household.location.lat},${household.location.lng}`}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:underline"
+            >
+              <MapPin className="h-3.5 w-3.5" /> Get Directions
+            </a>
+          )}
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
           <RequirePermission permission="edit_contacts">
