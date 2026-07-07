@@ -1,81 +1,81 @@
-// src/pages/PadhramaniPage.jsx — 6.1–6.9 Padhramani (home visit) tracking
+// src/pages/PadhramaniPage.jsx — Padhramani event tracking
+// Data model: padhramaniEvents/{id}
+// {
+//   name, scheduledDate, area,
+//   assignedVolunteerId, assignedVolunteerName,  ← Karyakarta
+//   secondVolunteerId, secondVolunteerName,       ← Santo 1
+//   santo2Id, santo2Name,                         ← Santo 2
+//   notes,
+//   households: [{ householdId, address, area, primaryName, status }]
+//   createdAt, updatedAt
+// }
 import { useEffect, useMemo, useState } from "react";
 import {
-  collection, addDoc, updateDoc, deleteDoc, doc, getDocs, onSnapshot,
-  serverTimestamp, query, orderBy, where, writeBatch,
+  collection, addDoc, updateDoc, deleteDoc, doc, getDocs,
+  onSnapshot, serverTimestamp, query, orderBy,
 } from "firebase/firestore";
 import {
-  Plus, CheckCircle2, XCircle, Clock, Home, Download, Bell, Pencil, Trash2,
-  GripVertical, ChevronDown, CalendarDays, X, Phone,
+  Plus, Download, Pencil, Trash2, ChevronDown,
+  Home, CalendarDays, Users, GripVertical, X,
 } from "lucide-react";
-import RequirePermission from "../components/RequirePermission";
 import { db } from "../lib/firebase";
-import { usePadhramani } from "../hooks/usePadhramani";
-import { useAreasAndMandals } from "../hooks/useAreasAndMandals";
 import { useAuth } from "../hooks/usePermissions";
+import { useAreasAndMandals } from "../hooks/useAreasAndMandals";
 import { Button } from "../components/ui/Button";
-import { Input, Select } from "../components/ui/Input";
+import { Input } from "../components/ui/Input";
 import Modal from "../components/ui/Modal";
 import { useToast } from "../contexts/ToastContext";
+import RequirePermission from "../components/RequirePermission";
 
-// ── constants ──────────────────────────────────────────────────────────────────
-const OUTCOMES = {
-  scheduled:   { label: "Scheduled",   color: "bg-blue-50 text-blue-700 border-blue-200" },
-  completed:   { label: "Completed",   color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  not_home:    { label: "Not home",    color: "bg-amber-50 text-amber-700 border-amber-200" },
-  rescheduled: { label: "Rescheduled", color: "bg-purple-50 text-purple-700 border-purple-200" },
-  cancelled:   { label: "Cancelled",  color: "bg-slate-100 text-slate-500 border-slate-200" },
+// ── Constants ──────────────────────────────────────────────────────────────────
+
+const HH_STATUSES = {
+  pending:   { label: "Pending",   color: "bg-slate-100 text-slate-600 border-slate-200" },
+  completed: { label: "Visited",   color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  not_home:  { label: "Not home",  color: "bg-amber-50 text-amber-700 border-amber-200" },
+  cancelled: { label: "Cancelled", color: "bg-rose-50 text-rose-600 border-rose-200" },
 };
 
-function OutcomeBadge({ status }) {
-  const o = OUTCOMES[status] || OUTCOMES.scheduled;
-  return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${o.color}`}>
-      {o.label}
-    </span>
-  );
-}
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function formatDate(str) {
   if (!str) return "—";
-  const d = new Date(str);
+  const d = new Date(str + "T00:00:00");
   return isNaN(d) ? str : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 
-function dueSoon(str) {
-  if (!str) return false;
-  const d = new Date(str);
-  const diff = d.getTime() - Date.now();
-  return diff >= 0 && diff <= 3 * 24 * 60 * 60 * 1000;
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
 }
 
-function overdue(str, status) {
-  if (!str || status !== "scheduled") return false;
-  return new Date(str).getTime() < Date.now();
+function downloadCSV(csv, filename) {
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
-function volunteerLine(v) {
-  const parts = [v.assignedVolunteerName, v.secondVolunteerName, v.santo2Name].filter(Boolean);
-  return parts.length ? parts.join(" · ") : null;
-}
-
-// ── Data helpers ──────────────────────────────────────────────────────────────
 async function loadVolunteersAndRoles() {
   const [volSnap, roleSnap] = await Promise.all([
     getDocs(query(collection(db, "volunteers"), orderBy("name"))),
     getDocs(collection(db, "roles")),
   ]);
-  const allVolunteers = volSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const allVols = volSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const roles = roleSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  const santoRoleIds = new Set(
+  const santoIds = new Set(
     roles.filter((r) => r.name?.toLowerCase().includes("santo")).map((r) => r.id)
   );
-  const santoVolunteers = allVolunteers.filter((v) => santoRoleIds.has(v.roleRef));
-  const nonSantoVolunteers = allVolunteers.filter((v) => !santoRoleIds.has(v.roleRef));
-  return { allVolunteers, santoVolunteers, nonSantoVolunteers };
+  return {
+    nonSanto: allVols.filter((v) => !santoIds.has(v.roleRef)),
+    santo: allVols.filter((v) => santoIds.has(v.roleRef)),
+  };
 }
 
-// ── Reusable volunteer dropdown ───────────────────────────────────────────────
+// ── VolunteerDropdown ──────────────────────────────────────────────────────────
+
 function VolunteerDropdown({ label, value, onChange, volunteers }) {
   return (
     <div>
@@ -86,344 +86,428 @@ function VolunteerDropdown({ label, value, onChange, volunteers }) {
         className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
       >
         <option value="">Unassigned</option>
-        {volunteers.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+        {volunteers.map((v) => (
+          <option key={v.id} value={v.id}>{v.name}</option>
+        ))}
       </select>
     </div>
   );
 }
 
-// ── Schedule visit modal (single visit) ───────────────────────────────────────
-function ScheduleVisitModal({ onClose, prefillHouseholdId }) {
-  const { volunteer: currentUser, hasPermission } = useAuth();
-  const isViewAll = hasPermission("view_all_contacts");
-  const { showToast } = useToast();
-  const [households, setHouseholds] = useState([]);
-  const [nonSantoVolunteers, setNonSantoVolunteers] = useState([]);
-  const [santoVolunteers, setSantoVolunteers] = useState([]);
-  const [scheduledHhIds, setScheduledHhIds] = useState(new Set());
-  const [form, setForm] = useState({
-    householdId: prefillHouseholdId || "",
-    householdAddress: "",
-    scheduledDate: "",
-    assignedVolunteerId: currentUser?.id || "",
-    assignedVolunteerName: currentUser?.name || "",
-    secondVolunteerId: "",
-    secondVolunteerName: "",
-    santo2Id: "",
-    santo2Name: "",
-    area: "",
-    notes: "",
-  });
-  const [saving, setSaving] = useState(false);
+// ── AreaStats ──────────────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    if (!currentUser) return;
-    const myAreas = currentUser.assignedAreas || [];
-    const hhQuery = isViewAll
-      ? query(collection(db, "households"), orderBy("address"))
-      : myAreas.length > 0
-        ? query(collection(db, "households"), where("area", "in", myAreas.slice(0, 30)))
-        : null;
-    if (!hhQuery) return;
-    Promise.all([
-      getDocs(hhQuery),
-      loadVolunteersAndRoles(),
-      getDocs(query(collection(db, "padhramani"), where("status", "==", "scheduled"))),
-    ]).then(([hhSnap, { nonSantoVolunteers: nsv, santoVolunteers: sv }, padSnap]) => {
-      const allHh = hhSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      setHouseholds(allHh);
-      setNonSantoVolunteers(nsv);
-      setSantoVolunteers(sv);
-      const scheduled = new Set(padSnap.docs.map((d) => d.data().householdId).filter(Boolean));
-      setScheduledHhIds(scheduled);
-      if (prefillHouseholdId) {
-        const hh = allHh.find((h) => h.id === prefillHouseholdId);
-        if (hh) setForm((f) => ({ ...f, householdAddress: hh.address || "", area: hh.area || "" }));
-      }
+function AreaStats({ events }) {
+  const stats = useMemo(() => {
+    const map = {};
+    events.forEach((ev) => {
+      const area = ev.area || "Unknown";
+      if (!map[area]) map[area] = { events: 0, total: 0, visited: 0 };
+      map[area].events += 1;
+      (ev.households || []).forEach((hh) => {
+        map[area].total += 1;
+        if (hh.status === "completed") map[area].visited += 1;
+      });
     });
-  }, [prefillHouseholdId, currentUser?.id, isViewAll]);
+    return Object.entries(map).sort((a, b) => b[1].total - a[1].total);
+  }, [events]);
 
-  function handleHouseholdPick(id) {
-    const hh = households.find((h) => h.id === id);
-    setForm((f) => ({ ...f, householdId: id, householdAddress: hh?.address || "", area: hh?.area || f.area }));
+  if (stats.length === 0) return null;
+
+  return (
+    <div className="mb-6">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+        Area-wise Stats
+      </p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+        {stats.map(([area, s]) => (
+          <div key={area} className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
+            <p className="truncate text-sm font-semibold text-slate-800">{area}</p>
+            <div className="mt-1 flex items-baseline gap-1.5">
+              <span className="text-xl font-bold text-orange-500">{s.total}</span>
+              <span className="text-xs text-slate-400">households</span>
+            </div>
+            <div className="mt-0.5 flex gap-3 text-xs">
+              <span className="font-medium text-emerald-600">{s.visited} visited</span>
+              <span className="text-slate-400">{s.events} event{s.events !== 1 ? "s" : ""}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── HouseholdPicker ────────────────────────────────────────────────────────────
+
+function HouseholdPicker({ selected, setSelected, allHouseholds, primaryNames }) {
+  const [search, setSearch] = useState("");
+  const [dragIdx, setDragIdx] = useState(null);
+  const [overIdx, setOverIdx] = useState(null);
+
+  const selectedIds = new Set(selected.map((h) => h.householdId));
+  const results = allHouseholds.filter((h) => {
+    if (selectedIds.has(h.id)) return false;
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return (
+      h.address?.toLowerCase().includes(q) ||
+      h.area?.toLowerCase().includes(q) ||
+      primaryNames[h.id]?.toLowerCase().includes(q)
+    );
+  });
+
+  function add(hh) {
+    setSelected((prev) => [
+      ...prev,
+      {
+        householdId: hh.id,
+        address: hh.address || "",
+        area: hh.area || "",
+        primaryName: primaryNames[hh.id] || "",
+        status: "pending",
+      },
+    ]);
   }
 
-  function pickFromList(list, idField, nameField, id) {
+  function remove(id) {
+    setSelected((prev) => prev.filter((h) => h.householdId !== id));
+  }
+
+  function onDrop(e, i) {
+    e.preventDefault();
+    if (dragIdx === null || dragIdx === i) { setDragIdx(null); setOverIdx(null); return; }
+    const next = [...selected];
+    const [moved] = next.splice(dragIdx, 1);
+    next.splice(i, 0, moved);
+    setSelected(next);
+    setDragIdx(null); setOverIdx(null);
+  }
+
+  return (
+    <div className="flex gap-4" style={{ height: 360 }}>
+      <div className="flex flex-1 flex-col min-w-0">
+        <p className="mb-1.5 text-xs font-semibold text-slate-600">Search &amp; add households</p>
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Name, address, area…"
+          className="mb-2 shrink-0"
+        />
+        <div className="flex-1 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-50">
+          {results.slice(0, 80).map((h) => (
+            <button
+              key={h.id} type="button" onClick={() => add(h)}
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-orange-50 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5 shrink-0 text-orange-400" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-slate-800">
+                  {primaryNames[h.id] || h.address || "No address"}
+                </p>
+                <p className="truncate text-xs text-slate-400">
+                  {h.address}{h.area ? ` · ${h.area}` : ""}
+                </p>
+              </div>
+            </button>
+          ))}
+          {results.length === 0 && (
+            <p className="py-8 text-center text-xs text-slate-400">
+              {search.trim() ? "No matches" : allHouseholds.length === 0 ? "No households found" : "All households added"}
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-1 flex-col min-w-0">
+        <p className="mb-1.5 text-xs font-semibold text-slate-600">
+          Visit order
+          {selected.length > 0 && (
+            <span className="ml-1 font-normal text-slate-400">{selected.length} · drag to reorder</span>
+          )}
+        </p>
+        <div className="flex-1 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-50">
+          {selected.length === 0 ? (
+            <p className="py-10 text-center text-xs text-slate-400">← Pick households on the left</p>
+          ) : (
+            selected.map((hh, i) => (
+              <div
+                key={hh.householdId}
+                draggable
+                onDragStart={() => setDragIdx(i)}
+                onDragOver={(e) => { e.preventDefault(); setOverIdx(i); }}
+                onDrop={(e) => onDrop(e, i)}
+                onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
+                className={[
+                  "flex cursor-grab items-center gap-2 px-2 py-2.5 select-none active:cursor-grabbing",
+                  dragIdx === i ? "opacity-40 bg-slate-50" : "",
+                  overIdx === i && dragIdx !== i ? "border-t-2 border-orange-400" : "",
+                ].join(" ")}
+              >
+                <GripVertical className="h-4 w-4 shrink-0 text-slate-300" />
+                <span className="w-5 shrink-0 text-center text-xs font-semibold text-slate-400">{i + 1}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm text-slate-800">{hh.primaryName || hh.address || "—"}</p>
+                  {hh.address && hh.primaryName && (
+                    <p className="truncate text-xs text-slate-400">
+                      {hh.address}{hh.area ? ` · ${hh.area}` : ""}
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button" onClick={() => remove(hh.householdId)}
+                  className="shrink-0 rounded p-0.5 text-slate-300 hover:text-rose-400 transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ScheduleEventModal (create & full edit for admin) ──────────────────────────
+
+function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = null }) {
+  const { showToast } = useToast();
+  const { areas } = useAreasAndMandals();
+  const [step, setStep] = useState(1);
+  const [nonSanto, setNonSanto] = useState([]);
+  const [santo, setSanto] = useState([]);
+  const [allHouseholds, setAllHouseholds] = useState([]);
+  const [primaryNames, setPrimaryNames] = useState({});
+  const [saving, setSaving] = useState(false);
+  const isEdit = Boolean(editEvent);
+
+  const [form, setForm] = useState({
+    name: editEvent?.name || "",
+    scheduledDate: editEvent?.scheduledDate || "",
+    area: editEvent?.area || "",
+    assignedVolunteerId: editEvent?.assignedVolunteerId || "",
+    assignedVolunteerName: editEvent?.assignedVolunteerName || "",
+    secondVolunteerId: editEvent?.secondVolunteerId || "",
+    secondVolunteerName: editEvent?.secondVolunteerName || "",
+    santo2Id: editEvent?.santo2Id || "",
+    santo2Name: editEvent?.santo2Name || "",
+    notes: editEvent?.notes || "",
+  });
+
+  const [selected, setSelected] = useState(
+    editEvent?.households ? [...editEvent.households] : []
+  );
+
+  useEffect(() => {
+    Promise.all([
+      loadVolunteersAndRoles(),
+      getDocs(query(collection(db, "households"), orderBy("address"))),
+      getDocs(collection(db, "individuals")),
+    ]).then(([vols, hhSnap, indSnap]) => {
+      setNonSanto(vols.nonSanto);
+      setSanto(vols.santo);
+      const hhs = hhSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setAllHouseholds(hhs);
+      const names = {};
+      indSnap.docs.forEach((d) => {
+        const ind = d.data();
+        if (!ind.householdId) return;
+        if (ind.isPrimary || !names[ind.householdId]) names[ind.householdId] = ind.name;
+      });
+      setPrimaryNames(names);
+      if (prefillHouseholdId && !isEdit) {
+        const hh = hhs.find((h) => h.id === prefillHouseholdId);
+        if (hh) {
+          setSelected([{
+            householdId: hh.id,
+            address: hh.address || "",
+            area: hh.area || "",
+            primaryName: names[hh.id] || "",
+            status: "pending",
+          }]);
+        }
+      }
+    });
+  }, [prefillHouseholdId, isEdit]);
+
+  function pickVol(list, idField, nameField, id) {
     const v = list.find((x) => x.id === id);
     setForm((f) => ({ ...f, [idField]: id, [nameField]: v?.name || "" }));
   }
 
   async function handleSave() {
-    if (!form.householdId || !form.scheduledDate) {
-      showToast({ type: "error", message: "Household and date are required." });
+    if (!form.scheduledDate) {
+      showToast({ type: "error", message: "Date is required." });
       return;
     }
     setSaving(true);
     try {
-      await addDoc(collection(db, "padhramani"), {
-        householdId: form.householdId,
-        householdAddress: form.householdAddress,
+      const autoName = form.name.trim() ||
+        `${form.area || "Padhramani"} – ${formatDate(form.scheduledDate)}`;
+      const payload = {
+        name: autoName,
         scheduledDate: form.scheduledDate,
+        area: form.area || null,
         assignedVolunteerId: form.assignedVolunteerId || null,
         assignedVolunteerName: form.assignedVolunteerName || null,
         secondVolunteerId: form.secondVolunteerId || null,
         secondVolunteerName: form.secondVolunteerName || null,
         santo2Id: form.santo2Id || null,
         santo2Name: form.santo2Name || null,
-        area: form.area || null,
         notes: form.notes || null,
-        status: "scheduled",
-        createdAt: serverTimestamp(),
+        households: selected,
         updatedAt: serverTimestamp(),
-      });
-      showToast({ type: "success", message: "Visit scheduled." });
+      };
+      if (isEdit) {
+        await updateDoc(doc(db, "padhramaniEvents", editEvent.id), payload);
+        showToast({ type: "success", message: "Event updated." });
+      } else {
+        await addDoc(collection(db, "padhramaniEvents"), {
+          ...payload,
+          createdAt: serverTimestamp(),
+        });
+        showToast({ type: "success", message: "Padhramani scheduled." });
+      }
       onClose();
     } catch (err) {
-      showToast({ type: "error", message: err.message || "Couldn't save visit." });
+      showToast({ type: "error", message: err.message || "Couldn't save." });
     } finally {
       setSaving(false);
     }
   }
 
-  const availableHouseholds = households.filter(
-    (h) => !scheduledHhIds.has(h.id) || h.id === prefillHouseholdId
-  );
-
   return (
-    <Modal open onClose={onClose} title="Schedule Padhramani visit">
-      <div className="space-y-3">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Household</label>
-          {prefillHouseholdId ? (
-            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-              {form.householdAddress || "Loading…"}
-            </p>
-          ) : (
-            <>
+    <Modal
+      open
+      onClose={onClose}
+      title={isEdit ? "Edit Padhramani Event" : "Schedule Padhramani"}
+      size="lg"
+    >
+      <div className="mb-5 flex items-center gap-2">
+        {[{ n: 1, label: "Event details" }, { n: 2, label: "Households" }].map((s, i) => (
+          <div key={s.n} className="flex items-center gap-2">
+            {i > 0 && <div className="h-px w-6 bg-slate-200" />}
+            <div className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
+              step === s.n ? "bg-orange-100 text-orange-700"
+              : step > s.n ? "bg-emerald-50 text-emerald-600"
+              : "bg-slate-100 text-slate-400"
+            }`}>
+              <span>{s.n}</span><span>{s.label}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {step === 1 ? (
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600">Event name (optional)</label>
+            <Input
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder={`e.g. ${form.area || "Area"} Padhramani`}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600">
+                Date <span className="text-rose-500">*</span>
+              </label>
+              <Input
+                type="date"
+                value={form.scheduledDate}
+                onChange={(e) => setForm({ ...form, scheduledDate: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600">Area</label>
               <select
-                value={form.householdId}
-                onChange={(e) => handleHouseholdPick(e.target.value)}
+                value={form.area}
+                onChange={(e) => setForm({ ...form, area: e.target.value })}
                 className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
               >
-                <option value="">Pick a household…</option>
-                {availableHouseholds.map((h) => (
-                  <option key={h.id} value={h.id}>{h.address}{h.area ? ` — ${h.area}` : ""}</option>
-                ))}
+                <option value="">Select area…</option>
+                {areas.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
               </select>
-              {scheduledHhIds.size > 0 && (
-                <p className="mt-1 text-xs text-slate-400">{scheduledHhIds.size} household(s) with an existing scheduled visit are hidden</p>
-              )}
-            </>
+            </div>
+          </div>
+          <VolunteerDropdown
+            label="Karyakarta (Volunteer)"
+            value={form.assignedVolunteerId}
+            onChange={(id) => pickVol(nonSanto, "assignedVolunteerId", "assignedVolunteerName", id)}
+            volunteers={nonSanto}
+          />
+          <div className="grid grid-cols-2 gap-3">
+            <VolunteerDropdown
+              label="Santo 1"
+              value={form.secondVolunteerId}
+              onChange={(id) => pickVol(santo, "secondVolunteerId", "secondVolunteerName", id)}
+              volunteers={santo}
+            />
+            <VolunteerDropdown
+              label="Santo 2"
+              value={form.santo2Id}
+              onChange={(id) => pickVol(santo, "santo2Id", "santo2Name", id)}
+              volunteers={santo}
+            />
+          </div>
+          {santo.length === 0 && nonSanto.length > 0 && (
+            <p className="text-xs text-amber-600">
+              No volunteers with a "Santo" role found — create a role named "Santo" in Admin first.
+            </p>
           )}
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Scheduled date</label>
-          <Input type="date" value={form.scheduledDate} onChange={(e) => setForm({ ...form, scheduledDate: e.target.value })} />
-        </div>
-        <VolunteerDropdown label="Volunteer (karyakarta)" value={form.assignedVolunteerId}
-          onChange={(id) => pickFromList(nonSantoVolunteers, "assignedVolunteerId", "assignedVolunteerName", id)}
-          volunteers={nonSantoVolunteers} />
-        <div className="grid grid-cols-2 gap-3">
-          <VolunteerDropdown label={`Santo 1${santoVolunteers.length === 0 ? " (no Santo role)" : ""}`}
-            value={form.secondVolunteerId}
-            onChange={(id) => pickFromList(santoVolunteers, "secondVolunteerId", "secondVolunteerName", id)}
-            volunteers={santoVolunteers} />
-          <VolunteerDropdown label={`Santo 2${santoVolunteers.length === 0 ? " (no Santo role)" : ""}`}
-            value={form.santo2Id}
-            onChange={(id) => pickFromList(santoVolunteers, "santo2Id", "santo2Name", id)}
-            volunteers={santoVolunteers} />
-        </div>
-        {santoVolunteers.length === 0 && nonSantoVolunteers.length > 0 && (
-          <p className="text-xs text-amber-600">No volunteers with a "Santo" role found. Create a role named "Santo" first.</p>
-        )}
-        <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Notes</label>
-          <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
-            rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
-            placeholder="Optional notes…" />
-        </div>
-        <div className="flex justify-end gap-2 pt-1">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="accent" onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Schedule visit"}</Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-// ── Edit visit modal ──────────────────────────────────────────────────────────
-function EditVisitModal({ visit, allVolunteers, santoVolunteers, onClose }) {
-  const { showToast } = useToast();
-  const [form, setForm] = useState({
-    scheduledDate: visit.scheduledDate || "",
-    assignedVolunteerId: visit.assignedVolunteerId || "",
-    assignedVolunteerName: visit.assignedVolunteerName || "",
-    secondVolunteerId: visit.secondVolunteerId || "",
-    secondVolunteerName: visit.secondVolunteerName || "",
-    santo2Id: visit.santo2Id || "",
-    santo2Name: visit.santo2Name || "",
-    notes: visit.notes || "",
-  });
-  const [saving, setSaving] = useState(false);
-
-  function pickFromList(list, idField, nameField, id) {
-    const v = list.find((x) => x.id === id);
-    setForm((f) => ({ ...f, [idField]: id, [nameField]: v?.name || "" }));
-  }
-
-  async function handleSave() {
-    setSaving(true);
-    try {
-      await updateDoc(doc(db, "padhramani", visit.id), {
-        scheduledDate: form.scheduledDate,
-        assignedVolunteerId: form.assignedVolunteerId || null,
-        assignedVolunteerName: form.assignedVolunteerName || null,
-        secondVolunteerId: form.secondVolunteerId || null,
-        secondVolunteerName: form.secondVolunteerName || null,
-        santo2Id: form.santo2Id || null,
-        santo2Name: form.santo2Name || null,
-        notes: form.notes || null,
-        updatedAt: serverTimestamp(),
-      });
-      showToast({ type: "success", message: "Visit updated." });
-      onClose();
-    } catch (err) {
-      showToast({ type: "error", message: err.message || "Couldn't update visit." });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Modal open onClose={onClose} title={`Edit visit — ${visit.householdAddress || "household"}`} size="sm">
-      <div className="space-y-3">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Scheduled date</label>
-          <Input type="date" value={form.scheduledDate} onChange={(e) => setForm({ ...form, scheduledDate: e.target.value })} />
-        </div>
-        <VolunteerDropdown label="Volunteer (karyakarta)" value={form.assignedVolunteerId}
-          onChange={(id) => pickFromList(allVolunteers, "assignedVolunteerId", "assignedVolunteerName", id)}
-          volunteers={allVolunteers} />
-        <div className="grid grid-cols-2 gap-3">
-          <VolunteerDropdown label="Santo 1" value={form.secondVolunteerId}
-            onChange={(id) => pickFromList(santoVolunteers, "secondVolunteerId", "secondVolunteerName", id)}
-            volunteers={santoVolunteers} />
-          <VolunteerDropdown label="Santo 2" value={form.santo2Id}
-            onChange={(id) => pickFromList(santoVolunteers, "santo2Id", "santo2Name", id)}
-            volunteers={santoVolunteers} />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Notes</label>
-          <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
-            rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300" />
-        </div>
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="accent" onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-// ── Outcome modal ─────────────────────────────────────────────────────────────
-function OutcomeModal({ visit, onClose }) {
-  const { showToast } = useToast();
-  const [status, setStatus] = useState(visit.status || "scheduled");
-  const [notes, setNotes] = useState(visit.notes || "");
-  const [rescheduleDate, setRescheduleDate] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  async function handleSave() {
-    setSaving(true);
-    try {
-      const updates = { status, notes, updatedAt: serverTimestamp() };
-      if (status === "rescheduled" && rescheduleDate) {
-        await addDoc(collection(db, "padhramani"), {
-          householdId: visit.householdId,
-          householdAddress: visit.householdAddress,
-          scheduledDate: rescheduleDate,
-          assignedVolunteerId: visit.assignedVolunteerId || null,
-          assignedVolunteerName: visit.assignedVolunteerName || null,
-          secondVolunteerId: visit.secondVolunteerId || null,
-          secondVolunteerName: visit.secondVolunteerName || null,
-          santo2Id: visit.santo2Id || null,
-          santo2Name: visit.santo2Name || null,
-          area: visit.area || null,
-          notes: `Rescheduled from ${formatDate(visit.scheduledDate)}`,
-          status: "scheduled",
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      }
-      await updateDoc(doc(db, "padhramani", visit.id), updates);
-      showToast({ type: "success", message: "Visit updated." });
-      onClose();
-    } catch (err) {
-      showToast({ type: "error", message: err.message || "Couldn't update visit." });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Modal open onClose={onClose} title={`Update visit — ${visit.householdAddress || "household"}`} size="sm">
-      <div className="space-y-3">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Outcome</label>
-          <div className="grid grid-cols-2 gap-2">
-            {Object.entries(OUTCOMES).map(([key, o]) => (
-              <button key={key} onClick={() => setStatus(key)}
-                className={`rounded-lg border px-3 py-2 text-left text-xs font-medium transition ${status === key ? o.color + " ring-2 ring-offset-1 ring-current" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
-                {o.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        {status === "rescheduled" && (
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600">New date</label>
-            <Input type="date" value={rescheduleDate} onChange={(e) => setRescheduleDate(e.target.value)} />
+            <label className="mb-1 block text-xs font-medium text-slate-600">Notes</label>
+            <textarea
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              rows={2}
+              placeholder="Optional…"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
+            />
           </div>
-        )}
-        <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Notes</label>
-          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
-            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300" />
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button variant="accent" onClick={() => setStep(2)} disabled={!form.scheduledDate}>
+              Next: Add Households →
+            </Button>
+          </div>
         </div>
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="accent" onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
-        </div>
-      </div>
+      ) : (
+        <>
+          <HouseholdPicker
+            selected={selected}
+            setSelected={setSelected}
+            allHouseholds={allHouseholds}
+            primaryNames={primaryNames}
+          />
+          <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
+            <Button variant="ghost" onClick={() => setStep(1)}>← Back</Button>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={onClose}>Cancel</Button>
+              <Button variant="accent" onClick={handleSave} disabled={saving}>
+                {saving
+                  ? "Saving…"
+                  : isEdit
+                  ? "Save changes"
+                  : `Schedule · ${selected.length} household${selected.length !== 1 ? "s" : ""}`}
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
     </Modal>
   );
 }
 
-// ── Create Event modal ────────────────────────────────────────────────────────
-// Step 1: name, date, volunteer, santos, notes
-// Step 2: search households → click to add → drag rows to reorder
-function CreateEventModal({ onClose, allVolunteers, santoVolunteers }) {
+// ── EditHouseholdsModal (karyakarta: household list & order only) ──────────────
+
+function EditHouseholdsModal({ event, onClose }) {
   const { showToast } = useToast();
-  const [step, setStep] = useState(1);
-  const [form, setForm] = useState({
-    name: "",
-    scheduledDate: "",
-    assignedVolunteerId: "",
-    assignedVolunteerName: "",
-    secondVolunteerId: "",
-    secondVolunteerName: "",
-    santo2Id: "",
-    santo2Name: "",
-    notes: "",
-  });
   const [allHouseholds, setAllHouseholds] = useState([]);
-  const [primaryNames, setPrimaryNames] = useState({}); // householdId → member name
-  const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState([]); // [{ householdId, address, area, primaryName }]
+  const [primaryNames, setPrimaryNames] = useState({});
+  const [selected, setSelected] = useState([...(event.households || [])]);
   const [saving, setSaving] = useState(false);
-  const [dragIdx, setDragIdx] = useState(null);
-  const [overIdx, setOverIdx] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -441,281 +525,154 @@ function CreateEventModal({ onClose, allVolunteers, santoVolunteers }) {
     });
   }, []);
 
-  function pickFromList(list, idField, nameField, id) {
-    const v = list.find((x) => x.id === id);
-    setForm((f) => ({ ...f, [idField]: id, [nameField]: v?.name || "" }));
-  }
-
-  const selectedIds = new Set(selected.map((h) => h.householdId));
-  const searchResults = allHouseholds.filter((h) => {
-    if (selectedIds.has(h.id)) return false;
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return h.address?.toLowerCase().includes(q) || h.area?.toLowerCase().includes(q);
-  });
-
-  function addHousehold(hh) {
-    setSelected((prev) => [...prev, { householdId: hh.id, address: hh.address || "", area: hh.area || "", primaryName: primaryNames[hh.id] || "" }]);
-  }
-
-  function removeHousehold(id) {
-    setSelected((prev) => prev.filter((h) => h.householdId !== id));
-  }
-
-  function onDragStart(i) { setDragIdx(i); }
-  function onDragOver(e, i) { e.preventDefault(); setOverIdx(i); }
-  function onDrop(e, i) {
-    e.preventDefault();
-    if (dragIdx === null || dragIdx === i) { setDragIdx(null); setOverIdx(null); return; }
-    const next = [...selected];
-    const [moved] = next.splice(dragIdx, 1);
-    next.splice(i, 0, moved);
-    setSelected(next);
-    setDragIdx(null);
-    setOverIdx(null);
-  }
-
   async function handleSave() {
-    if (!form.name.trim() || !form.scheduledDate) {
-      showToast({ type: "error", message: "Event name and date are required." });
-      return;
-    }
     setSaving(true);
     try {
-      await addDoc(collection(db, "padhramaniEvents"), {
-        name: form.name.trim(),
-        scheduledDate: form.scheduledDate,
-        assignedVolunteerId: form.assignedVolunteerId || null,
-        assignedVolunteerName: form.assignedVolunteerName || null,
-        secondVolunteerId: form.secondVolunteerId || null,
-        secondVolunteerName: form.secondVolunteerName || null,
-        santo2Id: form.santo2Id || null,
-        santo2Name: form.santo2Name || null,
-        notes: form.notes || null,
+      await updateDoc(doc(db, "padhramaniEvents", event.id), {
         households: selected,
-        status: "draft",
-        createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      showToast({ type: "success", message: `Event saved. Tap "Schedule All" on the card to create the ${selected.length} visits.` });
+      showToast({ type: "success", message: "Households updated." });
       onClose();
     } catch (err) {
-      showToast({ type: "error", message: err.message || "Couldn't save event." });
+      showToast({ type: "error", message: err.message || "Couldn't save." });
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <Modal open onClose={onClose} title="New Padhramani Event" size="lg">
-      {/* Step indicator */}
-      <div className="mb-5 flex items-center gap-2">
-        {[{ n: 1, label: "Event details" }, { n: 2, label: "Add households" }].map((s, i) => (
-          <div key={s.n} className="flex items-center gap-2">
-            {i > 0 && <div className="h-px w-6 bg-slate-200" />}
-            <div className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
-              step === s.n ? "bg-orange-100 text-orange-700"
-              : step > s.n ? "bg-emerald-50 text-emerald-600"
-              : "bg-slate-100 text-slate-400"
-            }`}>
-              <span>{s.n}</span>
-              <span>{s.label}</span>
-            </div>
-          </div>
-        ))}
+    <Modal open onClose={onClose} title="Edit Households" size="lg">
+      <HouseholdPicker
+        selected={selected}
+        setSelected={setSelected}
+        allHouseholds={allHouseholds}
+        primaryNames={primaryNames}
+      />
+      <div className="mt-4 flex justify-end gap-2 border-t border-slate-100 pt-3">
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button variant="accent" onClick={handleSave} disabled={saving}>
+          {saving ? "Saving…" : "Save changes"}
+        </Button>
       </div>
-
-      {step === 1 ? (
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600">Event name <span className="text-rose-500">*</span></label>
-            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="e.g. Koyal Nagar – 10 July" autoFocus />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600">Visit date <span className="text-rose-500">*</span></label>
-            <Input type="date" value={form.scheduledDate} onChange={(e) => setForm({ ...form, scheduledDate: e.target.value })} />
-          </div>
-          <VolunteerDropdown label="Volunteer (karyakarta)" value={form.assignedVolunteerId}
-            onChange={(id) => pickFromList(allVolunteers, "assignedVolunteerId", "assignedVolunteerName", id)}
-            volunteers={allVolunteers} />
-          <div className="grid grid-cols-2 gap-3">
-            <VolunteerDropdown label="Santo 1" value={form.secondVolunteerId}
-              onChange={(id) => pickFromList(santoVolunteers, "secondVolunteerId", "secondVolunteerName", id)}
-              volunteers={santoVolunteers} />
-            <VolunteerDropdown label="Santo 2" value={form.santo2Id}
-              onChange={(id) => pickFromList(santoVolunteers, "santo2Id", "santo2Name", id)}
-              volunteers={santoVolunteers} />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600">Notes (shared for all visits)</label>
-            <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              rows={2} placeholder="Optional…"
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300" />
-          </div>
-          <div className="flex justify-end gap-2 pt-1">
-            <Button variant="ghost" onClick={onClose}>Cancel</Button>
-            <Button variant="accent" onClick={() => setStep(2)}
-              disabled={!form.name.trim() || !form.scheduledDate}>
-              Next: Add Households →
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <>
-          <div className="flex gap-4" style={{ height: 420 }}>
-            {/* Left: search and pick */}
-            <div className="flex flex-1 flex-col min-w-0">
-              <p className="mb-2 text-xs font-semibold text-slate-600">Search households</p>
-              <Input value={search} onChange={(e) => setSearch(e.target.value)}
-                placeholder="Address or area…" className="mb-2 shrink-0" autoFocus />
-              <div className="flex-1 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-50">
-                {searchResults.slice(0, 80).map((h) => (
-                  <button key={h.id} type="button" onClick={() => addHousehold(h)}
-                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-orange-50 transition-colors">
-                    <Plus className="h-3.5 w-3.5 shrink-0 text-orange-400" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-slate-800">{primaryNames[h.id] || h.address || "No address"}</p>
-                      <p className="truncate text-xs text-slate-400">{h.address || ""}{h.area ? ` · ${h.area}` : ""}</p>
-                    </div>
-                  </button>
-                ))}
-                {searchResults.length === 0 && (
-                  <p className="py-8 text-center text-xs text-slate-400">
-                    {search.trim() ? "No matches" : allHouseholds.length === 0 ? "No households found" : "All households already added"}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Right: selected with drag reorder */}
-            <div className="flex flex-1 flex-col min-w-0">
-              <p className="mb-2 text-xs font-semibold text-slate-600">
-                Visit order
-                <span className="ml-1 font-normal text-slate-400">
-                  {selected.length > 0 ? `${selected.length} added · drag to reorder` : "click households to add →"}
-                </span>
-              </p>
-              <div className="flex-1 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-50">
-                {selected.length === 0 ? (
-                  <p className="py-10 text-center text-xs text-slate-400">← Pick households on the left</p>
-                ) : selected.map((hh, i) => (
-                  <div key={hh.householdId}
-                    draggable
-                    onDragStart={() => onDragStart(i)}
-                    onDragOver={(e) => onDragOver(e, i)}
-                    onDrop={(e) => onDrop(e, i)}
-                    onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
-                    className={[
-                      "flex cursor-grab items-center gap-2 px-2 py-2.5 select-none active:cursor-grabbing",
-                      dragIdx === i ? "opacity-40 bg-slate-50" : "",
-                      overIdx === i && dragIdx !== i ? "border-t-2 border-orange-400" : "",
-                    ].join(" ")}
-                  >
-                    <GripVertical className="h-4 w-4 shrink-0 text-slate-300" />
-                    <span className="w-5 shrink-0 text-center text-xs font-semibold text-slate-400">{i + 1}</span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm text-slate-800">{hh.primaryName || hh.address || "—"}</p>
-                      {hh.address && <p className="truncate text-xs text-slate-400">{hh.address}{hh.area ? ` · ${hh.area}` : ""}</p>}
-                    </div>
-                    <button type="button" onClick={() => removeHousehold(hh.householdId)}
-                      className="shrink-0 rounded p-0.5 text-slate-300 hover:text-rose-400 transition-colors">
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
-            <Button variant="ghost" onClick={() => setStep(1)}>← Back</Button>
-            <div className="flex gap-2">
-              <Button variant="ghost" onClick={onClose}>Cancel</Button>
-              <Button variant="accent" onClick={handleSave}
-                disabled={saving || selected.length === 0}>
-                {saving ? "Saving…" : `Save event · ${selected.length} household${selected.length !== 1 ? "s" : ""}`}
-              </Button>
-            </div>
-          </div>
-        </>
-      )}
     </Modal>
   );
 }
 
-// ── Event card ────────────────────────────────────────────────────────────────
-function EventCard({ event, onScheduleAll, onExport }) {
+// ── EventCard ──────────────────────────────────────────────────────────────────
+
+function EventCard({ event, isAdmin, currentUserId, onEdit, onDelete, onUpdateHouseholdStatus }) {
   const [expanded, setExpanded] = useState(false);
-  const [scheduling, setScheduling] = useState(false);
+  const hhs = event.households || [];
+  const visited = hhs.filter((h) => h.status === "completed").length;
+  const isAssignedKaryakarta = event.assignedVolunteerId === currentUserId;
+  const canAct = isAdmin || isAssignedKaryakarta;
 
-  const vLine = [event.assignedVolunteerName, event.secondVolunteerName, event.santo2Name]
-    .filter(Boolean).join(" · ");
-
-  async function handleScheduleAll() {
-    setScheduling(true);
-    try { await onScheduleAll(event); }
-    finally { setScheduling(false); }
-  }
-
-  const isScheduled = event.status === "scheduled";
+  const volunteerParts = [
+    event.assignedVolunteerName,
+    event.secondVolunteerName,
+    event.santo2Name,
+  ].filter(Boolean);
 
   return (
-    <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
-      <div className="flex items-start gap-3">
+    <div className="rounded-xl border border-slate-100 bg-white shadow-sm overflow-hidden">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-start gap-3 p-4 text-left hover:bg-slate-50/70 transition-colors"
+      >
         <div className="mt-0.5 rounded-lg bg-orange-50 p-2 shrink-0">
           <CalendarDays className="h-4 w-4 text-orange-500" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <p className="font-semibold text-slate-900">{event.name}</p>
-            <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
-              isScheduled ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-              : "bg-amber-50 border-amber-200 text-amber-700"
-            }`}>
-              {isScheduled ? "Scheduled" : "Draft"}
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-semibold text-slate-900">
+              {event.name || formatDate(event.scheduledDate)}
+            </p>
+            {event.area && (
+              <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700">
+                {event.area}
+              </span>
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-500">
+            <span className="inline-flex items-center gap-1">
+              <CalendarDays className="h-3 w-3" />{formatDate(event.scheduledDate)}
+            </span>
+            {volunteerParts.length > 0 && (
+              <span className="inline-flex items-center gap-1 font-medium text-slate-700">
+                <Users className="h-3 w-3" />{volunteerParts.join(" · ")}
+              </span>
+            )}
+            <span className="inline-flex items-center gap-1">
+              <Home className="h-3 w-3" />
+              {hhs.length} household{hhs.length !== 1 ? "s" : ""}
+              {hhs.length > 0 && (
+                <span className="ml-1 font-medium text-emerald-600">· {visited} visited</span>
+              )}
             </span>
           </div>
-          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-500">
-            <span>{formatDate(event.scheduledDate)}</span>
-            {vLine && <span className="font-medium text-slate-700">{vLine}</span>}
-            <span>{event.households?.length || 0} household(s)</span>
-            {event.notes && <span className="italic truncate max-w-xs">{event.notes}</span>}
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5 flex-wrap justify-end">
-          <Button variant="secondary" size="sm" onClick={() => onExport(event)}>
-            <Download className="h-3.5 w-3.5" /> Export
-          </Button>
-          {!isScheduled && (
-            <Button variant="accent" size="sm" onClick={handleScheduleAll} disabled={scheduling || !event.households?.length}>
-              {scheduling ? "Scheduling…" : "Schedule All"}
-            </Button>
+          {event.notes && (
+            <p className="mt-0.5 text-xs italic text-slate-400 truncate max-w-sm">{event.notes}</p>
           )}
-          <button onClick={() => setExpanded((v) => !v)}
-            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 transition-colors">
-            <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`} />
-          </button>
         </div>
-      </div>
+        <ChevronDown className={`h-4 w-4 text-slate-400 shrink-0 mt-1 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`} />
+      </button>
 
       {expanded && (
-        <div className="mt-3 rounded-lg border border-slate-100">
-          {(event.households?.length ?? 0) === 0 ? (
-            <p className="py-6 text-center text-xs text-slate-400">No households in this event.</p>
-          ) : (
-            <div className="divide-y divide-slate-50">
-              {event.households.map((hh, i) => (
-                <div key={hh.householdId} className="flex items-center gap-2 px-3 py-2 text-xs text-slate-600">
-                  <span className="w-6 shrink-0 font-semibold text-slate-400">{i + 1}.</span>
-                  <Home className="h-3 w-3 shrink-0 text-slate-300" />
-                  <div className="flex-1 min-w-0">
-                    <p className="truncate font-medium text-slate-700">{hh.primaryName || hh.address || "—"}</p>
-                    {hh.primaryName && hh.address && <p className="truncate text-slate-400">{hh.address}</p>}
+        <div className="border-t border-slate-100">
+          <div className="max-h-80 overflow-y-auto">
+            {hhs.length === 0 ? (
+              <p className="py-6 text-center text-xs text-slate-400">No households added yet.</p>
+            ) : (
+              <div className="divide-y divide-slate-50">
+                {hhs.map((hh, i) => (
+                  <div key={hh.householdId} className="flex items-center gap-3 px-4 py-2.5">
+                    <span className="w-5 shrink-0 text-center text-xs font-semibold text-slate-300">{i + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="truncate text-sm font-medium text-slate-800">
+                        {hh.primaryName || hh.address || "—"}
+                      </p>
+                      {hh.primaryName && hh.address && (
+                        <p className="truncate text-xs text-slate-400">
+                          {hh.address}{hh.area ? ` · ${hh.area}` : ""}
+                        </p>
+                      )}
+                    </div>
+                    {canAct ? (
+                      <select
+                        value={hh.status || "pending"}
+                        onChange={(e) => onUpdateHouseholdStatus(i, e.target.value)}
+                        className="h-7 rounded-md border border-slate-200 bg-white px-1.5 text-xs focus:outline-none shrink-0"
+                      >
+                        {Object.entries(HH_STATUSES).map(([k, v]) => (
+                          <option key={k} value={k}>{v.label}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className={`rounded-full border px-2 py-0.5 text-xs font-medium shrink-0 ${HH_STATUSES[hh.status || "pending"]?.color}`}>
+                        {HH_STATUSES[hh.status || "pending"]?.label}
+                      </span>
+                    )}
                   </div>
-                  {hh.area && <span className="shrink-0 text-slate-400">{hh.area}</span>}
-                </div>
-              ))}
+                ))}
+              </div>
+            )}
+          </div>
+
+          {canAct && (
+            <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-4 py-2.5">
+              <Button variant="ghost" size="sm" onClick={() => onEdit(event)}>
+                <Pencil className="h-3.5 w-3.5" />
+                {isAdmin ? "Edit event" : "Edit households"}
+              </Button>
+              {isAdmin && (
+                <button
+                  onClick={() => onDelete(event.id)}
+                  className="rounded-md px-2.5 py-1.5 text-xs font-medium text-rose-500 hover:bg-rose-50 inline-flex items-center gap-1.5 transition-colors"
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Delete
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -724,377 +681,220 @@ function EventCard({ event, onScheduleAll, onExport }) {
   );
 }
 
-// ── Summary stats ─────────────────────────────────────────────────────────────
-function SummaryCards({ visits }) {
-  const total = visits.length;
-  const completed = visits.filter((v) => v.status === "completed").length;
-  const scheduled = visits.filter((v) => v.status === "scheduled").length;
-  const overdue_ = visits.filter((v) => overdue(v.scheduledDate, v.status)).length;
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-      {[
-        { label: "Total visits", value: total, color: "text-slate-700" },
-        { label: "Completed", value: completed, color: "text-emerald-600" },
-        { label: "Upcoming", value: scheduled - overdue_, color: "text-blue-600" },
-        { label: "Overdue", value: overdue_, color: "text-rose-600" },
-      ].map((c) => (
-        <div key={c.label} className="rounded-xl border border-slate-100 bg-white p-4">
-          <p className={`text-2xl font-bold ${c.color}`}>{c.value}</p>
-          <p className="text-xs text-slate-400 mt-0.5">{c.label}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── CSV export helpers ────────────────────────────────────────────────────────
-function exportCSV(rows) {
-  const headers = ["Household", "Area", "Scheduled Date", "Volunteer", "Santo 1", "Santo 2", "Status", "Notes"];
-  const lines = rows.map((r) => [
-    r.householdAddress || "", r.area || "", r.scheduledDate || "",
-    r.assignedVolunteerName || "", r.secondVolunteerName || "", r.santo2Name || "",
-    r.status || "", (r.notes || "").replace(/"/g, '""'),
-  ].map((v) => `"${v}"`).join(","));
-  downloadCSV([headers.join(","), ...lines].join("\n"), `padhramani-${Date.now()}.csv`);
-}
-
-function exportEventCSV(event) {
-  const headers = ["#", "Household", "Area", "Date", "Volunteer", "Santo 1", "Santo 2", "Notes"];
-  const lines = (event.households || []).map((hh, i) => [
-    i + 1, hh.address || "", hh.area || "",
-    event.scheduledDate || "",
-    event.assignedVolunteerName || "", event.secondVolunteerName || "", event.santo2Name || "",
-    (event.notes || "").replace(/"/g, '""'),
-  ].map((v) => `"${v}"`).join(","));
-  const safeName = (event.name || "event").replace(/[^\w\s-]/g, "").replace(/\s+/g, "-");
-  downloadCSV([headers.join(","), ...lines].join("\n"), `${safeName}.csv`);
-}
-
-function downloadCSV(csv, filename) {
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a"); a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
 // ── Main page ──────────────────────────────────────────────────────────────────
+
 export default function PadhramaniPage() {
-  const { visits, loading } = usePadhramani();
-  const { areas } = useAreasAndMandals();
-  const { showToast } = useToast();
   const { volunteer: currentUser, hasPermission } = useAuth();
-  const isViewAll = hasPermission("view_all_contacts");
-
-  const [nonSantoVolunteers, setNonSantoVolunteers] = useState([]);
-  const [santoVolunteers, setSantoVolunteers] = useState([]);
-  const [memberByHousehold, setMemberByHousehold] = useState({}); // hhId → {name, mobile}
-  const [mandalByHousehold, setMandalByHousehold] = useState({}); // hhId → mandal
-
+  const { showToast } = useToast();
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [outcomeVisit, setOutcomeVisit] = useState(null);
-  const [editVisit, setEditVisit] = useState(null);
+  const [editEvent, setEditEvent] = useState(null);
+  const [editHouseholdsEvent, setEditHouseholdsEvent] = useState(null);
 
-  const [areaFilter, setAreaFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [volunteerFilter, setVolunteerFilter] = useState("");
-  const [search, setSearch] = useState("");
-  const [tab, setTab] = useState("visits");
+  const isAdmin = hasPermission("manage_users") || hasPermission("view_all_contacts");
 
   useEffect(() => {
-    if (!currentUser) return;
-    loadVolunteersAndRoles().then(({ nonSantoVolunteers: nsv, santoVolunteers: sv }) => {
-      setNonSantoVolunteers(nsv);
-      setSantoVolunteers(sv);
-    });
-    // Load primary member info and mandal, scoped to the user's areas so the
-    // Firestore security rule (which requires area-filtered queries for non-admins)
-    // doesn't reject the reads with "Missing or insufficient permissions".
-    const myAreas = currentUser.assignedAreas || [];
-    const indQ = isViewAll
-      ? collection(db, "individuals")
-      : myAreas.length > 0
-        ? query(collection(db, "individuals"), where("area", "in", myAreas.slice(0, 30)))
-        : null;
-    const hhQ = isViewAll
-      ? collection(db, "households")
-      : myAreas.length > 0
-        ? query(collection(db, "households"), where("area", "in", myAreas.slice(0, 30)))
-        : null;
-    if (!indQ || !hhQ) return;
-    Promise.all([getDocs(indQ), getDocs(hhQ)]).then(([indSnap, hhSnap]) => {
-      const members = {};
-      indSnap.docs.forEach((d) => {
-        const ind = d.data();
-        if (!ind.householdId) return;
-        if (ind.isPrimary || !members[ind.householdId]) {
-          members[ind.householdId] = { name: ind.name, mobile: ind.mobile };
-        }
-      });
-      setMemberByHousehold(members);
-      const mand = {};
-      hhSnap.docs.forEach((d) => { if (d.data().mandal) mand[d.id] = d.data().mandal; });
-      setMandalByHousehold(mand);
-    });
-  }, [currentUser?.id, isViewAll]);
+    const unsub = onSnapshot(
+      query(collection(db, "padhramaniEvents"), orderBy("scheduledDate", "desc")),
+      (snap) => {
+        setEvents(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setLoading(false);
+      },
+      (err) => {
+        console.error("padhramaniEvents:", err.message);
+        setLoading(false);
+      }
+    );
+    return unsub;
+  }, []);
 
-  async function handleDeleteVisit(visitId) {
+  const today = todayStr();
+  const upcoming = useMemo(
+    () =>
+      events
+        .filter((e) => (e.scheduledDate || "") >= today)
+        .sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate)),
+    [events, today]
+  );
+  const past = useMemo(
+    () => events.filter((e) => (e.scheduledDate || "") < today),
+    [events, today]
+  );
+
+  const totalHouseholds = useMemo(
+    () => events.reduce((n, e) => n + (e.households?.length || 0), 0),
+    [events]
+  );
+  const totalVisited = useMemo(
+    () =>
+      events.reduce(
+        (n, e) => n + (e.households || []).filter((h) => h.status === "completed").length,
+        0
+      ),
+    [events]
+  );
+
+  async function handleDelete(eventId) {
+    if (!window.confirm("Remove this Padhramani event?")) return;
     try {
-      await deleteDoc(doc(db, "padhramani", visitId));
-      showToast({ type: "success", message: "Visit removed." });
+      await deleteDoc(doc(db, "padhramaniEvents", eventId));
+      showToast({ type: "success", message: "Event removed." });
     } catch (err) {
-      showToast({ type: "error", message: err.message || "Couldn't remove visit." });
+      showToast({ type: "error", message: err.message || "Couldn't delete." });
     }
   }
 
-  const filtered = useMemo(() => {
-    let rows = visits;
-    if (areaFilter) rows = rows.filter((v) => v.area === areaFilter);
-    if (statusFilter) rows = rows.filter((v) => v.status === statusFilter);
-    if (volunteerFilter) rows = rows.filter(
-      (v) => v.assignedVolunteerName === volunteerFilter ||
-             v.secondVolunteerName === volunteerFilter ||
-             v.santo2Name === volunteerFilter
-    );
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      rows = rows.filter((v) =>
-        v.householdAddress?.toLowerCase().includes(q) ||
-        v.assignedVolunteerName?.toLowerCase().includes(q) ||
-        v.secondVolunteerName?.toLowerCase().includes(q) ||
-        v.santo2Name?.toLowerCase().includes(q) ||
-        v.notes?.toLowerCase().includes(q)
-      );
+  function handleEdit(event) {
+    if (isAdmin) {
+      setEditEvent(event);
+    } else {
+      setEditHouseholdsEvent(event);
     }
-    return rows;
-  }, [visits, areaFilter, statusFilter, volunteerFilter, search]);
+  }
 
-  const dueSoonCount = useMemo(
-    () => visits.filter((v) => v.status === "scheduled" && dueSoon(v.scheduledDate)).length,
-    [visits]
-  );
+  async function handleUpdateHouseholdStatus(event, hhIndex, newStatus) {
+    const updated = (event.households || []).map((hh, i) =>
+      i === hhIndex ? { ...hh, status: newStatus } : hh
+    );
+    try {
+      await updateDoc(doc(db, "padhramaniEvents", event.id), {
+        households: updated,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      showToast({ type: "error", message: err.message || "Couldn't update status." });
+    }
+  }
 
-  const volunteerNames = useMemo(() => {
-    const names = new Set();
-    visits.forEach((v) => {
-      if (v.assignedVolunteerName) names.add(v.assignedVolunteerName);
-      if (v.secondVolunteerName) names.add(v.secondVolunteerName);
-      if (v.santo2Name) names.add(v.santo2Name);
+  function exportCSV() {
+    const rows = [];
+    events.forEach((ev) => {
+      (ev.households || []).forEach((hh) => {
+        rows.push(
+          [
+            ev.scheduledDate || "", ev.name || "", ev.area || "",
+            ev.assignedVolunteerName || "",
+            ev.secondVolunteerName || "",
+            ev.santo2Name || "",
+            hh.primaryName || hh.address || "",
+            hh.address || "", hh.area || "",
+            HH_STATUSES[hh.status || "pending"]?.label || "Pending",
+          ]
+            .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+            .join(",")
+        );
+      });
     });
-    return [...names].sort();
-  }, [visits]);
-
-  const byHousehold = useMemo(() => {
-    const map = {};
-    filtered.forEach((v) => {
-      if (!map[v.householdId]) map[v.householdId] = { address: v.householdAddress, area: v.area, visits: [] };
-      map[v.householdId].visits.push(v);
-    });
-    return Object.entries(map).sort((a, b) => (a[1].address || "").localeCompare(b[1].address || ""));
-  }, [filtered]);
-
-  const byVolunteer = useMemo(() => {
-    const map = {};
-    filtered.forEach((v) => {
-      const key = v.assignedVolunteerName || "Unassigned";
-      if (!map[key]) map[key] = [];
-      map[key].push(v);
-    });
-    return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [filtered]);
-
-  // Total visit count per household across ALL visits (not just filtered)
-  const visitCountByHousehold = useMemo(() => {
-    const map = {};
-    visits.forEach((v) => { if (v.householdId) map[v.householdId] = (map[v.householdId] || 0) + 1; });
-    return map;
-  }, [visits]);
-
-  const TABS = [
-    { key: "visits",       label: "All visits" },
-    { key: "by-household", label: "By household" },
-    { key: "by-volunteer", label: "By volunteer" },
-  ];
+    const header = ["Date","Event","Area","Karyakarta","Santo 1","Santo 2","Household","Address","HH Area","Status"];
+    downloadCSV([header.join(","), ...rows].join("\n"), `padhramani-${today}.csv`);
+  }
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
       {/* Header */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900 tracking-tight flex items-center gap-2">
-            Padhramani
-            {dueSoonCount > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-                <Bell className="h-3 w-3" /> {dueSoonCount} due soon
-              </span>
-            )}
-          </h1>
-          <p className="text-sm text-slate-400">{visits.length} visit record(s)</p>
+          <h1 className="text-xl font-semibold text-slate-900 tracking-tight">Padhramani</h1>
+          <p className="text-sm text-slate-400">
+            {events.length} event{events.length !== 1 ? "s" : ""} ·{" "}
+            {totalHouseholds} households · {totalVisited} visited
+          </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={() => exportCSV(filtered)}><Download className="h-3.5 w-3.5" /> Export</Button>
-          <Button variant="accent" onClick={() => setScheduleOpen(true)}><Plus className="h-3.5 w-3.5" /> Schedule visit</Button>
+          <Button variant="secondary" onClick={exportCSV}>
+            <Download className="h-3.5 w-3.5" /> Export CSV
+          </Button>
+          <RequirePermission permission="edit_contacts">
+            <Button variant="accent" onClick={() => setScheduleOpen(true)}>
+              <Plus className="h-3.5 w-3.5" /> Schedule Padhramani
+            </Button>
+          </RequirePermission>
         </div>
       </div>
 
-      <SummaryCards visits={visits} />
+      {/* Area-wise stats */}
+      <AreaStats events={events} />
 
-      {/* Tab bar */}
-      <div className="mb-4 flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 w-fit">
-        {TABS.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${tab === t.key ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-700"}`}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* ── Visits tabs ─────────────────────────────────────────────────────── */}
-      <>
-        <div className="mb-4 flex flex-wrap gap-3">
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, address, volunteer…" className="w-52" />
-          <Select value={areaFilter} onChange={(e) => setAreaFilter(e.target.value)} className="w-36">
-            <option value="">All areas</option>
-            {areas.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
-          </Select>
-          <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-36">
-            <option value="">All statuses</option>
-            {Object.entries(OUTCOMES).map(([k, o]) => <option key={k} value={k}>{o.label}</option>)}
-          </Select>
-          <Select value={volunteerFilter} onChange={(e) => setVolunteerFilter(e.target.value)} className="w-40">
-            <option value="">All volunteers</option>
-            {volunteerNames.map((n) => <option key={n} value={n}>{n}</option>)}
-          </Select>
+      {/* Content */}
+      {loading ? (
+        <div className="space-y-2">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-20 animate-pulse rounded-xl bg-slate-100" />
+          ))}
         </div>
+      ) : events.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 py-20 text-center">
+          <CalendarDays className="mx-auto h-8 w-8 text-slate-300 mb-3" />
+          <p className="font-medium text-slate-500">No Padhramani events yet</p>
+          <p className="mt-1 text-sm text-slate-400">
+            Click "Schedule Padhramani" to create one.
+          </p>
+        </div>
+      ) : (
+        <>
+          {upcoming.length > 0 && (
+            <section className="mb-8">
+              <div className="mb-3 flex items-center gap-2">
+                <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
+                  Upcoming Padhramani
+                </span>
+                <span className="text-xs text-slate-400">
+                  {upcoming.length} event{upcoming.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {upcoming.map((ev) => (
+                  <EventCard
+                    key={ev.id} event={ev}
+                    isAdmin={isAdmin} currentUserId={currentUser?.id}
+                    onEdit={handleEdit} onDelete={handleDelete}
+                    onUpdateHouseholdStatus={(i, s) => handleUpdateHouseholdStatus(ev, i, s)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
 
-        {loading ? (
-          <div className="space-y-2">{[1,2,3,4,5].map((i) => <div key={i} className="h-20 animate-pulse rounded-xl bg-slate-100" />)}</div>
-        ) : filtered.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-slate-200 py-16 text-center text-slate-400">No visits match your filters.</p>
-        ) : tab === "visits" ? (
-          <div className="space-y-2">
-            {filtered.map((v) => {
-              const member = memberByHousehold[v.householdId] || {};
-              const mandal = mandalByHousehold[v.householdId];
-              const visitCount = visitCountByHousehold[v.householdId] || 1;
-              const vLine = volunteerLine(v);
-              return (
-                <div key={v.id} className={`rounded-xl border bg-white p-4 shadow-sm ${overdue(v.scheduledDate, v.status) ? "border-rose-200 bg-rose-50/20" : "border-slate-100"}`}>
-                  <div className="flex items-start gap-3">
-                    <div className="mt-0.5 shrink-0">
-                      {v.status === "completed" ? <CheckCircle2 className="h-5 w-5 text-emerald-500" /> :
-                        v.status === "not_home" ? <XCircle className="h-5 w-5 text-amber-500" /> :
-                          <Clock className="h-5 w-5 text-blue-400" />}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2 mb-1">
-                        <p className="text-sm font-semibold text-slate-900">{member.name || v.householdAddress || "Unknown household"}</p>
-                        <OutcomeBadge status={v.status} />
-                        {overdue(v.scheduledDate, v.status) && <span className="text-xs font-medium text-rose-600">Overdue</span>}
-                        {dueSoon(v.scheduledDate) && v.status === "scheduled" && <span className="text-xs font-medium text-amber-600">Due soon</span>}
-                        {visitCount > 1 && <span className="text-xs font-medium text-orange-600">{visitCount} visits total</span>}
-                      </div>
-                      <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-500">
-                        {member.mobile && <span className="inline-flex items-center gap-1"><Phone className="h-3 w-3" />{member.mobile}</span>}
-                        <span className="inline-flex items-center gap-1"><CalendarDays className="h-3 w-3" />{formatDate(v.scheduledDate)}</span>
-                        {(v.householdAddress || v.area || mandal) && (
-                          <span className="inline-flex items-center gap-1">
-                            <Home className="h-3 w-3" />
-                            {[v.householdAddress, v.area, mandal].filter(Boolean).join(" · ")}
-                          </span>
-                        )}
-                      </div>
-                      {vLine && <p className="mt-0.5 text-xs font-medium text-slate-600">{vLine}</p>}
-                      {v.notes && <p className="mt-0.5 text-xs italic text-slate-400 truncate max-w-sm">{v.notes}</p>}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      <button onClick={() => setEditVisit(v)} title="Edit"
-                        className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                      <Button variant="ghost" size="sm" onClick={() => setOutcomeVisit(v)}>Update</Button>
-                      <RequirePermission permission="delete_contacts">
-                        <button onClick={() => handleDeleteVisit(v.id)} title="Remove visit"
-                          className="rounded p-1.5 text-slate-300 hover:bg-rose-50 hover:text-rose-500 transition-colors">
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </RequirePermission>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : tab === "by-household" ? (
-            <div className="space-y-3">
-              {byHousehold.map(([hhId, hh]) => (
-                <div key={hhId} className="rounded-lg border border-slate-100 p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Home className="h-4 w-4 text-slate-400" />
-                    <p className="text-sm font-medium text-slate-900">{hh.address}</p>
-                    {hh.area && <span className="text-xs text-slate-400">{hh.area}</span>}
-                    <span className="ml-auto text-xs text-slate-400">{hh.visits.length} visit(s)</span>
-                  </div>
-                  <div className="space-y-1.5">
-                    {hh.visits.map((v) => {
-                      const vLine = volunteerLine(v);
-                      return (
-                        <div key={v.id} className="flex items-center gap-2 text-xs text-slate-600">
-                          <OutcomeBadge status={v.status} />
-                          <span>{formatDate(v.scheduledDate)}</span>
-                          {vLine && <span className="font-medium">{vLine}</span>}
-                          {v.notes && <span className="italic truncate max-w-xs text-slate-400">{v.notes}</span>}
-                          <button onClick={() => setEditVisit(v)} className="p-0.5 text-slate-300 hover:text-slate-500"><Pencil className="h-3 w-3" /></button>
-                          <button onClick={() => setOutcomeVisit(v)} className="ml-auto text-slate-400 hover:text-slate-600 hover:underline">Update</button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {byVolunteer.map(([name, vVisits]) => (
-                <div key={name} className="rounded-lg border border-slate-100 p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <p className="text-sm font-medium text-slate-900">{name}</p>
-                    <span className="ml-auto text-xs text-slate-400">{vVisits.length} visit(s)</span>
-                    <span className="text-xs text-emerald-600">{vVisits.filter((v) => v.status === "completed").length} completed</span>
-                  </div>
-                  <div className="space-y-1.5">
-                    {vVisits.map((v) => {
-                      const vLine = volunteerLine(v);
-                      return (
-                        <div key={v.id} className="flex items-center gap-2 text-xs text-slate-600">
-                          <OutcomeBadge status={v.status} />
-                          <span>{v.householdAddress || "?"}</span>
-                          <span className="text-slate-400">{formatDate(v.scheduledDate)}</span>
-                          {vLine && <span className="font-medium">{vLine}</span>}
-                          {v.notes && <span className="italic truncate max-w-xs text-slate-400">{v.notes}</span>}
-                          <button onClick={() => setEditVisit(v)} className="p-0.5 text-slate-300 hover:text-slate-500"><Pencil className="h-3 w-3" /></button>
-                          <button onClick={() => setOutcomeVisit(v)} className="ml-auto text-slate-400 hover:text-slate-600 hover:underline">Update</button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
+          {past.length > 0 && (
+            <section>
+              <div className="mb-3 flex items-center gap-2">
+                <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
+                  Past Padhramani
+                </span>
+                <span className="text-xs text-slate-400">
+                  {past.length} event{past.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {past.map((ev) => (
+                  <EventCard
+                    key={ev.id} event={ev}
+                    isAdmin={isAdmin} currentUserId={currentUser?.id}
+                    onEdit={handleEdit} onDelete={handleDelete}
+                    onUpdateHouseholdStatus={(i, s) => handleUpdateHouseholdStatus(ev, i, s)}
+                  />
+                ))}
+              </div>
+            </section>
           )}
         </>
+      )}
 
-      {scheduleOpen && <ScheduleVisitModal onClose={() => setScheduleOpen(false)} />}
-      {outcomeVisit && <OutcomeModal visit={outcomeVisit} onClose={() => setOutcomeVisit(null)} />}
-      {editVisit && (
-        <EditVisitModal visit={editVisit} allVolunteers={nonSantoVolunteers}
-          santoVolunteers={santoVolunteers} onClose={() => setEditVisit(null)} />
+      {scheduleOpen && (
+        <ScheduleEventModal onClose={() => setScheduleOpen(false)} />
+      )}
+      {editEvent && (
+        <ScheduleEventModal editEvent={editEvent} onClose={() => setEditEvent(null)} />
+      )}
+      {editHouseholdsEvent && (
+        <EditHouseholdsModal event={editHouseholdsEvent} onClose={() => setEditHouseholdsEvent(null)} />
       )}
     </div>
   );
 }
 
-// Exported for use from HouseholdDetailPage
+// Exported for HouseholdDetailPage
 export function SchedulePadhramaniModal({ householdId, onClose }) {
-  return <ScheduleVisitModal onClose={onClose} prefillHouseholdId={householdId} />;
+  return <ScheduleEventModal onClose={onClose} prefillHouseholdId={householdId} />;
 }
