@@ -155,8 +155,7 @@ service cloud.firestore {
 
     function canReadIndividual(data) {
       let c = ctx();
-      return c.perms.hasAny(['view_all_contacts']) ||
-        (c.perms.hasAny(['view_assigned_contacts']) && individualScopeOk(data, c));
+      return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts', 'edit_contacts']);
     }
 
     function canWriteIndividual(data) {
