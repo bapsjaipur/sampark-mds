@@ -4,7 +4,7 @@
 // Phase 3 location, since Phase 3 has the most files depending on the path.
 
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, getFirestore } from "firebase/firestore";
+import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import { getAuth } from "firebase/auth";
 
@@ -19,21 +19,11 @@ const firebaseConfig = {
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-// initializeFirestore may only be called once per app. On Vite HMR the module
-// re-executes while the Firebase app persists, so calling initializeFirestore
-// a second time throws "INTERNAL ASSERTION FAILED: Unexpected state". We catch
-// that and fall back to getFirestore() which returns the already-configured
-// instance with persistence intact.
-function getOrInitFirestore() {
-  try {
-    return initializeFirestore(app, {
-      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
-    });
-  } catch {
-    return getFirestore(app);
-  }
-}
-export const db = getOrInitFirestore();
+// Using getFirestore() (default config, no IndexedDB persistence) to avoid
+// "INTERNAL ASSERTION FAILED: Unexpected state" errors that occur when
+// persistentLocalCache's IndexedDB state becomes corrupted across Vite HMR
+// reloads. Firestore's built-in network caching still keeps the app fast.
+export const db = getFirestore(app);
 export const storage = getStorage(app);
 export const auth = getAuth(app);
 export default app;

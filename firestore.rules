@@ -83,8 +83,10 @@ service cloud.firestore {
     }
 
     match /volunteers/{volunteerId} {
-      allow read: if isSignedIn() &&
-        (volunteerId == request.auth.uid || (volunteerExists() && canManageUsers()));
+      // Any signed-in volunteer can read the full volunteer list — needed for
+      // name/number dropdowns (Sampark Karyakarta picker, Padhramani volunteer
+      // assignment) which are used by all roles, not just admins.
+      allow read: if volunteerExists();
       allow create, update, delete: if volunteerExists() && canManageUsers();
     }
 
