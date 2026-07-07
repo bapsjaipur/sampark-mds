@@ -234,7 +234,7 @@ function MergeHouseholdModal({ sourceHousehold, onClose }) {
 export default function HouseholdDetailPage() {
   const { householdId } = useParams();
   const navigate = useNavigate();
-  const { households, updateHousehold, deleteHousehold } = useHouseholds();
+  const { households, updateHousehold, deleteHousehold, deleteHouseholdOnly } = useHouseholds();
   const { individuals, loading, createIndividual, updateIndividual, deleteIndividual } = useIndividuals(householdId);
   const { showToast } = useToast();
 
@@ -321,6 +321,13 @@ export default function HouseholdDetailPage() {
   const handleDeleteHousehold = async () => {
     setDeletingHousehold(true);
     const ok = await deleteHousehold(household.id);
+    setDeletingHousehold(false);
+    if (ok) navigate('/households');
+  };
+
+  const handleDeleteHouseholdOnly = async () => {
+    setDeletingHousehold(true);
+    const ok = await deleteHouseholdOnly(household.id);
     setDeletingHousehold(false);
     if (ok) navigate('/households');
   };
@@ -482,14 +489,46 @@ export default function HouseholdDetailPage() {
         </div>
       </Modal>
 
-      <Modal open={confirmDeleteHousehold} onClose={() => setConfirmDeleteHousehold(false)} title="Delete this household?" size="sm">
-        <p className="text-sm text-slate-500">
-          This permanently deletes this household{individuals.length > 0 ? <> and all <span className="font-medium text-slate-700">{individuals.length}</span> member(s) in it</> : ''}. This can't be undone.
-        </p>
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => setConfirmDeleteHousehold(false)}>Cancel</Button>
-          <Button variant="dangerSolid" onClick={handleDeleteHousehold} disabled={deletingHousehold}>{deletingHousehold ? 'Deleting…' : 'Delete household'}</Button>
-        </div>
+      <Modal open={confirmDeleteHousehold} onClose={() => !deletingHousehold && setConfirmDeleteHousehold(false)} title="Delete this household?">
+        {individuals.length > 0 ? (
+          <>
+            <p className="text-sm text-slate-600">
+              This household has <span className="font-semibold text-slate-800">{individuals.length} member{individuals.length !== 1 ? 's' : ''}</span>. Choose what happens to them:
+            </p>
+            <div className="mt-4 flex flex-col gap-3">
+              <button
+                onClick={handleDeleteHouseholdOnly}
+                disabled={deletingHousehold}
+                className="w-full rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-left transition hover:bg-amber-100 disabled:opacity-50"
+              >
+                <p className="font-medium text-amber-800">Delete household only</p>
+                <p className="mt-0.5 text-xs text-amber-700">
+                  The {individuals.length} member{individuals.length !== 1 ? 's' : ''} will be kept as standalone contacts in All Contacts. Your data is safe.
+                </p>
+              </button>
+              <button
+                onClick={handleDeleteHousehold}
+                disabled={deletingHousehold}
+                className="w-full rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-left transition hover:bg-rose-100 disabled:opacity-50"
+              >
+                <p className="font-medium text-rose-700">Delete household + all {individuals.length} member{individuals.length !== 1 ? 's' : ''}</p>
+                <p className="mt-0.5 text-xs text-rose-600">Permanently removes the household and every member. This cannot be undone.</p>
+              </button>
+              <Button variant="ghost" onClick={() => setConfirmDeleteHousehold(false)} disabled={deletingHousehold} className="w-full">Cancel</Button>
+            </div>
+            {deletingHousehold && <p className="mt-3 text-center text-xs text-slate-400">Deleting…</p>}
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-slate-500">This household has no members. It will be permanently removed.</p>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setConfirmDeleteHousehold(false)}>Cancel</Button>
+              <Button variant="dangerSolid" onClick={handleDeleteHousehold} disabled={deletingHousehold}>
+                {deletingHousehold ? 'Deleting…' : 'Delete household'}
+              </Button>
+            </div>
+          </>
+        )}
       </Modal>
 
       {scheduleVisitOpen && (

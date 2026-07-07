@@ -7,7 +7,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   collection, onSnapshot, addDoc, setDoc, updateDoc, deleteDoc, doc,
-  serverTimestamp, query, orderBy, limit, where, getCountFromServer,
+  serverTimestamp, query, orderBy, limit, where, getCountFromServer, writeBatch,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useToast } from "../contexts/ToastContext";
@@ -178,5 +178,29 @@ export function useAllContacts({ pageSize } = {}) {
     [contacts, showToast, volunteer]
   );
 
-  return { contacts, loading, error, hasMore, loadMore, createContact, updateContact, deleteContact, serverTotal, serverUngrouped, isViewAll, isViewAssigned };
+  const bulkDeleteContacts = useCallback(
+    async (ids) => {
+      const snapshot = contacts.filter((c) => ids.includes(c.id));
+      setContacts((prev) => prev.filter((c) => !ids.includes(c.id)));
+      try {
+        const CHUNK = 500;
+        for (let i = 0; i < ids.length; i += CHUNK) {
+          const batch = writeBatch(db);
+          ids.slice(i, i + CHUNK).forEach((id) => batch.delete(doc(db, "individuals", id)));
+          await batch.commit();
+        }
+        logActivity({ volunteerId: volunteer?.id, action: "bulk_delete_individuals", details: { count: ids.length } });
+        showToast({ type: "success", message: `${ids.length} contact${ids.length !== 1 ? "s" : ""} permanently deleted.` });
+        return true;
+      } catch (err) {
+        console.error(err);
+        setContacts((prev) => [...prev, ...snapshot]);
+        showToast({ type: "error", message: "Couldn't delete contacts. Changes reverted." });
+        return false;
+      }
+    },
+    [contacts, showToast, volunteer]
+  );
+
+  return { contacts, loading, error, hasMore, loadMore, createContact, updateContact, deleteContact, bulkDeleteContacts, serverTotal, serverUngrouped, isViewAll, isViewAssigned };
 }

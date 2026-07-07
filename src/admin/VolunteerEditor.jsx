@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, doc, onSnapshot, updateDoc, deleteDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { X, KeyRound, Clock, Trash2 } from 'lucide-react';
+import { X, KeyRound, Clock, Trash2, BarChart2, ChevronRight } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { RequirePermission } from '../components/RequirePermission';
 import { useAreasAndMandals } from '../hooks/useAreasAndMandals';
@@ -66,19 +66,24 @@ function ContactSearchPicker({ onPick }) {
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
 
+  const [searchError, setSearchError] = useState(null);
+
   async function doSearch() {
     const term = q.trim();
     if (!term) return;
     setSearching(true);
+    setSearchError(null);
     try {
       const lower = term.toLowerCase();
-      // Load all contacts (small org) then filter client-side so any name or
-      // mobile number is found regardless of alphabetical position or case.
-      const snap = await getDocs(query(collection(db, 'individuals'), orderBy('name'), limit(500)));
+      // No orderBy — avoids index requirement and permission issues.
+      // Client-side filter handles any name / mobile match.
+      const snap = await getDocs(query(collection(db, 'individuals'), limit(500)));
       const matches = snap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
         .filter((c) => c.name?.toLowerCase().includes(lower) || c.mobile?.includes(term));
       setResults(matches);
+    } catch (err) {
+      setSearchError(err.message || 'Search failed. Check your permissions.');
     } finally {
       setSearching(false);
     }
@@ -116,7 +121,8 @@ function ContactSearchPicker({ onPick }) {
           ))}
         </div>
       )}
-      {results.length === 0 && q && !searching && (
+      {searchError && <p className="text-xs text-rose-500">{searchError}</p>}
+      {results.length === 0 && q && !searching && !searchError && (
         <p className="text-xs text-slate-400">No contacts found — try a different search.</p>
       )}
     </div>
@@ -264,6 +270,9 @@ function VolunteerEditorInner() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
+  const [filterArea, setFilterArea] = useState('');
+  const [filterMandal, setFilterMandal] = useState('');
+  const [showStats, setShowStats] = useState(true);
   const [resetTarget, setResetTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
@@ -286,19 +295,38 @@ function VolunteerEditorInner() {
     }
   }, [selectedId, volunteers]);
 
-  const filteredVolunteers = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return volunteers;
-    return volunteers.filter((v) => (v.name || '').toLowerCase().includes(q) || (v.mobile || '').includes(q));
-  }, [volunteers, search]);
-
   const roleName = (roleId) => roles.find((r) => r.id === roleId)?.name || '—';
+
+  const filteredVolunteers = useMemo(() => {
+    let result = volunteers;
+    const q = search.trim().toLowerCase();
+    if (q) result = result.filter((v) => (v.name || '').toLowerCase().includes(q) || (v.mobile || '').includes(q));
+    if (filterArea) result = result.filter((v) => v.assignedAreas?.includes(filterArea));
+    if (filterMandal) result = result.filter((v) => v.assignedMandals?.includes(filterMandal));
+    return result;
+  }, [volunteers, search, filterArea, filterMandal]);
+
+  const roleStats = useMemo(() => {
+    const counts = {};
+    volunteers.forEach((v) => { const name = roleName(v.roleRef); counts[name] = (counts[name] || 0) + 1; });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [volunteers, roles]);
+
+  const mandalStats = useMemo(() => {
+    const counts = {};
+    volunteers.forEach((v) => {
+      if (v.assignedMandals?.length) v.assignedMandals.forEach((m) => { counts[m] = (counts[m] || 0) + 1; });
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [volunteers]);
 
   async function handleSave() {
     if (!selectedId || !draft) return;
     setSaving(true); setError(null);
     try {
       await updateDoc(doc(db, 'volunteers', selectedId), {
+        name: draft.name.trim(),
+        mobile: draft.mobile.trim(),
         roleRef: draft.roleRef || null,
         assignedAreas: draft.assignedAreas,
         assignedMandals: draft.assignedMandals,
@@ -338,41 +366,100 @@ function VolunteerEditorInner() {
   return (
     <div className="mx-auto max-w-5xl px-6 py-8 grid grid-cols-1 md:grid-cols-3 gap-6">
       <div className="md:col-span-1">
-        <h1 className="text-xl font-semibold text-slate-900 tracking-tight mb-4">Volunteers</h1>
-        <CreateVolunteerForm roles={roles} />
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or mobile" className="mb-3" />
-        <div className="rounded-lg border border-slate-100 divide-y divide-slate-50 max-h-[70vh] overflow-y-auto">
-          {filteredVolunteers.map((v) => (
-            <div
-              key={v.id}
-              className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-sm hover:bg-slate-50 ${selectedId === v.id ? 'bg-slate-50 border-l-2 border-orange-500' : ''}`}
-            >
-              <button onClick={() => setSelectedId(v.id)} className="flex flex-1 items-center gap-2.5 text-left min-w-0">
-                <Avatar name={v.name} size="sm" />
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium text-slate-900 truncate">{v.name || 'Unnamed'}</div>
-                  <div className="text-xs text-slate-400 truncate">
-                    {v.mobile || 'no number'} &middot; {roleName(v.roleRef)}
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-xl font-semibold text-slate-900 tracking-tight">Volunteers</h1>
+          <span className="text-xs text-slate-400">{volunteers.length} total</span>
+        </div>
+
+        {/* Stats overview */}
+        {volunteers.length > 0 && (
+          <div className="mb-4 rounded-xl border border-slate-100 bg-slate-50">
+            <button onClick={() => setShowStats((s) => !s)} className="flex w-full items-center justify-between px-3 py-2 text-left">
+              <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <BarChart2 className="h-3.5 w-3.5" /> Overview
+              </span>
+              <ChevronRight className={`h-4 w-4 text-slate-400 transition-transform ${showStats ? 'rotate-90' : ''}`} />
+            </button>
+            {showStats && (
+              <div className="border-t border-slate-100 px-3 pb-3 pt-2 space-y-3">
+                <div>
+                  <p className="text-xs font-medium text-slate-500 mb-1.5">By role</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {roleStats.map(([role, count]) => (
+                      <span key={role} className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-700">
+                        <span className="font-semibold text-slate-900">{count}</span> {role}
+                      </span>
+                    ))}
                   </div>
-                  {v.lastLoginAt ? (
-                    <div className="flex items-center gap-1 text-xs text-slate-300 mt-0.5">
-                      <Clock className="h-3 w-3" />
-                      {formatLastLogin(v.lastLoginAt)}
-                    </div>
-                  ) : (
-                    <div className="text-xs text-slate-300 mt-0.5">Never logged in</div>
-                  )}
                 </div>
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); setDeleteTarget(v); }}
-                className="shrink-0 rounded p-1 text-slate-300 hover:bg-rose-50 hover:text-rose-500"
-                aria-label={`Remove ${v.name}`}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ))}
+                {mandalStats.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 mb-1.5">By mandal</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {mandalStats.map(([mandal, count]) => (
+                        <span key={mandal} className="inline-flex items-center gap-1 rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-xs text-orange-700">
+                          <span className="font-semibold">{count}</span> {mandal}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <CreateVolunteerForm roles={roles} />
+
+        {/* Search + filters */}
+        <div className="space-y-2 mb-3">
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or mobile" />
+          <div className="grid grid-cols-2 gap-2">
+            <select value={filterArea} onChange={(e) => setFilterArea(e.target.value)}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-600 focus:outline-none focus:ring-1 focus:ring-slate-300">
+              <option value="">All areas</option>
+              {areas.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
+            </select>
+            <select value={filterMandal} onChange={(e) => setFilterMandal(e.target.value)}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-600 focus:outline-none focus:ring-1 focus:ring-slate-300">
+              <option value="">All mandals</option>
+              {mandals.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
+            </select>
+          </div>
+          {(filterArea || filterMandal) && (
+            <button onClick={() => { setFilterArea(''); setFilterMandal(''); }} className="text-xs text-orange-600 hover:underline">
+              Clear filters · {filteredVolunteers.length} shown
+            </button>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-slate-100 divide-y divide-slate-50 max-h-[60vh] overflow-y-auto">
+          {filteredVolunteers.map((v) => {
+            const lastLogin = formatLastLogin(v.lastLoginAt);
+            const isRecent = v.lastLoginAt && (Date.now() - (v.lastLoginAt.toDate?.() ?? new Date(v.lastLoginAt)).getTime()) < 24 * 60 * 60 * 1000;
+            return (
+              <div key={v.id} className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-sm hover:bg-slate-50 ${selectedId === v.id ? 'bg-slate-50 border-l-2 border-orange-500' : ''}`}>
+                <button onClick={() => setSelectedId(v.id)} className="flex flex-1 items-center gap-2.5 text-left min-w-0">
+                  <Avatar name={v.name} size="sm" />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-slate-900 truncate">{v.name || 'Unnamed'}</div>
+                    <div className="text-xs text-slate-400 truncate">{v.mobile || 'no number'} · {roleName(v.roleRef)}</div>
+                    {lastLogin ? (
+                      <div className={`flex items-center gap-1 text-xs mt-0.5 ${isRecent ? 'text-emerald-600' : 'text-slate-300'}`}>
+                        <Clock className="h-3 w-3" /> {lastLogin}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-300 mt-0.5">Never logged in</div>
+                    )}
+                  </div>
+                </button>
+                <button onClick={(e) => { e.stopPropagation(); setDeleteTarget(v); }}
+                  className="shrink-0 rounded p-1 text-slate-300 hover:bg-rose-50 hover:text-rose-500" aria-label={`Remove ${v.name}`}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            );
+          })}
           {filteredVolunteers.length === 0 && (
             <div className="px-3 py-6 text-center text-sm text-slate-400">No volunteers found.</div>
           )}
@@ -387,15 +474,15 @@ function VolunteerEditorInner() {
         ) : (
           <div className="rounded-lg border border-slate-100 p-5 space-y-5">
             <div className="flex items-center gap-3">
-              <Avatar name={draft.name} />
-              <div className="flex-1">
-                <h2 className="text-[15px] font-semibold text-slate-900">{draft.name}</h2>
-                <p className="text-sm text-slate-400">{draft.mobile}</p>
-                {selectedVolunteer?.lastLoginAt && (
-                  <p className="text-xs text-slate-300 flex items-center gap-1 mt-0.5">
-                    <Clock className="h-3 w-3" />
-                    Last login {formatLastLogin(selectedVolunteer.lastLoginAt)}
-                  </p>
+              <Avatar name={draft.name || selectedVolunteer?.name} />
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-slate-900 truncate">{selectedVolunteer?.name || 'Volunteer'}</div>
+                {selectedVolunteer?.lastLoginAt ? (
+                  <div className="text-xs text-emerald-600 flex items-center gap-1 mt-0.5">
+                    <Clock className="h-3 w-3" /> Last login {formatLastLogin(selectedVolunteer.lastLoginAt)}
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-300 mt-0.5">Never logged in</div>
                 )}
               </div>
               <div className="flex gap-2">
@@ -409,6 +496,17 @@ function VolunteerEditorInner() {
             </div>
 
             {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Name</Label>
+                <Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Full name" />
+              </div>
+              <div>
+                <Label>Mobile</Label>
+                <Input value={draft.mobile} onChange={(e) => setDraft({ ...draft, mobile: e.target.value })} placeholder="10-digit mobile" inputMode="numeric" />
+              </div>
+            </div>
 
             <div>
               <Label>Role</Label>

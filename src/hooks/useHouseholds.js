@@ -9,7 +9,7 @@ import { db } from "../lib/firebase";
 import { useToast } from "../contexts/ToastContext";
 import { useAuth } from "./usePermissions";
 import { logActivity } from "../lib/activityLog";
-import { deleteHouseholdCascade } from "../services/householdService";
+import { deleteHouseholdCascade, deleteHouseholdOnly as deleteHouseholdOnlySvc } from "../services/householdService";
 import { friendlyFirestoreError } from "../lib/firestoreErrorMessage";
 
 /**
@@ -125,7 +125,27 @@ export function useHouseholds({ pageSize } = {}) {
     [households, showToast, volunteer]
   );
 
-  return { households, loading, error, hasMore, loadMore, createHousehold, updateHousehold, deleteHousehold };
+  const deleteHouseholdOnly = useCallback(
+    async (id) => {
+      const previous = households.find((h) => h.id === id);
+      const previousIndex = households.findIndex((h) => h.id === id);
+      setHouseholds((prev) => prev.filter((h) => h.id !== id));
+      try {
+        const keptCount = await deleteHouseholdOnlySvc(id);
+        logActivity({ volunteerId: volunteer?.id, action: "delete_household_only", details: { householdId: id, membersKept: keptCount } });
+        showToast({ type: "success", message: keptCount > 0 ? `Household deleted. ${keptCount} member(s) kept as standalone contacts.` : "Household deleted." });
+        return true;
+      } catch (err) {
+        console.error(err);
+        if (previous) setHouseholds((prev) => { const next = [...prev]; next.splice(previousIndex, 0, previous); return next; });
+        showToast({ type: "error", message: "Couldn't delete the household. It has been restored." });
+        return false;
+      }
+    },
+    [households, showToast, volunteer]
+  );
+
+  return { households, loading, error, hasMore, loadMore, createHousehold, updateHousehold, deleteHousehold, deleteHouseholdOnly };
 }
 
 export function useFilteredHouseholds(households, { area, searchTerm } = {}) {

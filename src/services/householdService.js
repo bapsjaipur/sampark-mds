@@ -29,6 +29,17 @@ export async function moveIndividualToHousehold({ individualId, fromHouseholdId,
   }
 }
 
+// Delete household only — members are detached (householdId set to null) and
+// become standalone contacts so their data is preserved.
+export async function deleteHouseholdOnly(householdId) {
+  const membersSnap = await getDocs(query(collection(db, 'individuals'), where('householdId', '==', householdId)));
+  const batch = writeBatch(db);
+  membersSnap.forEach((d) => batch.update(d.ref, { householdId: null, updatedAt: serverTimestamp() }));
+  batch.delete(doc(db, 'households', householdId));
+  await batch.commit();
+  return membersSnap.size;
+}
+
 export async function deleteHouseholdCascade(householdId) {
   const membersSnap = await getDocs(query(collection(db, 'individuals'), where('householdId', '==', householdId)));
   const batch = writeBatch(db);

@@ -41,15 +41,21 @@ function SamparkPicker({ name, number, onChangeName, onChangeNumber }) {
   const ref = useRef(null);
 
   useEffect(() => {
-    getDocs(query(collection(db, "volunteers"), orderBy("name"))).then((snap) => {
-      const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    Promise.all([
+      getDocs(query(collection(db, "volunteers"), orderBy("name"))),
+      getDocs(collection(db, "roles")),
+    ]).then(([volSnap, roleSnap]) => {
+      // Build a map of roleId → role name (lowercase) to filter out Santo role
+      const rolesMap = new Map(roleSnap.docs.map((d) => [d.id, (d.data().name || "").toLowerCase()]));
+      const all = volSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      // Exclude volunteers whose assigned role name contains "santo"
+      const nonSanto = all.filter((v) => !rolesMap.get(v.roleRef)?.includes("santo"));
       const myAreas = currentUser?.assignedAreas || [];
       if (myAreas.length === 0) {
-        setVolunteers(all); // admin: show everyone
+        setVolunteers(nonSanto);
       } else {
-        setVolunteers(all.filter((v) => {
+        setVolunteers(nonSanto.filter((v) => {
           const vAreas = v.assignedAreas || [];
-          // show volunteers with no area restriction, or sharing at least one area
           return vAreas.length === 0 || vAreas.some((a) => myAreas.includes(a));
         }));
       }

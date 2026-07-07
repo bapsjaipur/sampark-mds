@@ -16,7 +16,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 
 const PermissionsContext = createContext(null);
@@ -51,9 +51,18 @@ export function PermissionsProvider({ children }) {
 
       setState((s) => ({ ...s, loading: true, authUser: user, user, error: null }));
 
+      // Stamp lastLoginAt once per session from Firebase Auth metadata.
+      // The closure variable prevents repeated writes on subsequent snapshot fires.
+      let stampedLogin = false;
+
       unsubVolunteer = onSnapshot(
         doc(db, 'volunteers', user.uid),
         (vSnap) => {
+          if (!stampedLogin && user.metadata?.lastSignInTime) {
+            stampedLogin = true;
+            updateDoc(doc(db, 'volunteers', user.uid), { lastLoginAt: new Date(user.metadata.lastSignInTime) }).catch(() => {});
+          }
+
           unsubRole();
 
           if (!vSnap.exists()) {

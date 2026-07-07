@@ -13,7 +13,6 @@ const ALL_COLUMNS = [
   { key: 'status', label: 'Status', default: true }, { key: 'reference', label: 'Reference', default: false },
   { key: 'callCount', label: 'Call Count', default: false }, { key: 'dob', label: 'DOB', default: false },
   { key: 'samparkKaryakartaName', label: 'Sampark Karyakarta', default: false }, { key: 'remark', label: 'Remark', default: false },
-  { key: 'legacyId', label: 'Legacy ID', default: false },
 ];
 
 function toCSV(rows, columns) {
