@@ -12,13 +12,13 @@ import { Card } from '../ui/Card';
 function DuplicateGroup({ phone, group, onDelete }) {
   return (
     <Card className="border-amber-200 bg-amber-50/40 p-4">
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-700">Phone {phone} \u2014 {group.length} records</p>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-700">Phone {phone} — {group.length} records</p>
       <div className="space-y-2">
         {group.map((ind) => (
           <div key={ind.id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm">
             <div>
               <p className="font-medium text-slate-900">{ind.name}</p>
-              <p className="text-xs text-slate-400">{ind.mandal || 'No Mandal'} \u00b7 {ind.status || 'Not contacted'} \u00b7 {ind.householdId ? 'In a household' : 'Standalone'}</p>
+              <p className="text-xs text-slate-400">{ind.mandal || 'No Mandal'} · {ind.status || 'Not contacted'} · {ind.householdId ? 'In a household' : 'Standalone'}</p>
             </div>
             <div className="flex gap-2">
               <Link to={ind.householdId ? `/households/${ind.householdId}` : '/contacts'}><Button variant="secondary" size="sm">View</Button></Link>
@@ -42,12 +42,12 @@ export default function DataIntegrityTab() {
   const missingArea = useMemo(() => findMissingAreaInHousehold(contacts), [contacts]);
 
   async function handleDeleteDuplicate(ind) {
-    if (!window.confirm(`Delete "${ind.name}"? Review the other record first \u2014 this can't be undone.`)) return;
+    if (!window.confirm(`Delete "${ind.name}"? Review the other record first — this can't be undone.`)) return;
     await deleteContact(ind.id);
   }
 
   async function handleBackfillAreas() {
-    if (!window.confirm(`Copy the household's Area onto ${missingArea.length} member(s) currently missing one? This only fills blanks \u2014 it never overwrites an area already set.`)) return;
+    if (!window.confirm(`Copy the household's Area onto ${missingArea.length} member(s) currently missing one? This only fills blanks — it never overwrites an area already set.`)) return;
     setBackfilling(true);
     try {
       const { updated, skippedNoHouseholdArea } = await backfillMemberAreas();
@@ -81,7 +81,7 @@ export default function DataIntegrityTab() {
         <div className="space-y-6">
           <div>
             <p className="mb-2 text-sm font-medium text-slate-700">Missing or invalid phone number ({missing.missingPhone.length})</p>
-            {missing.missingPhone.length === 0 ? <p className="text-sm text-slate-400">None \u2014 everyone has a valid 10-digit number.</p> : (
+            {missing.missingPhone.length === 0 ? <p className="text-sm text-slate-400">None — everyone has a valid 10-digit number.</p> : (
               <div className="space-y-1">
                 {missing.missingPhone.slice(0, 50).map((ind) => (
                   <div key={ind.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-sm">
@@ -89,13 +89,13 @@ export default function DataIntegrityTab() {
                     <Link to={ind.householdId ? `/households/${ind.householdId}` : '/contacts'} className="text-xs text-orange-600 hover:underline">Fix</Link>
                   </div>
                 ))}
-                {missing.missingPhone.length > 50 && <p className="text-xs text-slate-400">+{missing.missingPhone.length - 50} more\u2026</p>}
+                {missing.missingPhone.length > 50 && <p className="text-xs text-slate-400">+{missing.missingPhone.length - 50} more…</p>}
               </div>
             )}
           </div>
           <div>
             <p className="mb-2 text-sm font-medium text-slate-700">Missing Mandal ({missing.missingMandal.length})</p>
-            {missing.missingMandal.length === 0 ? <p className="text-sm text-slate-400">None \u2014 everyone has a Mandal assigned.</p> : (
+            {missing.missingMandal.length === 0 ? <p className="text-sm text-slate-400">None — everyone has a Mandal assigned.</p> : (
               <div className="space-y-1">
                 {missing.missingMandal.slice(0, 50).map((ind) => (
                   <div key={ind.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-sm">
@@ -103,7 +103,7 @@ export default function DataIntegrityTab() {
                     <Link to={ind.householdId ? `/households/${ind.householdId}` : '/contacts'} className="text-xs text-orange-600 hover:underline">Fix</Link>
                   </div>
                 ))}
-                {missing.missingMandal.length > 50 && <p className="text-xs text-slate-400">+{missing.missingMandal.length - 50} more\u2026</p>}
+                {missing.missingMandal.length > 50 && <p className="text-xs text-slate-400">+{missing.missingMandal.length - 50} more…</p>}
               </div>
             )}
           </div>

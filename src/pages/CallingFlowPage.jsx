@@ -63,7 +63,7 @@ export default function CallingFlowPage() {
       showToast({ type: 'success', message: `Saved: ${status}` });
       goToNext();
     } catch (err) {
-      showToast({ type: 'error', message: 'Couldn\u2019t save \u2014 it\u2019ll retry automatically once you\u2019re back online.' });
+      showToast({ type: 'error', message: 'Couldn’t save — it’ll retry automatically once you’re back online.' });
       goToNext();
     } finally {
       setSaving(false);
@@ -81,7 +81,7 @@ export default function CallingFlowPage() {
     next();
   }
 
-  if (loading) return <div className="mx-auto max-w-md px-6 py-16 text-center text-sm text-slate-400">Loading your batch\u2026</div>;
+  if (loading) return <div className="mx-auto max-w-md px-6 py-16 text-center text-sm text-slate-400">Loading your batch…</div>;
 
   if (contacts.length === 0) {
     return (
@@ -98,11 +98,11 @@ export default function CallingFlowPage() {
         <div className="h-1 w-full overflow-hidden rounded-full bg-slate-100">
           <div className="h-full bg-orange-500 transition-all" style={{ width: `${progressPct}%` }} />
         </div>
-        <p className="mt-1 text-center text-xs text-slate-400">{contacts.length ? `${Math.min(currentIdx + 1, contacts.length)} / ${contacts.length}` : '\u2014'}</p>
+        <p className="mt-1 text-center text-xs text-slate-400">{contacts.length ? `${Math.min(currentIdx + 1, contacts.length)} / ${contacts.length}` : '—'}</p>
       </div>
 
       <div className="relative mb-4">
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search your list\u2026" />
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search your list…" />
         {searchResults.length > 0 && (
           <div className="absolute z-10 mt-1 w-full rounded-lg border border-slate-100 bg-white shadow-lg">
             {searchResults.map((c) => (
@@ -116,18 +116,18 @@ export default function CallingFlowPage() {
 
       <div className="mb-4 flex gap-2">
         <button onClick={() => (followUpFilter === 'callBack' ? exitFollowUpMode() : enterFollowUpMode('callBack'))} className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium ${followUpFilter === 'callBack' ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 text-slate-500'}`}>
-          \ud83d\udd52 Call Back Later ({followUpCounts.callBack})
+          🕒 Call Back Later ({followUpCounts.callBack})
         </button>
         <button onClick={() => (followUpFilter === 'noAnswer' ? exitFollowUpMode() : enterFollowUpMode('noAnswer'))} className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium ${followUpFilter === 'noAnswer' ? 'border-sky-300 bg-sky-50 text-sky-700' : 'border-slate-200 text-slate-500'}`}>
-          \ud83d\udcf5 No Answer ({followUpCounts.noAnswer})
+          📵 No Answer ({followUpCounts.noAnswer})
         </button>
       </div>
 
       {isDone || !current ? (
         <Card className="p-8 text-center">
-          <div className="text-4xl">\ud83c\udf89</div>
+          <div className="text-4xl">🎉</div>
           <p className="mt-3 text-lg font-semibold text-slate-900">All done!</p>
-          <p className="mt-1 text-sm text-slate-400">You\u2019ve gone through all {contacts.length} assigned contacts. Great work, Sevak!</p>
+          <p className="mt-1 text-sm text-slate-400">You’ve gone through all {contacts.length} assigned contacts. Great work, Sevak!</p>
         </Card>
       ) : (
         <Card className="p-5 space-y-4">
@@ -163,13 +163,13 @@ export default function CallingFlowPage() {
 
           <div>
             <p className="mb-1 text-xs font-medium text-slate-500">Reference / notes</p>
-            <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Optional note\u2026" />
+            <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Optional note…" />
           </div>
 
           <div className="flex gap-2 pt-2">
             <Button variant="secondary" onClick={goToNext}>Skip</Button>
             <Button variant="accent" className="flex-1" onClick={handleSaveAndNext} disabled={saving || !status}>
-              {saving ? 'Saving\u2026' : 'Save & Next \u2192'}
+              {saving ? 'Saving…' : 'Save & Next →'}
             </Button>
           </div>
         </Card>

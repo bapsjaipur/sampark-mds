@@ -181,14 +181,16 @@ function AreaStats({ events }) {
 
 // ── HouseholdPicker ────────────────────────────────────────────────────────────
 
-function HouseholdPicker({ selected, setSelected, allHouseholds, primaryNames }) {
+function HouseholdPicker({ selected, setSelected, allHouseholds, primaryNames, excludeIds, excludeLoading }) {
   const [search, setSearch] = useState("");
   const [dragIdx, setDragIdx] = useState(null);
   const [overIdx, setOverIdx] = useState(null);
 
-  const selectedIds = new Set(selected.map((h) => h.householdId));
-  const results = allHouseholds.filter((h) => {
+  const selectedIds = useMemo(() => new Set(selected.map((h) => h.householdId)), [selected]);
+
+  const results = useMemo(() => allHouseholds.filter((h) => {
     if (selectedIds.has(h.id)) return false;
+    if (excludeIds?.has(h.id)) return false;
     if (!search.trim()) return true;
     const q = search.toLowerCase();
     return (
@@ -196,7 +198,7 @@ function HouseholdPicker({ selected, setSelected, allHouseholds, primaryNames })
       h.area?.toLowerCase().includes(q) ||
       primaryNames[h.id]?.toLowerCase().includes(q)
     );
-  });
+  }), [allHouseholds, selectedIds, excludeIds, search, primaryNames]);
 
   function add(hh) {
     setSelected((prev) => [
@@ -255,7 +257,7 @@ function HouseholdPicker({ selected, setSelected, allHouseholds, primaryNames })
           ))}
           {results.length === 0 && (
             <p className="py-8 text-center text-xs text-slate-400">
-              {search.trim() ? "No matches" : allHouseholds.length === 0 ? "No households found" : "All households added"}
+              {search.trim() ? "No matches" : allHouseholds.length === 0 ? "No households found" : "All available households added"}
             </p>
           )}
         </div>
@@ -350,6 +352,8 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
   const [santo, setSanto] = useState([]);
   const [allHouseholds, setAllHouseholds] = useState([]);
   const [primaryNames, setPrimaryNames] = useState({});
+  const [excludeIds, setExcludeIds] = useState(new Set());
+  const [excludeLoading, setExcludeLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const isEdit = Boolean(editEvent);
 
@@ -375,7 +379,8 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
       loadVolunteersAndRoles(),
       getDocs(query(collection(db, "households"), orderBy("address"))),
       getDocs(collection(db, "individuals")),
-    ]).then(([vols, hhSnap, indSnap]) => {
+      getDocs(collection(db, "padhramaniEvents")),
+    ]).then(([vols, hhSnap, indSnap, evSnap]) => {
       setNonSanto(vols.nonSanto);
       setSanto(vols.santo);
       const hhs = hhSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -387,6 +392,26 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
         if (ind.isPrimary || !names[ind.householdId]) names[ind.householdId] = ind.name;
       });
       setPrimaryNames(names);
+
+      // Exclude households already scheduled on any OTHER Padhramani event —
+      // once assigned to one day's visit, it's not offered for another.
+      const used = new Set();
+      evSnap.docs.forEach((d) => {
+        const data = d.data();
+        const hhList = data.households || data.Households || [];
+        if (isEdit && d.id === editEvent.id) return;
+        hhList.forEach((hh) => {
+          const hid = typeof hh === "string" ? hh : (hh.householdId || hh.id);
+          if (hid) used.add(hid);
+        });
+      });
+      // Console-only diagnostic (not shown in the UI) — open browser dev
+      // tools (F12) → Console tab to see this if the exclusion still isn't
+      // working, so we can see the actual numbers instead of guessing.
+      console.log("[Padhramani debug] events found:", evSnap.docs.length, "| households excluded:", used.size, "| sample event docs:", evSnap.docs.slice(0, 2).map((d) => ({ id: d.id, households: d.data().households })));
+      setExcludeIds(used);
+      setExcludeLoading(false);
+
       if (prefillHouseholdId && !isEdit) {
         const hh = hhs.find((h) => h.id === prefillHouseholdId);
         if (hh) {
@@ -555,6 +580,8 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
             setSelected={setSelected}
             allHouseholds={allHouseholds}
             primaryNames={primaryNames}
+            excludeIds={excludeIds}
+            excludeLoading={excludeLoading}
           />
           <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
             <Button variant="ghost" onClick={() => setStep(1)}>← Back</Button>
@@ -581,6 +608,8 @@ function EditHouseholdsModal({ event, onClose }) {
   const { showToast } = useToast();
   const [allHouseholds, setAllHouseholds] = useState([]);
   const [primaryNames, setPrimaryNames] = useState({});
+  const [excludeIds, setExcludeIds] = useState(new Set());
+  const [excludeLoading, setExcludeLoading] = useState(true);
   const [selected, setSelected] = useState([...(event.households || [])]);
   const [saving, setSaving] = useState(false);
 
@@ -588,7 +617,8 @@ function EditHouseholdsModal({ event, onClose }) {
     Promise.all([
       getDocs(query(collection(db, "households"), orderBy("address"))),
       getDocs(collection(db, "individuals")),
-    ]).then(([hhSnap, indSnap]) => {
+      getDocs(collection(db, "padhramaniEvents")),
+    ]).then(([hhSnap, indSnap, evSnap]) => {
       setAllHouseholds(hhSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
       const names = {};
       indSnap.docs.forEach((d) => {
@@ -597,8 +627,22 @@ function EditHouseholdsModal({ event, onClose }) {
         if (ind.isPrimary || !names[ind.householdId]) names[ind.householdId] = ind.name;
       });
       setPrimaryNames(names);
+
+      const used = new Set();
+      evSnap.docs.forEach((d) => {
+        if (d.id === event.id) return;
+        const data = d.data();
+        const hhList = data.households || data.Households || [];
+        hhList.forEach((hh) => {
+          const hid = typeof hh === "string" ? hh : (hh.householdId || hh.id);
+          if (hid) used.add(hid);
+        });
+      });
+      console.log("[EditHouseholds debug] events found:", evSnap.docs.length, "| households excluded:", used.size);
+      setExcludeIds(used);
+      setExcludeLoading(false);
     });
-  }, []);
+  }, [event.id]);
 
   async function handleSave() {
     setSaving(true);
@@ -623,6 +667,8 @@ function EditHouseholdsModal({ event, onClose }) {
         setSelected={setSelected}
         allHouseholds={allHouseholds}
         primaryNames={primaryNames}
+        excludeIds={excludeIds}
+        excludeLoading={excludeLoading}
       />
       <div className="mt-4 flex justify-end gap-2 border-t border-slate-100 pt-3">
         <Button variant="ghost" onClick={onClose}>Cancel</Button>

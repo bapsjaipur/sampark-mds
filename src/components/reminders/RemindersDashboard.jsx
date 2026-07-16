@@ -23,7 +23,7 @@ function ReminderRow({ entry, volunteerId }) {
         <Avatar name={individual.name} size="sm" />
         <div>
           <p className="text-sm font-medium text-slate-900">{individual.name}</p>
-          <p className="flex items-center gap-1 text-xs text-slate-400"><Icon className="h-3 w-3" /> {type === 'dob' ? 'Birthday' : 'Anniversary'} \u00b7 {monthDay}</p>
+          <p className="flex items-center gap-1 text-xs text-slate-400"><Icon className="h-3 w-3" /> {type === 'dob' ? 'Birthday' : 'Anniversary'} · {monthDay}</p>
         </div>
       </div>
       <Button variant="accent" size="sm" onClick={handleCall}><Phone className="h-3 w-3" /> Call now</Button>
@@ -42,7 +42,7 @@ export default function RemindersDashboard() {
     getReminders({ volunteer, permissions }).then(setData).finally(() => setLoading(false));
   }, [volunteer, permissions]);
 
-  if (loading) return <div className="mx-auto max-w-3xl px-6 py-8 text-sm text-slate-400">Loading reminders\u2026</div>;
+  if (loading) return <div className="mx-auto max-w-3xl px-6 py-8 text-sm text-slate-400">Loading reminders…</div>;
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8 space-y-6">

@@ -326,7 +326,7 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
 
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" variant="accent" disabled={saving}>{saving ? "Saving\u2026" : isEdit ? "Save changes" : "Add member"}</Button>
+        <Button type="submit" variant="accent" disabled={saving}>{saving ? "Saving…" : isEdit ? "Save changes" : "Add member"}</Button>
       </div>
     </form>
   );

@@ -61,7 +61,7 @@ export default function BatchAssignment({ areas, volunteers }) {
         </div>
       </div>
 
-      {loading && <p className="mt-3 text-xs text-slate-400">Loading contacts\u2026</p>}
+      {loading && <p className="mt-3 text-xs text-slate-400">Loading contacts…</p>}
 
       {!loading && candidates.length > 0 && (
         <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-slate-100 divide-y divide-slate-50">
@@ -79,11 +79,11 @@ export default function BatchAssignment({ areas, volunteers }) {
 
       <div className="mt-3 flex items-center gap-3">
         <Select value={assignee} onChange={(e) => setAssignee(e.target.value)} className="w-auto">
-          <option value="">Assign to\u2026</option>
+          <option value="">Assign to…</option>
           {volunteers.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
         </Select>
         <Button variant="primary" onClick={handleCreate} disabled={status === 'saving'}>
-          {status === 'saving' ? 'Creating\u2026' : `Create batch (${selected.size})`}
+          {status === 'saving' ? 'Creating…' : `Create batch (${selected.size})`}
         </Button>
       </div>
 

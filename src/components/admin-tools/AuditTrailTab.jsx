@@ -11,7 +11,7 @@ const ACTION_LABELS = {
 };
 
 function formatTimestamp(ts) {
-  if (!ts) return '\u2014';
+  if (!ts) return '—';
   const date = ts.toDate ? ts.toDate() : new Date(ts);
   return date.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
@@ -36,7 +36,7 @@ export default function AuditTrailTab() {
 
   const filtered = useMemo(() => entries.filter((e) => !actionFilter || e.action === actionFilter).filter((e) => !volunteerFilter || e.volunteerId === volunteerFilter), [entries, actionFilter, volunteerFilter]);
 
-  if (loading) return <p className="text-sm text-slate-400">Loading activity\u2026</p>;
+  if (loading) return <p className="text-sm text-slate-400">Loading activity…</p>;
 
   return (
     <div>

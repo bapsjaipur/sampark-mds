@@ -12,7 +12,7 @@ const FIREBASE_ERROR_MESSAGES = {
   'auth/user-not-found': 'No account found for that phone number.',
   'auth/wrong-password': 'Incorrect password.',
   'auth/too-many-requests': 'Too many attempts. Try again in a few minutes.',
-  'auth/invalid-api-key': 'App isn\u2019t configured correctly \u2014 check your .env file.',
+  'auth/invalid-api-key': 'App isn’t configured correctly — check your .env file.',
 };
 
 export default function LoginPage() {
@@ -36,7 +36,7 @@ export default function LoginPage() {
       await signInWithEmailAndPassword(auth, phoneToSyntheticEmail(phone), password);
       navigate(redirectTo, { replace: true });
     } catch (err) {
-      setError(FIREBASE_ERROR_MESSAGES[err.code] || 'Couldn\u2019t sign in. Try again.');
+      setError(FIREBASE_ERROR_MESSAGES[err.code] || 'Couldn’t sign in. Try again.');
     } finally {
       setLoading(false);
     }
@@ -62,11 +62,11 @@ export default function LoginPage() {
           </div>
 
           <Button type="submit" variant="accent" size="lg" className="w-full" disabled={loading}>
-            {loading ? 'Signing in\u2026' : 'Sign in'}
+            {loading ? 'Signing in…' : 'Sign in'}
           </Button>
         </form>
 
-        <p className="mt-4 text-center text-xs text-slate-400">Don\u2019t have an account? Ask an admin to create one for you.</p>
+        <p className="mt-4 text-center text-xs text-slate-400">Don’t have an account? Ask an admin to create one for you.</p>
       </div>
     </div>
   );

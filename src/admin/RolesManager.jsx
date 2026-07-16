@@ -57,7 +57,7 @@ function RolesManagerInner() {
     }
   }
 
-  if (loading) return <div className="p-6 text-sm text-slate-400">Loading roles\u2026</div>;
+  if (loading) return <div className="p-6 text-sm text-slate-400">Loading roles…</div>;
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
@@ -99,7 +99,7 @@ function RolesManagerInner() {
                 </tr>
               );
             })}
-            {roles.length === 0 && <tr><td colSpan={ALL_PERMISSIONS.length + 2} className="px-4 py-6 text-center text-slate-400">No roles yet \u2014 add one above.</td></tr>}
+            {roles.length === 0 && <tr><td colSpan={ALL_PERMISSIONS.length + 2} className="px-4 py-6 text-center text-slate-400">No roles yet — add one above.</td></tr>}
           </tbody>
         </table>
       </div>

@@ -90,7 +90,7 @@ export default function PhotoUploader({ individualId, currentPhotoURL, onUploade
         <p className="mt-2 text-xs text-slate-400">Photos are automatically compressed to keep storage usage low (typically under 150KB).</p>
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setRawImageSrc(null)}>Cancel</Button>
-          <Button variant="accent" onClick={handleSave} disabled={uploading}>{uploading ? "Uploading\u2026" : "Save photo"}</Button>
+          <Button variant="accent" onClick={handleSave} disabled={uploading}>{uploading ? "Uploading…" : "Save photo"}</Button>
         </div>
       </Modal>
     </div>

@@ -39,7 +39,7 @@ export default function AddToHousehold({ contact, onDone, onCancel }) {
       showToast({ type: 'success', message: `${contact.name} added to ${household._headName || household.address}.` });
       onDone?.();
     } catch (err) {
-      showToast({ type: 'error', message: 'Couldn\u2019t add them to that household. Try again.' });
+      showToast({ type: 'error', message: 'Couldn’t add them to that household. Try again.' });
     } finally {
       setMoving(false);
     }
@@ -48,16 +48,16 @@ export default function AddToHousehold({ contact, onDone, onCancel }) {
   return (
     <div>
       <p className="mb-3 text-sm text-slate-500">Search by the head-of-household's name, address, or area.</p>
-      <Input autoFocus value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search households\u2026" />
+      <Input autoFocus value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search households…" />
       <div className="mt-3 max-h-72 overflow-y-auto divide-y divide-slate-100 rounded-lg border border-slate-100">
         {search.trim() && results.length === 0 && <p className="px-3 py-6 text-center text-sm text-slate-400">No matches.</p>}
         {results.map((h) => (
           <div key={h.id} className="flex items-center justify-between px-3 py-2.5">
             <div>
               <p className="text-sm font-medium text-slate-800">{h._headName || h.address || 'Unnamed household'}</p>
-              <p className="text-xs text-slate-400">{h.area}{h.mandal ? ` \u00b7 ${h.mandal}` : ''}</p>
+              <p className="text-xs text-slate-400">{h.area}{h.mandal ? ` · ${h.mandal}` : ''}</p>
             </div>
-            <Button variant="accent" size="sm" onClick={() => handleAttach(h)} disabled={moving}>{moving ? 'Adding\u2026' : 'Add here'}</Button>
+            <Button variant="accent" size="sm" onClick={() => handleAttach(h)} disabled={moving}>{moving ? 'Adding…' : 'Add here'}</Button>
           </div>
         ))}
       </div>

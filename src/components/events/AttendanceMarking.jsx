@@ -60,7 +60,7 @@ export default function AttendanceMarking({ event }) {
       showToast({ type: 'success', message: `${individual.name} marked present.` });
       setSearch('');
     } catch (err) {
-      showToast({ type: 'error', message: 'Couldn\u2019t mark attendance. Try again.' });
+      showToast({ type: 'error', message: 'Couldn’t mark attendance. Try again.' });
     }
   }
 
@@ -68,7 +68,7 @@ export default function AttendanceMarking({ event }) {
     try {
       await unmarkPresent({ eventId: event.id, individualId: individual.id });
     } catch (err) {
-      showToast({ type: 'error', message: 'Couldn\u2019t undo. Try again.' });
+      showToast({ type: 'error', message: 'Couldn’t undo. Try again.' });
     }
   }
 
@@ -81,7 +81,7 @@ export default function AttendanceMarking({ event }) {
       </div>
 
       <div className={isOpen ? '' : 'pointer-events-none opacity-40'}>
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or mobile to mark present\u2026" />
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or mobile to mark present…" />
         {searchResults.length > 0 && (
           <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border border-slate-100 divide-y divide-slate-50">
             {searchResults.map((i) => (
@@ -111,7 +111,7 @@ export default function AttendanceMarking({ event }) {
                   <Avatar name={person.name} size="sm" />
                   <div>
                     <p className="text-sm font-medium text-slate-900">{person.name}</p>
-                    <p className="text-xs text-slate-400">{person.mobile}{person.mandal ? ` \u00b7 ${person.mandal}` : ''}</p>
+                    <p className="text-xs text-slate-400">{person.mobile}{person.mandal ? ` · ${person.mandal}` : ''}</p>
                   </div>
                 </div>
                 <Button variant="ghost" size="sm" onClick={() => handleUnmark(person)} className="text-rose-500 hover:bg-rose-50">Undo</Button>

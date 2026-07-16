@@ -9,13 +9,13 @@
 // disabled there — kept out here too, can be re-enabled by uncommenting.
 
 export const STATUS_CHIPS = [
-  { value: 'Interested', label: 'Interested', emoji: '\u2705', colorClass: 'chip-green' },
-  { value: 'Not Interested', label: 'Not Interested', emoji: '\u274c', colorClass: 'chip-red' },
-  { value: 'Call Back Later', label: 'Call Back Later', emoji: '\ud83d\udd52', colorClass: 'chip-yellow' },
-  { value: 'No Answer', label: 'No Answer', emoji: '\ud83d\udcf5', colorClass: 'chip-blue' },
-  { value: 'Already Volunteer', label: 'Already Volunteer', emoji: '\ud83d\ude4f', colorClass: 'chip-green' },
-  { value: 'Donated', label: 'Donated', emoji: '\ud83d\udc9c', colorClass: 'chip-purple' },
-  { value: 'Follow Up', label: 'Follow Up', emoji: '\ud83d\udd01', colorClass: 'chip-yellow' },
+  { value: 'Interested', label: 'Interested', emoji: '✅', colorClass: 'chip-green' },
+  { value: 'Not Interested', label: 'Not Interested', emoji: '❌', colorClass: 'chip-red' },
+  { value: 'Call Back Later', label: 'Call Back Later', emoji: '🕒', colorClass: 'chip-yellow' },
+  { value: 'No Answer', label: 'No Answer', emoji: '📵', colorClass: 'chip-blue' },
+  { value: 'Already Volunteer', label: 'Already Volunteer', emoji: '🙏', colorClass: 'chip-green' },
+  { value: 'Donated', label: 'Donated', emoji: '💜', colorClass: 'chip-purple' },
+  { value: 'Follow Up', label: 'Follow Up', emoji: '🔁', colorClass: 'chip-yellow' },
 ];
 
 // Statuses that populate the two follow-up quick-filter buttons.

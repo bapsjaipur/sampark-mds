@@ -53,7 +53,7 @@ export default function ImportContactsWizard({ open, onClose, mode = 'household'
         setMapping(autoMap);
         setStep(2);
       } catch (err) {
-        showToast({ type: 'error', message: 'Couldn\u2019t read that file. Make sure it\u2019s a valid CSV or XLSX.' });
+        showToast({ type: 'error', message: 'Couldn’t read that file. Make sure it’s a valid CSV or XLSX.' });
       }
     };
     reader.readAsArrayBuffer(file);
@@ -114,7 +114,7 @@ export default function ImportContactsWizard({ open, onClose, mode = 'household'
       setResult({ imported: validRows.length, skipped: previewRows.length - validRows.length });
       setStep(4);
     } catch (err) {
-      showToast({ type: 'error', message: 'Import failed partway through \u2014 check your permissions and try again.' });
+      showToast({ type: 'error', message: 'Import failed partway through — check your permissions and try again.' });
     } finally {
       setRunning(false);
     }
@@ -143,7 +143,7 @@ export default function ImportContactsWizard({ open, onClose, mode = 'household'
               <div key={f}>
                 <label className="mb-1 block text-xs font-medium text-slate-600">{f} {REQUIRED_FIELDS.includes(f) && <span className="text-orange-500">*</span>}</label>
                 <Select value={mapping[f] || ''} onChange={(e) => setMapping((m) => ({ ...m, [f]: e.target.value }))}>
-                  <option value="">\u2014 skip \u2014</option>
+                  <option value="">— skip —</option>
                   {headers.map((h) => <option key={h} value={h}>{h}</option>)}
                 </Select>
               </div>
@@ -171,9 +171,9 @@ export default function ImportContactsWizard({ open, onClose, mode = 'household'
             </table>
           </div>
           <Button variant="accent" className="mt-4 w-full" onClick={runImport} disabled={running}>
-            {running ? 'Importing\u2026' : `Confirm & Import ${previewRows.length} rows`}
+            {running ? 'Importing…' : `Confirm & Import ${previewRows.length} rows`}
           </Button>
-          <Button variant="ghost" className="mt-2 w-full" onClick={() => setStep(2)}>\u2190 Back to mapper</Button>
+          <Button variant="ghost" className="mt-2 w-full" onClick={() => setStep(2)}>← Back to mapper</Button>
         </div>
       )}
 
@@ -184,8 +184,8 @@ export default function ImportContactsWizard({ open, onClose, mode = 'household'
           <p className="mt-1 text-sm text-slate-400">{result.imported} contacts imported{result.skipped ? `, ${result.skipped} skipped (no name)` : ''}.</p>
           <p className="mt-1 text-xs text-slate-400">
             {mode === 'standalone'
-              ? 'Imported as standalone contacts \u2014 no households were created.'
-              : 'Each became its own household \u2014 use Search & link to merge into real families.'}
+              ? 'Imported as standalone contacts — no households were created.'
+              : 'Each became its own household — use Search & link to merge into real families.'}
           </p>
           <Button variant="accent" className="mt-4" onClick={handleClose}>Done</Button>
         </div>

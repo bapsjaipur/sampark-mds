@@ -34,7 +34,7 @@ export default function LinkExistingContact({ currentHouseholdId, onLinked, onCa
       showToast({ type: 'success', message: `${individual.name} moved into this household.` });
       onLinked?.();
     } catch (err) {
-      showToast({ type: 'error', message: 'Couldn\u2019t move that contact. Try again.' });
+      showToast({ type: 'error', message: 'Couldn’t move that contact. Try again.' });
     } finally {
       setMoving(null);
     }
@@ -43,7 +43,7 @@ export default function LinkExistingContact({ currentHouseholdId, onLinked, onCa
   return (
     <div>
       <p className="mb-3 text-sm text-slate-500">Search for a person already in the system to move them into this household.</p>
-      <Input autoFocus value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or mobile\u2026" />
+      <Input autoFocus value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or mobile…" />
       <div className="mt-3 max-h-72 overflow-y-auto divide-y divide-slate-100 rounded-lg border border-slate-100">
         {search.trim() && results.length === 0 && <p className="px-3 py-6 text-center text-sm text-slate-400">No matches.</p>}
         {results.map((r) => (
@@ -52,11 +52,11 @@ export default function LinkExistingContact({ currentHouseholdId, onLinked, onCa
               <Avatar name={r.name} size="sm" />
               <div>
                 <p className="text-sm font-medium text-slate-800">{r.name}</p>
-                <p className="text-xs text-slate-400">{r.mobile || 'No mobile'}{r.mandal ? ` \u00b7 ${r.mandal}` : ''}</p>
+                <p className="text-xs text-slate-400">{r.mobile || 'No mobile'}{r.mandal ? ` · ${r.mandal}` : ''}</p>
               </div>
             </div>
             <Button variant="accent" size="sm" onClick={() => handleLink(r)} disabled={moving === r.id}>
-              {moving === r.id ? 'Moving\u2026' : 'Move here'}
+              {moving === r.id ? 'Moving…' : 'Move here'}
             </Button>
           </div>
         ))}

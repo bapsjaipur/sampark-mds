@@ -28,7 +28,7 @@ export default function GlobalSearchBar({ households }) {
           value={term}
           onChange={(e) => { setTerm(e.target.value); setOpen(true); }}
           onFocus={() => term && setOpen(true)}
-          placeholder="Search by name, mobile, area, or mandal\u2026"
+          placeholder="Search by name, mobile, area, or mandal…"
           className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300"
         />
       </div>
@@ -36,7 +36,7 @@ export default function GlobalSearchBar({ households }) {
       {open && isSearching && (
         <div className="absolute z-40 mt-1.5 w-full max-h-96 overflow-y-auto rounded-lg border border-slate-100 bg-white shadow-lg shadow-slate-900/5">
           {individuals.length === 0 && matchedHouseholds.length === 0 && (
-            <p className="px-4 py-6 text-center text-sm text-slate-400">No matches yet \u2014 keep typing, or check spelling.</p>
+            <p className="px-4 py-6 text-center text-sm text-slate-400">No matches yet — keep typing, or check spelling.</p>
           )}
 
           {individuals.length > 0 && (
@@ -47,7 +47,7 @@ export default function GlobalSearchBar({ households }) {
                   <Avatar name={i.name} size="sm" />
                   <span>
                     <span className="block text-sm font-medium text-slate-800">{i.name}</span>
-                    <span className="block text-xs text-slate-400">{i.mobile || "No mobile"} \u00b7 {i.mandal || "No mandal"} \u00b7 {i.household?.area || "Unknown area"}</span>
+                    <span className="block text-xs text-slate-400">{i.mobile || "No mobile"} · {i.mandal || "No mandal"} · {i.household?.area || "Unknown area"}</span>
                   </span>
                 </button>
               ))}

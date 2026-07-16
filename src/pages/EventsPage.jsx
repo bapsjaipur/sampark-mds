@@ -44,7 +44,7 @@ export default function EventsPage() {
       showToast({ type: 'success', message: 'Event created.' });
       return true;
     } catch (err) {
-      showToast({ type: 'error', message: 'Couldn\u2019t create the event.' });
+      showToast({ type: 'error', message: 'Couldn’t create the event.' });
       return false;
     }
   }
@@ -55,13 +55,13 @@ export default function EventsPage() {
       showToast({ type: 'success', message: 'Event updated.' });
       return true;
     } catch (err) {
-      showToast({ type: 'error', message: 'Couldn\u2019t update the event.' });
+      showToast({ type: 'error', message: 'Couldn’t update the event.' });
       return false;
     }
   }
 
   async function handleDelete(event) {
-    if (!window.confirm(`Delete "${event.title}"? Attendance records for it will remain but won\u2019t show anywhere.`)) return;
+    if (!window.confirm(`Delete "${event.title}"? Attendance records for it will remain but won’t show anywhere.`)) return;
     await deleteEvent(event.id);
     if (selectedEventId === event.id) setSelectedEventId(null);
   }
@@ -93,8 +93,8 @@ export default function EventsPage() {
                   className={`w-full rounded-lg border p-3 text-left text-sm ${selectedEventId === e.id ? 'border-slate-300 bg-slate-50' : 'border-slate-100 bg-white hover:border-slate-200'}`}
                 >
                   <p className="font-medium text-slate-900">{e.title}</p>
-                  <p className="text-xs text-slate-400">{e.date} {e.time && `\u00b7 ${e.time}`}</p>
-                  {(e.mandal || e.area) && <p className="text-xs text-slate-400">{[e.mandal, e.area].filter(Boolean).join(' \u00b7 ')}</p>}
+                  <p className="text-xs text-slate-400">{e.date} {e.time && `· ${e.time}`}</p>
+                  {(e.mandal || e.area) && <p className="text-xs text-slate-400">{[e.mandal, e.area].filter(Boolean).join(' · ')}</p>}
                 </button>
               ))}
             </div>
@@ -111,7 +111,7 @@ export default function EventsPage() {
               <div className="mb-4 flex items-start justify-between gap-4">
                 <div>
                   <h2 className="text-[15px] font-semibold text-slate-900">{selectedEvent.title}</h2>
-                  <p className="text-sm text-slate-400">{selectedEvent.date} {selectedEvent.time && `\u00b7 ${selectedEvent.time}`} {selectedEvent.speaker && `\u00b7 ${selectedEvent.speaker}`}</p>
+                  <p className="text-sm text-slate-400">{selectedEvent.date} {selectedEvent.time && `· ${selectedEvent.time}`} {selectedEvent.speaker && `· ${selectedEvent.speaker}`}</p>
                 </div>
                 <RequirePermission permission="manage_events">
                   <div className="flex shrink-0 gap-1.5">

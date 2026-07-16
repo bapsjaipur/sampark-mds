@@ -24,7 +24,7 @@ import { Avatar } from './ui/Avatar';
 export function RequireAuth() {
   const { authUser, loading } = useAuth();
   const location = useLocation();
-  if (loading) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-400">Loading\u2026</div>;
+  if (loading) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-400">Loading…</div>;
   if (!authUser) return <Navigate to="/login" replace state={{ from: location }} />;
   return <Outlet />;
 }

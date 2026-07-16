@@ -79,7 +79,7 @@ export default function ContactCard({ individual, onUpdated }) {
         <Input defaultValue={individual.reference || ''} onBlur={handleReferenceBlur} disabled={!canEdit} placeholder="e.g. referred by ..." />
       </div>
 
-      {saving && <p className="mt-2 text-xs text-slate-400">Saving\u2026</p>}
+      {saving && <p className="mt-2 text-xs text-slate-400">Saving…</p>}
     </Card>
   );
 }

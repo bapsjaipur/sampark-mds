@@ -55,7 +55,7 @@ function AdminDashboardInner() {
   const statusRows = Object.entries(overview.statusBreakdown).sort((a, b) => b[1] - a[1]);
   const mandalRows = Object.entries(overview.byMandal).sort((a, b) => b[1].total - a[1].total);
 
-  if (loading) return <div className="p-6 text-sm text-slate-400">Loading stats\u2026</div>;
+  if (loading) return <div className="p-6 text-sm text-slate-400">Loading stats…</div>;
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8 space-y-8">
@@ -77,11 +77,11 @@ function AdminDashboardInner() {
       </div>
 
       <Card className="p-5">
-        <p className="mb-2 text-sm font-medium text-slate-700">Overall Progress \u00b7 {pct}%</p>
+        <p className="mb-2 text-sm font-medium text-slate-700">Overall Progress · {pct}%</p>
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
           <div className={`h-full rounded-full transition-all ${pct >= 100 ? 'bg-emerald-500' : pct >= 50 ? 'bg-orange-500' : 'bg-amber-400'}`} style={{ width: `${pct}%` }} />
         </div>
-        <p className="mt-1 text-xs text-slate-400">{overview.called} called \u00b7 {overview.total - overview.called} remaining</p>
+        <p className="mt-1 text-xs text-slate-400">{overview.called} called · {overview.total - overview.called} remaining</p>
 
         <div className="mt-5 space-y-2">
           {statusRows.length === 0 ? <p className="text-sm text-slate-400">No data yet.</p> : statusRows.map(([status, n]) => {
@@ -110,7 +110,7 @@ function AdminDashboardInner() {
                     <span className="text-xs text-slate-400">{m.total} people</span>
                   </div>
                   <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-orange-400" style={{ width: `${mpct}%` }} /></div>
-                  <p className="mt-1 text-xs text-slate-400">{m.called} called \u00b7 {m.interested} interested \u00b7 {mpct}%</p>
+                  <p className="mt-1 text-xs text-slate-400">{m.called} called · {m.interested} interested · {mpct}%</p>
                 </Card>
               );
             })}
@@ -131,7 +131,7 @@ function AdminDashboardInner() {
                   <p className="font-medium text-slate-900">{volunteer.name || 'Unnamed'}</p>
                   <p className="text-xs text-slate-400">{volunteer.mobile}</p>
                   <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${vpct >= 100 ? 'bg-emerald-500' : 'bg-orange-400'}`} style={{ width: `${vpct}%` }} /></div>
-                  <p className="mt-1 text-xs text-slate-400">{called}/{assigned} called \u00b7 {interested} interested \u00b7 {remaining} remaining</p>
+                  <p className="mt-1 text-xs text-slate-400">{called}/{assigned} called · {interested} interested · {remaining} remaining</p>
                 </Card>
               );
             })}

@@ -58,7 +58,7 @@ export default function EventForm({ event, areas = [], onSubmit, onCancel }) {
       </div>
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" variant="accent" disabled={saving}>{saving ? 'Saving\u2026' : isEdit ? 'Save changes' : 'Create event'}</Button>
+        <Button type="submit" variant="accent" disabled={saving}>{saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create event'}</Button>
       </div>
     </form>
   );
