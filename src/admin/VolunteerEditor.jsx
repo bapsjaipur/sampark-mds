@@ -1,6 +1,6 @@
 // src/admin/VolunteerEditor.jsx
 import { useEffect, useMemo, useState } from 'react';
-import { collection, doc, onSnapshot, updateDoc, deleteDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { collection, doc, onSnapshot, updateDoc, deleteDoc, getDocs } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { X, KeyRound, Clock, Trash2, BarChart2, ChevronRight } from 'lucide-react';
 import { db } from '../lib/firebase';
@@ -61,48 +61,41 @@ function AreaMandalPicker({ label, values, onChange, options }) {
 }
 
 // 3.1 — create from existing contact
+// FIX: previously fetched only the first 500 individuals (arbitrary
+// Firestore document order, no orderBy) and searched only within that
+// slice — with 2409 total contacts, most were never actually searchable,
+// which is why a real, existing phone number could come back "No contacts
+// found." Now fetches the full collection once (matches the pattern
+// useAllContacts.js/ContactsPage already use successfully) and filters
+// live in memory — also makes search instant-as-you-type instead of
+// requiring a button click, since there's no per-keystroke network call.
 function ContactSearchPicker({ onPick }) {
   const [q, setQ] = useState('');
-  const [results, setResults] = useState([]);
-  const [searching, setSearching] = useState(false);
+  const [allContacts, setAllContacts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
-  const [searchError, setSearchError] = useState(null);
+  useEffect(() => {
+    getDocs(collection(db, 'individuals'))
+      .then((snap) => setAllContacts(snap.docs.map((d) => ({ id: d.id, ...d.data() }))))
+      .catch((err) => setLoadError(err.message || 'Couldn\u2019t load contacts. Check your permissions.'))
+      .finally(() => setLoading(false));
+  }, []);
 
-  async function doSearch() {
-    const term = q.trim();
-    if (!term) return;
-    setSearching(true);
-    setSearchError(null);
-    try {
-      const lower = term.toLowerCase();
-      // No orderBy — avoids index requirement and permission issues.
-      // Client-side filter handles any name / mobile match.
-      const snap = await getDocs(query(collection(db, 'individuals'), limit(500)));
-      const matches = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .filter((c) => c.name?.toLowerCase().includes(lower) || c.mobile?.includes(term));
-      setResults(matches);
-    } catch (err) {
-      setSearchError(err.message || 'Search failed. Check your permissions.');
-    } finally {
-      setSearching(false);
-    }
-  }
+  const term = q.trim();
+  const lower = term.toLowerCase();
+  const results = term
+    ? allContacts.filter((c) => c.name?.toLowerCase().includes(lower) || c.mobile?.includes(term)).slice(0, 30)
+    : [];
 
   return (
     <div className="space-y-2">
-      <div className="flex gap-2">
-        <Input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && doSearch()}
-          placeholder="Search by name or mobile…"
-          className="flex-1"
-        />
-        <Button type="button" variant="secondary" onClick={doSearch} disabled={searching}>
-          {searching ? 'Searching…' : 'Search'}
-        </Button>
-      </div>
+      <Input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder={loading ? 'Loading contacts…' : 'Search by name or mobile…'}
+        disabled={loading}
+      />
       {results.length > 0 && (
         <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-100 divide-y divide-slate-50">
           {results.map((c) => (
@@ -121,8 +114,8 @@ function ContactSearchPicker({ onPick }) {
           ))}
         </div>
       )}
-      {searchError && <p className="text-xs text-rose-500">{searchError}</p>}
-      {results.length === 0 && q && !searching && !searchError && (
+      {loadError && <p className="text-xs text-rose-500">{loadError}</p>}
+      {term && results.length === 0 && !loading && !loadError && (
         <p className="text-xs text-slate-400">No contacts found — try a different search.</p>
       )}
     </div>
