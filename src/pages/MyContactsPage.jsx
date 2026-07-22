@@ -24,18 +24,6 @@ export default function MyContactsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [logModal, setLogModal] = useState({ open: false, contact: null, action: "" });
-  const [debugList, setDebugList] = useState([]);
-
-  useEffect(() => {
-    // Load a sample list of individuals to inspect their sampark numbers
-    const unsubDebug = onSnapshot(collection(db, "individuals"), (snap) => {
-      setDebugList(snap.docs.slice(0, 10).map(d => ({
-        name: d.data().name,
-        samparkNumber: d.data().samparkKaryakartaNumber,
-      })));
-    });
-    return unsubDebug;
-  }, []);
 
   useEffect(() => {
     if (!volunteer?.mobile) { setLoading(false); return; }
@@ -80,20 +68,6 @@ export default function MyContactsPage() {
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
       <h1 className="mb-6 text-xl font-semibold text-slate-900 tracking-tight">My Contacts</h1>
-
-      {/* Temporary Debug Block */}
-      <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 p-4 text-xs space-y-2">
-        <p className="font-semibold text-blue-900">DEBUG INFO:</p>
-        <p>My Logged-in Volunteer Mobile: <strong className="font-bold">"{volunteer?.mobile || "NOT SET"}"</strong></p>
-        <div>
-          <p className="font-semibold">Sample Contacts in Database:</p>
-          <ul className="list-disc list-inside">
-            {debugList.map((item, i) => (
-              <li key={i}>{item.name}: <strong className="font-bold">"{item.samparkNumber || "NONE"}"</strong></li>
-            ))}
-          </ul>
-        </div>
-      </div>
 
       <Input
         value={search}
