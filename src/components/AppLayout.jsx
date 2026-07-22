@@ -14,7 +14,7 @@ import { signOut } from 'firebase/auth';
 import {
   Home, Users, CalendarDays, Bell, ListChecks, LayoutDashboard,
   ShieldCheck, UserCog, MapPin, Wrench, LogOut, Menu, X, ChevronsLeft, ChevronsRight,
-  HeartHandshake, CalendarCheck,
+  HeartHandshake, CalendarCheck, PhoneCall,
 } from 'lucide-react';
 import { auth } from '../lib/firebase';
 import { useAuth } from '../hooks/usePermissions';
@@ -71,6 +71,7 @@ function SidebarContent({ collapsed, onNavigate }) {
         <RequirePermission permission="view_padhramani">
           <NavItem to="/santo-schedule" icon={CalendarCheck} collapsed={collapsed} onNavigate={onNavigate}>My Schedule</NavItem>
         </RequirePermission>
+        <NavItem to="/my-contacts" icon={PhoneCall} collapsed={collapsed} onNavigate={onNavigate}>My Contacts</NavItem>
         <NavItem to="/reminders" icon={Bell} collapsed={collapsed} onNavigate={onNavigate}>Reminders</NavItem>
 
         <RequirePermission anyOf={['assign_batches', 'view_all_contacts', 'view_assigned_contacts', 'manage_users', 'manage_roles', 'run_gas_sync']}>
