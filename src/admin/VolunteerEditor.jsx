@@ -78,7 +78,7 @@ function ContactSearchPicker({ onPick }) {
   useEffect(() => {
     getDocs(collection(db, 'individuals'))
       .then((snap) => setAllContacts(snap.docs.map((d) => ({ id: d.id, ...d.data() }))))
-      .catch((err) => setLoadError(err.message || 'Couldn\u2019t load contacts. Check your permissions.'))
+      .catch((err) => setLoadError(err.message || 'Couldn’t load contacts. Check your permissions.'))
       .finally(() => setLoading(false));
   }, []);
 

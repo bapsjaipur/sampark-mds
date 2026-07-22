@@ -91,7 +91,7 @@ export async function exportPadhramaniDayPdf(event, breaks = []) {
   const body = allItems.map((item) => {
     if (item.type === 'break') {
       return [{
-        content: `☕  ${item.b.label || 'Break'}${item.b.time ? '  \xb7  ' + item.b.time : ''}`,
+        content: `Break: ${item.b.label || ''}${item.b.time ? ' | ' + item.b.time : ''}`,
         colSpan: 6,
         styles: {
           fontStyle: 'bold',
@@ -105,7 +105,7 @@ export async function exportPadhramaniDayPdf(event, breaks = []) {
     const members = (membersMap[hh.householdId] || []).sort(
       (a, b) => (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0) || (a.name || '').localeCompare(b.name || '')
     );
-    const nameList = members.map((m) => (m.isPrimary ? `★ ${m.name}` : m.name)).join('\n') || '—';
+    const nameList = members.map((m) => (m.isPrimary ? `* ${m.name}` : m.name)).join('\n') || '—';
     const primary = members.find((m) => m.isPrimary) || members[0];
     const samparkName = primary?.samparkKaryakartaName || '—';
     return ['', hh.primaryName || '—', hh.address || '—', nameList, samparkName, ''];
@@ -135,7 +135,7 @@ export async function exportPadhramaniDayPdf(event, breaks = []) {
     pdf.setFontSize(7);
     pdf.setTextColor(160, 160, 160);
     pdf.text(
-      `BAPS Jaipur MDS  \xb7  Generated ${new Date().toLocaleString('en-IN')}  \xb7  Page ${p} of ${pageCount}`,
+      `BAPS Jaipur MDS | Generated ${new Date().toLocaleString('en-IN')} | Page ${p} of ${pageCount}`,
       12, pdf.internal.pageSize.height - 5
     );
   }
@@ -266,7 +266,7 @@ export function exportBlankFormPdf() {
     pdf.setFontSize(7);
     pdf.setTextColor(150, 150, 150);
     pdf.text(
-      'BAPS Jaipur MDS  \xb7  SK = Sampark Karyakarta  \xb7  Fill and hand to data entry volunteer',
+      'BAPS Jaipur MDS | SK = Sampark Karyakarta | Fill and hand to data entry volunteer',
       M, 290
     );
   }

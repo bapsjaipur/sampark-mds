@@ -10,12 +10,12 @@
 import { collection, doc, getDocs, query, where, writeBatch, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
-export async function moveIndividualToHousehold({ individualId, fromHouseholdId, toHouseholdId, makeMember = true }) {
+export async function moveIndividualToHousehold({ individualId, fromHouseholdId, toHouseholdId, relation = 'member', makeMember = true }) {
   if (fromHouseholdId === toHouseholdId) return; // no-op, already there
 
   await updateDoc(doc(db, 'individuals', individualId), {
     householdId: toHouseholdId,
-    ...(makeMember ? { relation: 'member', isPrimary: false } : {}),
+    ...(makeMember ? { relation, isPrimary: false } : {}),
     updatedAt: serverTimestamp(),
   });
 

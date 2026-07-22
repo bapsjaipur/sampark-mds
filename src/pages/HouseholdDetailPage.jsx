@@ -1,6 +1,6 @@
 // src/pages/HouseholdDetailPage.jsx — Phase 18: member viewer (1.2), activity timeline (1.5), merge (1.7)
 import { useState, useEffect, useRef } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import { ArrowLeft, Pencil, Trash2, Plus, Search, ChevronLeft, ChevronRight, X, Merge, Clock, HeartHandshake, MapPin } from "lucide-react";
 import { collection, query, where, orderBy, onSnapshot, getDocs, writeBatch, serverTimestamp, doc, updateDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
@@ -234,6 +234,7 @@ function MergeHouseholdModal({ sourceHousehold, onClose }) {
 export default function HouseholdDetailPage() {
   const { householdId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { households, updateHousehold, deleteHousehold, deleteHouseholdOnly } = useHouseholds();
   const { individuals, loading, createIndividual, updateIndividual, deleteIndividual } = useIndividuals(householdId);
   const { showToast } = useToast();
@@ -255,14 +256,27 @@ export default function HouseholdDetailPage() {
   const [showActivity, setShowActivity] = useState(false); // 1.5
   const [scheduleVisitOpen, setScheduleVisitOpen] = useState(false);
 
-  // Auto-sync totalFamilyMembers to actual member count whenever it drifts.
-  // Fires silently (no toast) so it doesn't distract the user.
+  // Auto-open Add Member dialog if coming from create Household
+  useEffect(() => {
+    if (location.state?.autoOpenAddMember && household) {
+      setMemberModal({ open: true, individual: null });
+      // Clear the state so it doesn't re-open on refresh
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state, location.pathname, navigate, household]);
+
+  // Auto-sync totalFamilyMembers to actual member count IF actual is greater
+  // than the stated amount (or if stated amount is blank/zero). If user explicitly
+  // stated 5, and only added 2 members so far, we keep 5.
   useEffect(() => {
     if (!household || loading) return;
     const actual = individuals.length;
-    if (actual !== household.totalFamilyMembers) {
+    const currentStated = household.totalFamilyMembers || 0;
+    const newCount = Math.max(actual, currentStated);
+
+    if (newCount !== currentStated) {
       updateDoc(doc(db, "households", household.id), {
-        totalFamilyMembers: actual,
+        totalFamilyMembers: newCount,
         updatedAt: serverTimestamp(),
       }).catch(() => {});
     }

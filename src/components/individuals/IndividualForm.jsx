@@ -121,7 +121,7 @@ const RELATIONS = [
 
 const emptyForm = {
   name: "", mobile: "", dob: "", anniversary: "", mandal: "", area: "",
-  relation: "member", isPrimary: false, profilePhotoURL: "",
+  address: "", relation: "member", isPrimary: false, profilePhotoURL: "",
   study: "", profession: "", skill: "",
   samparkKaryakartaName: "", samparkKaryakartaNumber: "",
   photoPending: false,
@@ -135,7 +135,7 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       ? {
           name: individual.name || "", mobile: individual.mobile || "", dob: individual.dob || "",
           anniversary: individual.anniversary || "", mandal: individual.mandal || "", area: individual.area || "",
-          relation: individual.relation || "member",
+          address: individual.address || "", relation: individual.relation || "member",
           isPrimary: Boolean(individual.isPrimary), profilePhotoURL: individual.profilePhotoURL || "",
           study: individual.study || "", profession: individual.profession || "", skill: individual.skill || "",
           samparkKaryakartaName: individual.samparkKaryakartaName || "", samparkKaryakartaNumber: individual.samparkKaryakartaNumber || "",
@@ -178,7 +178,7 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
     const mobileDigits = form.mobile.replace(/\D/g, "");
     if (!mobileDigits) errs.mobile = "Mobile number is required.";
     else if (mobileDigits.length !== 10) errs.mobile = "Enter exactly 10 digits, without +91.";
-    if (showRelation && !form.relation) errs.relation = "Select a relation.";
+    if (withinHousehold && showRelation && !form.relation) errs.relation = "Select a relation.";
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -190,16 +190,17 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
     const payload = {
       ...form,
       mobile: form.mobile.replace(/\D/g, ""),
-      // Skipped fields shouldn't linger with stale/default values.
+      // Skipped/hidden fields shouldn't linger with stale values.
       // Inside a household, Area is never asked (the field is hidden) but the
       // member should still inherit the household's Area rather than saving
       // blank — that's the 1.1 fix. Standalone: use whatever was picked (if
       // this Mandal asks for Area at all), else blank.
       area: withinHousehold ? householdArea : showArea ? form.area : "",
+      address: withinHousehold ? "" : form.address,
       dob: showDob ? form.dob : "",
       anniversary: showAnniversary ? form.anniversary : "",
-      relation: showRelation ? form.relation : "member",
-      isPrimary: showIsPrimary ? form.isPrimary : false,
+      relation: withinHousehold && showRelation ? form.relation : "member",
+      isPrimary: withinHousehold && showIsPrimary ? form.isPrimary : false,
       study: showStudy ? form.study : "",
       profession: showProfession ? form.profession : "",
       skill: showSkill ? form.skill : "",
@@ -235,6 +236,13 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
         <FieldError>{errors.mobile}</FieldError>
       </div>
 
+      {!withinHousehold && (
+        <div>
+          <Label>Address</Label>
+          <Input value={form.address} onChange={update("address")} placeholder="e.g. 123, BAPS Street, Mansarovar" />
+        </div>
+      )}
+
       {(showDob || showAnniversary) && (
         <div className="grid grid-cols-2 gap-4">
           {showDob && <div><Label>Date of birth</Label><Input type="date" value={form.dob} onChange={update("dob")} /></div>}
@@ -249,7 +257,7 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
         </div>
       )}
 
-      {(showRelation || showIsPrimary) && (
+      {(withinHousehold && (showRelation || showIsPrimary)) && (
         <div className="grid grid-cols-2 gap-4">
           {showRelation && (
             <div>

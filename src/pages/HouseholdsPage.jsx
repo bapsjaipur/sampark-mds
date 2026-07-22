@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "../lib/firebase";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Plus, Trash2, Upload, Users, ChevronLeft, ChevronRight, BarChart2, FileText } from "lucide-react";
 import { useHouseholds, useFilteredHouseholds } from "../hooks/useHouseholds";
 import { useAuth } from "../hooks/usePermissions";
@@ -28,6 +28,7 @@ export default function HouseholdsPage() {
   const { households, loading, createHousehold, deleteHousehold, deleteHouseholdOnly } = useHouseholds();
   const { areas: allAreas, mandals } = useAreasAndMandals();
   const { showToast } = useToast();
+  const navigate = useNavigate();
   const { permissions, hasPermission } = useAuth();
   const canDelete = hasPermission("delete_contacts") || hasPermission("manage_users");
   const isViewAll = permissions.includes("view_all_contacts");
@@ -381,7 +382,19 @@ export default function HouseholdsPage() {
       )}
 
       <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Add household">
-        <HouseholdForm onSubmit={createHousehold} onCancel={() => setAddOpen(false)} />
+        <HouseholdForm
+          onSubmit={async (data) => {
+            const id = await createHousehold(data);
+            if (id) {
+              setAddOpen(false);
+              // Navigate to the newly created household, and we can pass some state telling it to open Add Member directly
+              navigate(`/households/${id}`, { state: { autoOpenAddMember: true } });
+              return true;
+            }
+            return false;
+          }}
+          onCancel={() => setAddOpen(false)}
+        />
       </Modal>
 
       <ImportContactsWizard open={importOpen} onClose={() => setImportOpen(false)} mode="household" />

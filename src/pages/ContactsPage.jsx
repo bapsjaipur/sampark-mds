@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Plus, Home, Pencil, Trash2, Upload, Eye, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { useAllContacts } from "../hooks/useAllContacts";
+import { useHouseholds } from "../hooks/useHouseholds";
 import { useAreasAndMandals } from "../hooks/useAreasAndMandals";
 import { useAuth } from "../hooks/usePermissions";
 import IndividualForm from "../components/individuals/IndividualForm";
@@ -64,6 +65,7 @@ function Pagination({ currentPage, totalPages, onPageChange }) {
 export default function ContactsPage() {
   // Load ALL contacts (no pageSize) so filters, search, and select-all work across the full dataset
   const { contacts, loading, createContact, updateContact, deleteContact, bulkDeleteContacts, serverTotal, serverUngrouped, isViewAll } = useAllContacts();
+  const { households } = useHouseholds();
   const { areas, mandals } = useAreasAndMandals();
   const { permissions } = useAuth();
   const [search, setSearch] = useState("");
@@ -84,8 +86,17 @@ export default function ContactsPage() {
 
   const canDelete = permissions.includes("delete_contacts");
 
+  const householdAddresses = useMemo(() => {
+    const map = {};
+    for (const h of households) map[h.id] = h.address;
+    return map;
+  }, [households]);
+
   const filtered = useMemo(() => {
-    let rows = contacts;
+    let rows = contacts.map(c => ({
+      ...c,
+      displayAddress: c.householdId ? householdAddresses[c.householdId] : c.address
+    }));
     if (mandalFilter) rows = rows.filter((c) => c.mandal === mandalFilter);
     if (areaFilter) rows = rows.filter((c) => c.area === areaFilter);
     if (householdFilter === "with") rows = rows.filter((c) => c.householdId);
@@ -95,10 +106,10 @@ export default function ContactsPage() {
     if (missingPhotos) rows = rows.filter((c) => c.photoPending === true);
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      rows = rows.filter((c) => c.name?.toLowerCase().includes(q) || c.mobile?.includes(q));
+      rows = rows.filter((c) => c.name?.toLowerCase().includes(q) || c.mobile?.includes(q) || c.displayAddress?.toLowerCase().includes(q));
     }
     return rows;
-  }, [contacts, search, mandalFilter, areaFilter, householdFilter, birthdayMonth, anniversaryMonth]);
+  }, [contacts, search, mandalFilter, areaFilter, householdFilter, birthdayMonth, anniversaryMonth, missingPhotos, householdAddresses]);
 
   // Reset to page 1 on any filter change
   useEffect(() => { setCurrentPage(1); }, [mandalFilter, areaFilter, householdFilter, birthdayMonth, anniversaryMonth, missingPhotos, search]);
@@ -268,7 +279,8 @@ export default function ContactsPage() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-slate-900">{c.name}</p>
                   <p className="truncate text-xs text-slate-400">
-                    {c.mobile || "No mobile"}{c.mandal ? ` · ${c.mandal}` : ""}{c.area ? ` · ${c.area}` : ""}{c.dob ? ` · Born ${formatDate(c.dob)}` : ""}
+                    {c.displayAddress ? c.displayAddress : (c.mobile || "No mobile")}
+                    {c.mandal ? ` · ${c.mandal}` : ""}{c.area ? ` · ${c.area}` : ""}{c.dob ? ` · Born ${formatDate(c.dob)}` : ""}
                   </p>
                 </div>
                 {!c.householdId && <Badge tone="yellow">Not grouped</Badge>}

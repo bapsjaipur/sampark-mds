@@ -1,18 +1,26 @@
-// src/components/individuals/LinkExistingContact.jsx — Attio redesign.
+// src/components/individuals/LinkExistingContact.jsx
 import { useEffect, useMemo, useState } from 'react';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { moveIndividualToHousehold } from '../../services/householdService';
 import { useToast } from '../../contexts/ToastContext';
-import { Input } from '../ui/Input';
+import { Input, Select, Label } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { Avatar } from '../ui/Avatar';
+
+const RELATIONS = [
+  { value: 'head',   label: 'Head of household' },
+  { value: 'spouse', label: 'Spouse' },
+  { value: 'member', label: 'Family member' },
+];
 
 export default function LinkExistingContact({ currentHouseholdId, onLinked, onCancel }) {
   const { showToast } = useToast();
   const [allIndividuals, setAllIndividuals] = useState([]);
   const [search, setSearch] = useState('');
   const [moving, setMoving] = useState(null);
+  // pending = { individual, relation } — shown when user clicks "Move here"
+  const [pending, setPending] = useState(null);
 
   useEffect(() => onSnapshot(query(collection(db, 'individuals'), orderBy('name')), (snap) => {
     setAllIndividuals(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -27,17 +35,50 @@ export default function LinkExistingContact({ currentHouseholdId, onLinked, onCa
       .slice(0, 15);
   }, [search, allIndividuals, currentHouseholdId]);
 
-  async function handleLink(individual) {
-    setMoving(individual.id);
+  async function handleConfirmLink() {
+    if (!pending) return;
+    setMoving(pending.individual.id);
     try {
-      await moveIndividualToHousehold({ individualId: individual.id, fromHouseholdId: individual.householdId, toHouseholdId: currentHouseholdId });
-      showToast({ type: 'success', message: `${individual.name} moved into this household.` });
+      await moveIndividualToHousehold({
+        individualId: pending.individual.id,
+        fromHouseholdId: pending.individual.householdId,
+        toHouseholdId: currentHouseholdId,
+        relation: pending.relation,
+      });
+      showToast({ type: 'success', message: `${pending.individual.name} moved into this household.` });
       onLinked?.();
     } catch (err) {
-      showToast({ type: 'error', message: 'Couldn’t move that contact. Try again.' });
+      showToast({ type: 'error', message: "Couldn't move that contact. Try again." });
     } finally {
       setMoving(null);
+      setPending(null);
     }
+  }
+
+  if (pending) {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-slate-600">
+          Adding <span className="font-medium text-slate-900">{pending.individual.name}</span> to this household.
+        </p>
+        <div>
+          <Label required>Relation in this household</Label>
+          <Select
+            value={pending.relation}
+            onChange={(e) => setPending((p) => ({ ...p, relation: e.target.value }))}
+            className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
+          >
+            {RELATIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+          </Select>
+        </div>
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="ghost" onClick={() => setPending(null)}>Back</Button>
+          <Button variant="accent" onClick={handleConfirmLink} disabled={Boolean(moving)}>
+            {moving ? 'Moving…' : 'Confirm & move'}
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -55,8 +96,8 @@ export default function LinkExistingContact({ currentHouseholdId, onLinked, onCa
                 <p className="text-xs text-slate-400">{r.mobile || 'No mobile'}{r.mandal ? ` · ${r.mandal}` : ''}</p>
               </div>
             </div>
-            <Button variant="accent" size="sm" onClick={() => handleLink(r)} disabled={moving === r.id}>
-              {moving === r.id ? 'Moving…' : 'Move here'}
+            <Button variant="accent" size="sm" onClick={() => setPending({ individual: r, relation: 'member' })}>
+              Select
             </Button>
           </div>
         ))}

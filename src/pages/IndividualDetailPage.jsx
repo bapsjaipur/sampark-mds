@@ -46,12 +46,26 @@ function PhotoLightbox({ src, name, onClose }) {
 export default function IndividualDetailPage() {
   const { id } = useParams();
   const [individual, setIndividual] = useState(null);
+  const [household, setHousehold] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lightbox, setLightbox] = useState(false);
 
   useEffect(() => {
-    getDoc(doc(db, "individuals", id)).then((snap) => {
-      if (snap.exists()) setIndividual({ id: snap.id, ...snap.data() });
+    getDoc(doc(db, "individuals", id)).then(async (snap) => {
+      if (snap.exists()) {
+        const indData = { id: snap.id, ...snap.data() };
+        setIndividual(indData);
+        if (indData.householdId) {
+          try {
+            const tempHh = await getDoc(doc(db, "households", indData.householdId));
+            if (tempHh.exists()) {
+              setHousehold({ id: tempHh.id, ...tempHh.data() });
+            }
+          } catch (err) {
+            console.error("Error loading household:", err);
+          }
+        }
+      }
       setLoading(false);
     });
   }, [id]);
@@ -112,6 +126,7 @@ export default function IndividualDetailPage() {
         {/* Detail fields */}
         <div className="mt-6 grid grid-cols-2 gap-x-8 gap-y-4">
           <Field label="Mobile" value={individual.mobile} />
+          <Field label="Address" value={individual.householdId ? household?.address : individual.address} />
           <Field label="Date of birth" value={individual.dob ? formatDate(individual.dob) : null} />
           <Field label="Anniversary" value={individual.anniversary ? formatDate(individual.anniversary) : null} />
           <Field label="Study" value={individual.study} />
