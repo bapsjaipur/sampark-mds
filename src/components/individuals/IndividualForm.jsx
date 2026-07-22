@@ -86,7 +86,8 @@ function SamparkPicker({ name, number, onChangeName, onChangeNumber }) {
                   type="button"
                   onMouseDown={() => {
                     onChangeName(v.name);
-                    onChangeNumber(v.mobile || "");
+                    const cleanMobile = (v.mobile || "").replace(/\D/g, "");
+                    onChangeNumber(cleanMobile);
                     setOpen(false);
                   }}
                   className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-orange-50"
@@ -103,7 +104,7 @@ function SamparkPicker({ name, number, onChangeName, onChangeNumber }) {
         <Label>Sampark Karyakarta number</Label>
         <Input
           value={number}
-          onChange={(e) => onChangeNumber(e.target.value)}
+          onChange={(e) => onChangeNumber(e.target.value.replace(/\D/g, ""))}
           inputMode="numeric"
           maxLength={10}
           placeholder="10-digit mobile"
@@ -205,7 +206,7 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       profession: showProfession ? form.profession : "",
       skill: showSkill ? form.skill : "",
       samparkKaryakartaName: showSamparkKaryakarta ? form.samparkKaryakartaName : "",
-      samparkKaryakartaNumber: showSamparkKaryakarta ? form.samparkKaryakartaNumber : "",
+      samparkKaryakartaNumber: showSamparkKaryakarta ? form.samparkKaryakartaNumber.replace(/\D/g, "") : "",
       profilePhotoURL: showPhoto ? form.profilePhotoURL : "",
       // photoPending: true only when photo is expected but not yet uploaded
       photoPending: showPhoto && !form.profilePhotoURL ? Boolean(form.photoPending) : false,
