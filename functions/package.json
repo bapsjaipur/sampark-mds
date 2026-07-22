@@ -6,9 +6,11 @@
     "node": "20"
   },
   "dependencies": {
+    "archiver": "^8.0.0",
     "firebase-admin": "^12.1.0",
     "firebase-functions": "^5.0.0",
-    "node-fetch": "^2.7.0"
+    "node-fetch": "^2.7.0",
+    "unzipper": "^0.12.5"
   },
   "private": true
 }
