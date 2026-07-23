@@ -929,7 +929,17 @@ export default function PadhramaniPage() {
   const { showToast } = useToast();
   const [events, setEvents] = useState([]);
   const [dbCampaigns, setDbCampaigns] = useState([]);
+  const [globalHouseholdCount, setGlobalHouseholdCount] = useState(0);
   const [loading, setLoading] = useState(true);
+
+  // We need getCountFromServer for the global total, imported already
+  useEffect(() => {
+    import("firebase/firestore").then(({ getCountFromServer }) => {
+      getCountFromServer(collection(db, "households"))
+        .then(snap => setGlobalHouseholdCount(snap.data().count))
+        .catch(console.error);
+    });
+  }, []);
   const [selectedCampaign, setSelectedCampaign] = useState(() => {
     return localStorage.getItem('mds_last_padhramani_campaign') || null;
   });
@@ -1062,6 +1072,10 @@ export default function PadhramaniPage() {
     }
   }
 
+  const handleExportPDF = async () => {
+    await exportCampaignPdf(selectedCampaign, filteredEvents, globalHouseholdCount);
+  };
+
   const exportCSV = async () => {
     // 1. Fetch all members once for efficient lookup
     const indSnap = await getDocs(collection(db, "individuals"));
@@ -1125,6 +1139,9 @@ export default function PadhramaniPage() {
           </Button>
           <Button variant="secondary" onClick={exportCSV}>
             <Download className="h-3.5 w-3.5" /> Export CSV
+          </Button>
+          <Button variant="secondary" onClick={handleExportPDF}>
+            <FileText className="h-3.5 w-3.5" /> Campaign Report PDF
           </Button>
           <RequirePermission permission="edit_contacts">
             <Button variant="accent" onClick={() => setScheduleOpen(true)}>

@@ -7,12 +7,10 @@ import { db } from './firebase';
 
 const ORANGE = [234, 88, 12];
 
-function fmtDateLong(str) {
-  if (!str) return '—';
+function fmtDateShort(str) {
+  if (!str) return '';
   const d = new Date(str + 'T00:00:00');
-  return isNaN(d) ? str : d.toLocaleDateString('en-IN', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-  });
+  return isNaN(d) ? str : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 async function fetchMembersByHousehold(householdIds) {
@@ -237,6 +235,18 @@ export async function exportCampaignPdf(campaignName, events, globalTotal) {
     styles: { fontSize: 9 },
   });
 
+  // Table of Events on Page 1
+  pdf.setFontSize(11);
+  pdf.setFont('helvetica', 'bold');
+  pdf.text('Scheduled Events', 14, pdf.lastAutoTable.finalY + 10);
+  pdf.autoTable({
+    startY: pdf.lastAutoTable.finalY + 12,
+    head: [['Event Name', 'Mandal', 'Date']],
+    body: events.map(e => [e.name || 'Unnamed', e.area || '-', fmtDateShort(e.scheduledDate)]),
+    headStyles: { fillColor: [100,100,100] },
+    styles: { fontSize: 9 },
+  });
+
   // --- Pages 2+: Details per Event ---
   events.sort((a,b) => a.scheduledDate.localeCompare(b.scheduledDate)).forEach((ev, idx) => {
     pdf.addPage();
@@ -247,7 +257,7 @@ export async function exportCampaignPdf(campaignName, events, globalTotal) {
     pdf.setFontSize(11);
     pdf.setFont('helvetica', 'bold');
     pdf.setTextColor(40, 40, 40);
-    pdf.text(`${ev.name || 'Unnamed Event'} - ${fmtDateLong(ev.scheduledDate)}`, 18, 20);
+    pdf.text(`${ev.name || 'Unnamed Event'} - ${fmtDateShort(ev.scheduledDate)}`, 18, 20);
 
     pdf.setFontSize(9);
     pdf.setFont('helvetica', 'normal');
@@ -258,25 +268,28 @@ export async function exportCampaignPdf(campaignName, events, globalTotal) {
       const members = (membersMap[hh.householdId] || []).sort(
         (a, b) => (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0) || (a.name || '').localeCompare(b.name || '')
       );
-      const nameList = members.map((m) => (m.isPrimary ? `* ${m.name}` : m.name)).join('\n') || '-';
-      const status = (!hh.status || hh.status === 'pending') ? 'Pending' : (hh.status.charAt(0).toUpperCase() + hh.status.slice(1));
+
+      // Full detail string per member
+      const memberDetails = members.map(m => {
+        let det = `${m.isPrimary ? '* ' : ''}${m.name} (${m.mandal || '-'}) | Ph: ${m.mobile || '-'} | DOB: ${fmtDateShort(m.dob) || '-'} | Anniv: ${fmtDateShort(m.anniversary) || '-'}`;
+        return det;
+      }).join('\n');
 
       return [
         i + 1,
         hh.primaryName || '-',
         hh.address || '-',
-        nameList,
-        status.replace('_', ' ')
+        memberDetails
       ];
     });
 
     if (body.length === 0) {
-      body.push([{ content: 'No households scheduled.', colSpan: 5, styles: { halign: 'center', fontStyle: 'italic' } }]);
+      body.push([{ content: 'No households scheduled.', colSpan: 4, styles: { halign: 'center', fontStyle: 'italic' } }]);
     }
 
     pdf.autoTable({
       startY: 34,
-      head: [['#', 'Household', 'Address', 'Family Members (* = Primary)', 'Status']],
+      head: [['#', 'Household', 'Address', 'Family Members (Name, Mandal, Ph, DOB, Anniv)']],
       body,
       styles: { fontSize: 8, valign: 'top', cellPadding: 2 },
       headStyles: { fillColor: [100, 100, 100] },
@@ -284,8 +297,7 @@ export async function exportCampaignPdf(campaignName, events, globalTotal) {
         0: { cellWidth: 8 },
         1: { cellWidth: 35 },
         2: { cellWidth: 45 },
-        3: { cellWidth: 70 },
-        4: { cellWidth: 'auto' },
+        3: { cellWidth: 'auto' },
       }
     });
   });

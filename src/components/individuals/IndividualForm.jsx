@@ -128,7 +128,7 @@ const emptyForm = {
   photoPending: false,
 };
 
-export default function IndividualForm({ individual, onSubmit, onCancel, withinHousehold = false, householdArea = "" }) {
+export default function IndividualForm({ individual, onSubmit, onCancel, withinHousehold = false, householdArea = "", householdAddress = "" }) {
   const isEdit = Boolean(individual);
   const { mandals } = useAreasAndMandals();
   const [form, setForm] = useState(() =>
@@ -240,7 +240,18 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       {!withinHousehold && (
         <div>
           <Label>Address</Label>
-          <Input value={form.address} onChange={update("address")} placeholder="e.g. 123, BAPS Street, Mansarovar" />
+          <Input
+            value={form.address}
+            onChange={update("address")}
+            placeholder="e.g. 123, BAPS Street, Mansarovar"
+          />
+        </div>
+      )}
+
+      {withinHousehold && (
+        <div className="rounded-lg bg-slate-50 p-3 border border-slate-200">
+           <Label className="text-slate-500">Address (Inherited from Household)</Label>
+           <p className="text-sm font-medium text-slate-800">{householdAddress || 'Address not set on household'}</p>
         </div>
       )}
 

@@ -307,7 +307,13 @@ export default function ContactsPage() {
 
       {/* Edit / Add modal */}
       <Modal open={formModal.open} onClose={() => setFormModal({ open: false, contact: null })} title={formModal.contact ? "Edit contact" : "Add contact"}>
-        <IndividualForm individual={formModal.contact} onSubmit={handleFormSubmit} onCancel={() => setFormModal({ open: false, contact: null })} />
+        <IndividualForm
+          individual={formModal.contact}
+          onSubmit={handleFormSubmit}
+          onCancel={() => setFormModal({ open: false, contact: null })}
+          withinHousehold={Boolean(formModal.contact?.householdId)}
+          householdAddress={formModal.contact?.householdId ? householdAddresses[formModal.contact.householdId] : ""}
+        />
       </Modal>
 
       {/* Attach to household */}
