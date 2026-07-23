@@ -6,6 +6,7 @@ import AuditTrailTab from '../components/admin-tools/AuditTrailTab';
 import SyncDashboardTab from '../components/admin-tools/SyncDashboardTab';
 import BackupRestoreTab from '../components/admin-tools/BackupRestoreTab';
 import FollowUpTrackingTab from '../components/admin-tools/FollowUpTrackingTab';
+import CampaignsTab from '../components/admin-tools/CampaignsTab';
 
 const TABS = [
   { key: 'integrity', label: 'Data Integrity', Component: DataIntegrityTab },
@@ -13,6 +14,7 @@ const TABS = [
   { key: 'sync', label: 'Sync Dashboard', Component: SyncDashboardTab },
   { key: 'backup', label: 'Backup & Restore', Component: BackupRestoreTab },
   { key: 'followup', label: 'Follow-up Tracking', Component: FollowUpTrackingTab },
+  { key: 'campaigns', label: 'Campaigns', Component: CampaignsTab },
 ];
 
 function AdminToolsInner() {

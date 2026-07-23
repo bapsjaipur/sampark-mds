@@ -150,6 +150,159 @@ export async function exportPadhramaniDayPdf(event, breaks = []) {
 // Portrait A4 with: title bar, Household section (address/area/mandal/level/
 // SK name+mobile/remark), then 6× Member blocks (name/mobile, dob/anniversary/
 // relation checkboxes, photo-pending checkbox).  No Firestore calls needed.
+// ── Campaign Report PDF ───────────────────────────────────────────────────────
+export async function exportCampaignPdf(campaignName, events, globalTotal) {
+  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+  // Gather stats
+  let scheduledHomes = 0;
+  let visitedHomes = 0;
+  const areaStatsMap = {};
+
+  const allHouseholdIds = [];
+
+  events.forEach(ev => {
+    const area = ev.area || "Unknown Area";
+    if (!areaStatsMap[area]) areaStatsMap[area] = { scheduled: 0, visited: 0 };
+
+    (ev.households || []).forEach(hh => {
+      if (hh.householdId) allHouseholdIds.push(hh.householdId);
+      scheduledHomes++;
+      areaStatsMap[area].scheduled++;
+      if (hh.status === 'completed') {
+        visitedHomes++;
+        areaStatsMap[area].visited++;
+      }
+    });
+  });
+
+  const completionPct = scheduledHomes > 0 ? Math.round((visitedHomes / scheduledHomes) * 100) : 0;
+  const areaStatsList = Object.entries(areaStatsMap)
+    .sort((a, b) => b[1].scheduled - a[1].scheduled)
+    .map(([area, stats]) => [area, stats.scheduled, stats.visited]);
+
+  // Fetch all members for household details
+  const membersMap = await fetchMembersByHousehold([...new Set(allHouseholdIds)]);
+
+  // --- Page 1: Summary ---
+  pdf.setFillColor(...ORANGE);
+  pdf.rect(0, 0, 210, 20, 'F');
+  pdf.setTextColor(255, 255, 255);
+  pdf.setFontSize(16);
+  pdf.setFont('helvetica', 'bold');
+  pdf.text('BAPS Jaipur MDS - Campaign Report', 14, 13);
+
+  pdf.setTextColor(40, 40, 40);
+  pdf.setFontSize(14);
+  pdf.text(`Campaign: ${campaignName}`, 14, 30);
+
+  pdf.setFontSize(10);
+  pdf.setFont('helvetica', 'normal');
+  pdf.text(`Generated: ${new Date().toLocaleString('en-IN')}`, 14, 36);
+
+  // Summary Metrics
+  pdf.setFillColor(249, 250, 251);
+  pdf.rect(14, 42, 182, 22, 'F');
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.text('Total Events:', 18, 50);
+  pdf.setFont('helvetica', 'normal');
+  pdf.text(`${events.length}`, 45, 50);
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.text('Scheduled Homes:', 75, 50);
+  pdf.setFont('helvetica', 'normal');
+  pdf.text(`${scheduledHomes}`, 110, 50);
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.text('Overall DB Homes:', 140, 50);
+  pdf.setFont('helvetica', 'normal');
+  pdf.text(`${globalTotal || '-'}`, 175, 50);
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.text('Visited Homes:', 18, 58);
+  pdf.setFont('helvetica', 'normal');
+  pdf.text(`${visitedHomes}`, 45, 58);
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.text('Completion:', 75, 58);
+  pdf.setFont('helvetica', 'normal');
+  pdf.text(`${completionPct}%`, 110, 58);
+
+  pdf.autoTable({
+    startY: 72,
+    head: [['Area', 'Scheduled Homes', 'Visited Homes']],
+    body: areaStatsList,
+    headStyles: { fillColor: ORANGE, fontStyle: 'bold' },
+    styles: { fontSize: 9 },
+  });
+
+  // --- Pages 2+: Details per Event ---
+  events.sort((a,b) => a.scheduledDate.localeCompare(b.scheduledDate)).forEach((ev, idx) => {
+    pdf.addPage();
+
+    // Header for event
+    pdf.setFillColor(240, 240, 240);
+    pdf.rect(14, 14, 182, 16, 'F');
+    pdf.setFontSize(11);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setTextColor(40, 40, 40);
+    pdf.text(`${ev.name || 'Unnamed Event'} - ${fmtDateLong(ev.scheduledDate)}`, 18, 20);
+
+    pdf.setFontSize(9);
+    pdf.setFont('helvetica', 'normal');
+    const vols = [ev.assignedVolunteerName, ev.secondVolunteerName, ev.santo2Name].filter(Boolean).join(', ');
+    pdf.text(`Area: ${ev.area || '-'} | Volunteers/Santos: ${vols || '-'}`, 18, 26);
+
+    const body = (ev.households || []).map((hh, i) => {
+      const members = (membersMap[hh.householdId] || []).sort(
+        (a, b) => (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0) || (a.name || '').localeCompare(b.name || '')
+      );
+      const nameList = members.map((m) => (m.isPrimary ? `* ${m.name}` : m.name)).join('\n') || '-';
+      const status = (!hh.status || hh.status === 'pending') ? 'Pending' : (hh.status.charAt(0).toUpperCase() + hh.status.slice(1));
+
+      return [
+        i + 1,
+        hh.primaryName || '-',
+        hh.address || '-',
+        nameList,
+        status.replace('_', ' ')
+      ];
+    });
+
+    if (body.length === 0) {
+      body.push([{ content: 'No households scheduled.', colSpan: 5, styles: { halign: 'center', fontStyle: 'italic' } }]);
+    }
+
+    pdf.autoTable({
+      startY: 34,
+      head: [['#', 'Household', 'Address', 'Family Members (* = Primary)', 'Status']],
+      body,
+      styles: { fontSize: 8, valign: 'top', cellPadding: 2 },
+      headStyles: { fillColor: [100, 100, 100] },
+      columnStyles: {
+        0: { cellWidth: 8 },
+        1: { cellWidth: 35 },
+        2: { cellWidth: 45 },
+        3: { cellWidth: 70 },
+        4: { cellWidth: 'auto' },
+      }
+    });
+  });
+
+  // Footer on all pages
+  const pageCount = pdf.getNumberOfPages();
+  for (let p = 1; p <= pageCount; p++) {
+    pdf.setPage(p);
+    pdf.setFontSize(7);
+    pdf.setTextColor(160, 160, 160);
+    pdf.text(`BAPS Jaipur MDS | Campaign: ${campaignName} | Page ${p} of ${pageCount}`, 14, 290);
+  }
+
+  const safeName = campaignName.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+  pdf.save(`campaign-report-${safeName}.pdf`);
+}
+
 export function exportBlankFormPdf() {
   const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const M = 12; // left/right margin

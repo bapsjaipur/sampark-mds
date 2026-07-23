@@ -329,8 +329,40 @@ service cloud.firestore {
     }
 
     match /syncLogs/{logId} {
+    // ---------------------------------------------------------------------
+    // campaigns/{id}: name, isActive
+    // ---------------------------------------------------------------------
+
+    match /campaigns/{campaignId} {
+      allow read: if volunteerExists();
+      allow write: if volunteerExists() && canManageUsers();
+    }
       allow read: if volunteerExists() && canReadSyncLogs();
+    // ---------------------------------------------------------------------
+    // campaigns/{id}: name, isActive
+    // ---------------------------------------------------------------------
+
+    match /campaigns/{campaignId} {
+      allow read: if volunteerExists();
+      allow write: if volunteerExists() && canManageUsers();
+    }
       allow write: if false;
+    // ---------------------------------------------------------------------
+    // campaigns/{id}: name, isActive
+    // ---------------------------------------------------------------------
+
+    match /campaigns/{campaignId} {
+      allow read: if volunteerExists();
+      allow write: if volunteerExists() && canManageUsers();
+    }
+    }
+    // ---------------------------------------------------------------------
+    // campaigns/{id}: name, isActive
+    // ---------------------------------------------------------------------
+
+    match /campaigns/{campaignId} {
+      allow read: if volunteerExists();
+      allow write: if volunteerExists() && canManageUsers();
     }
   }
 }

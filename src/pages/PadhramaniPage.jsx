@@ -19,7 +19,7 @@ import {
   Home, CalendarDays, Users, GripVertical, X, MapPin, Route,
   FileDown, FileText,
 } from "lucide-react";
-import { exportPadhramaniDayPdf, exportBlankFormPdf } from "../lib/pdfExports";
+import { exportPadhramaniDayPdf, exportBlankFormPdf, exportCampaignPdf } from "../lib/pdfExports";
 import { db } from "../lib/firebase";
 import { useAuth } from "../hooks/usePermissions";
 import { useAreasAndMandals } from "../hooks/useAreasAndMandals";
@@ -28,6 +28,7 @@ import { Input } from "../components/ui/Input";
 import Modal from "../components/ui/Modal";
 import { useToast } from "../contexts/ToastContext";
 import RequirePermission from "../components/RequirePermission";
+import CampaignSummary from "../components/admin-tools/CampaignSummary";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -58,6 +59,10 @@ function downloadCSV(csv, filename) {
   document.body.appendChild(a); a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+function getCampaignOptions() {
+  return ['Uncategorized'];
 }
 
 // 7.4 — Nearest-neighbor TSP heuristic for "Suggest order"
@@ -349,9 +354,11 @@ function HouseholdPicker({ selected, setSelected, allHouseholds, primaryNames, e
 
 // ── ScheduleEventModal (create & full edit for admin) ──────────────────────────
 
-function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = null }) {
+function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = null, options = [] }) {
   const { volunteer: currentUser, hasPermission } = useAuth();
   const isAdmin = hasPermission("manage_users") || hasPermission("view_all_contacts");
+
+  const finalOptions = options.length > 0 ? options : getCampaignOptions();
 
   const { showToast } = useToast();
   const { areas } = useAreasAndMandals();
@@ -368,6 +375,7 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
   const [form, setForm] = useState(() => {
     if (editEvent) return {
       name: editEvent.name || "",
+      campaign: editEvent.campaign || "General / Other",
       scheduledDate: editEvent.scheduledDate || "",
       area: editEvent.area || "",
       assignedVolunteerId: editEvent.assignedVolunteerId || "",
@@ -382,6 +390,7 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
     // Auto-select the current non-admin volunteer as Karyakarta if applicable
     return {
       name: "",
+      campaign: getCampaignOptions()[0], // Default to current season
       scheduledDate: "",
       area: (currentUser?.assignedAreas || [])[0] || "",
       assignedVolunteerId: isAdmin ? "" : currentUser?.id || "",
@@ -479,6 +488,7 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
         `${form.area || "Padhramani"} – ${formatDate(form.scheduledDate)}`;
       const payload = {
         name: autoName,
+        campaign: form.campaign || "General / Other",
         scheduledDate: form.scheduledDate,
         area: form.area || null,
         assignedVolunteerId: form.assignedVolunteerId || null,
@@ -536,13 +546,27 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
 
       {step === 1 ? (
         <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600">Event name (optional)</label>
-            <Input
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder={`e.g. ${form.area || "Area"} Padhramani`}
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600">Event name (optional)</label>
+              <Input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder={`e.g. ${form.area || "Area"} Padhramani`}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600">Campaign / Season</label>
+              <select
+                value={form.campaign}
+                onChange={(e) => setForm({ ...form, campaign: e.target.value })}
+                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
+              >
+                {finalOptions.map((opt) => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -904,7 +928,11 @@ export default function PadhramaniPage() {
   const { volunteer: currentUser, hasPermission } = useAuth();
   const { showToast } = useToast();
   const [events, setEvents] = useState([]);
+  const [dbCampaigns, setDbCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedCampaign, setSelectedCampaign] = useState(() => {
+    return localStorage.getItem('mds_last_padhramani_campaign') || null;
+  });
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [editEvent, setEditEvent] = useState(null);
   const [editHouseholdsEvent, setEditHouseholdsEvent] = useState(null);
@@ -912,7 +940,7 @@ export default function PadhramaniPage() {
   const isAdmin = hasPermission("manage_users") || hasPermission("view_all_contacts");
 
   useEffect(() => {
-    const unsub = onSnapshot(
+    const unsubEvents = onSnapshot(
       query(collection(db, "padhramaniEvents"), orderBy("scheduledDate", "desc")),
       (snap) => {
         let allDocs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -936,33 +964,70 @@ export default function PadhramaniPage() {
         setLoading(false);
       }
     );
-    return unsub;
+
+    const unsubCampaigns = onSnapshot(collection(db, "campaigns"), (snap) => {
+      setDbCampaigns(snap.docs.map(d => d.data().name));
+    });
+
+    return () => { unsubEvents(); unsubCampaigns(); };
   }, [isAdmin, currentUser?.id]);
+
+  // Determine available campaign options dynamically to avoid losing older ones
+  const campaignOptions = useMemo(() => {
+    const existingCampaigns = events.map(e => e.campaign).filter(Boolean);
+    const unionSet = new Set([...dbCampaigns, ...existingCampaigns]);
+
+    // Convert to array and sort descending (so newest year/alphabetical stays top)
+    const sorted = [...unionSet].sort((a, b) => b.localeCompare(a));
+
+    // Always append "Uncategorized" at the very end
+    return [...sorted, 'Uncategorized'];
+  }, [events, dbCampaigns]);
+
+  // Persist campaign selection on change, and auto-select a smart default on load
+  useEffect(() => {
+    if (selectedCampaign && campaignOptions.includes(selectedCampaign)) {
+      localStorage.setItem('mds_last_padhramani_campaign', selectedCampaign);
+    } else if (!selectedCampaign && campaignOptions.length > 0) {
+      // If nothing matches or loaded for first time, pick the first valid campaign
+      // (which is the top sorted one), unless there are none, then Uncategorized.
+      const smartDefault = campaignOptions[0] !== 'Uncategorized' ? campaignOptions[0] : 'Uncategorized';
+      setSelectedCampaign(smartDefault);
+    }
+  }, [selectedCampaign, campaignOptions]);
+
+  // Filter events based on selected campaign
+  const filteredEvents = useMemo(() => {
+    if (selectedCampaign === 'Uncategorized') {
+      return events.filter(e => !e.campaign);
+    }
+    return events.filter(e => (e.campaign || "General / Other") === selectedCampaign);
+  }, [events, selectedCampaign]);
 
   const today = todayStr();
   const upcoming = useMemo(
     () =>
-      events
+      filteredEvents
         .filter((e) => (e.scheduledDate || "") >= today)
         .sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate)),
-    [events, today]
+    [filteredEvents, today]
   );
   const past = useMemo(
-    () => events.filter((e) => (e.scheduledDate || "") < today),
-    [events, today]
+    () => filteredEvents.filter((e) => (e.scheduledDate || "") < today),
+    [filteredEvents, today]
   );
 
   const totalHouseholds = useMemo(
-    () => events.reduce((n, e) => n + (e.households?.length || 0), 0),
-    [events]
+    () => filteredEvents.reduce((n, e) => n + (e.households?.length || 0), 0),
+    [filteredEvents]
   );
   const totalVisited = useMemo(
     () =>
-      events.reduce(
+      filteredEvents.reduce(
         (n, e) => n + (e.households || []).filter((h) => h.status === "completed").length,
         0
       ),
-    [events]
+    [filteredEvents]
   );
 
   async function handleDelete(eventId) {
@@ -997,10 +1062,25 @@ export default function PadhramaniPage() {
     }
   }
 
-  function exportCSV() {
+  const exportCSV = async () => {
+    // 1. Fetch all members once for efficient lookup
+    const indSnap = await getDocs(collection(db, "individuals"));
+    const allIndividuals = indSnap.docs.map(d => ({id: d.id, ...d.data()}));
+
+    // Create map for householdId -> individualList
+    const membersByHH = {};
+    allIndividuals.forEach(ind => {
+        if (!ind.householdId) return;
+        if (!membersByHH[ind.householdId]) membersByHH[ind.householdId] = [];
+        membersByHH[ind.householdId].push(ind);
+    });
+
     const rows = [];
-    events.forEach((ev) => {
+    filteredEvents.forEach((ev) => {
       (ev.households || []).forEach((hh) => {
+        const hhMembers = membersByHH[hh.householdId] || [];
+        const memberDetails = hhMembers.map(m => `${m.name} (${m.relation || "Member"}) - ${m.mobile || ""}`).join(", ");
+
         rows.push(
           [
             ev.scheduledDate || "", ev.name || "", ev.area || "",
@@ -1010,14 +1090,15 @@ export default function PadhramaniPage() {
             hh.primaryName || hh.address || "",
             hh.address || "", hh.area || "",
             HH_STATUSES[hh.status || "pending"]?.label || "Pending",
+            memberDetails
           ]
             .map((v) => `"${String(v).replace(/"/g, '""')}"`)
             .join(",")
         );
       });
     });
-    const header = ["Date","Event","Area","Karyakarta","Santo 1","Santo 2","Household","Address","HH Area","Status"];
-    downloadCSV([header.join(","), ...rows].join("\n"), `padhramani-${today}.csv`);
+    const header = ["Date","Event","Area","Karyakarta","Santo 1","Santo 2","Household","Address","HH Area","Status", "Family Members (Details)"];
+    downloadCSV([header.join(","), ...rows].join("\n"), `padhramani-${today}-${selectedCampaign.replace(/\s+/g, '-')}.csv`);
   }
 
   return (
@@ -1027,11 +1108,18 @@ export default function PadhramaniPage() {
         <div>
           <h1 className="text-xl font-semibold text-slate-900 tracking-tight">Padhramani</h1>
           <p className="text-sm text-slate-400">
-            {events.length} event{events.length !== 1 ? "s" : ""} ·{" "}
+            {filteredEvents.length} event{filteredEvents.length !== 1 ? "s" : ""} ·{" "}
             {totalHouseholds} households · {totalVisited} visited
           </p>
         </div>
         <div className="flex gap-2">
+          <select
+            value={selectedCampaign}
+            onChange={(e) => setSelectedCampaign(e.target.value)}
+            className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
+          >
+            {campaignOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
           <Button variant="secondary" onClick={() => exportBlankFormPdf()}>
             <FileText className="h-3.5 w-3.5" /> Blank form
           </Button>
@@ -1047,7 +1135,8 @@ export default function PadhramaniPage() {
       </div>
 
       {/* Area-wise stats */}
-      <AreaStats events={events} />
+      <CampaignSummary events={filteredEvents} />
+      <AreaStats events={filteredEvents} />
 
       {/* Content */}
       {loading ? (
@@ -1115,10 +1204,10 @@ export default function PadhramaniPage() {
       )}
 
       {scheduleOpen && (
-        <ScheduleEventModal onClose={() => setScheduleOpen(false)} />
+        <ScheduleEventModal options={campaignOptions} onClose={() => setScheduleOpen(false)} />
       )}
       {editEvent && (
-        <ScheduleEventModal editEvent={editEvent} onClose={() => setEditEvent(null)} />
+        <ScheduleEventModal options={campaignOptions} editEvent={editEvent} onClose={() => setEditEvent(null)} />
       )}
       {editHouseholdsEvent && (
         <EditHouseholdsModal event={editHouseholdsEvent} onClose={() => setEditHouseholdsEvent(null)} />
