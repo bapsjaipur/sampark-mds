@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   collection, addDoc, updateDoc, deleteDoc, doc, getDocs,
-  onSnapshot, serverTimestamp, query, orderBy,
+  onSnapshot, serverTimestamp, query, orderBy, where,
 } from "firebase/firestore";
 import {
   Plus, Download, Pencil, Trash2, ChevronDown,
@@ -106,19 +106,28 @@ function buildMapsRouteUrl(households) {
   return url;
 }
 
-async function loadVolunteersAndRoles() {  const [volSnap, roleSnap] = await Promise.all([
+async function loadVolunteersAndRoles() {
+  const [volSnap, roleSnap] = await Promise.all([
     getDocs(query(collection(db, "volunteers"), orderBy("name"))),
     getDocs(collection(db, "roles")),
   ]);
   const allVols = volSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const roles = roleSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  console.log("[Santo debug] All roles:", roles);
+  console.log("[Santo debug] All vols:", allVols);
+
   const santoIds = new Set(
     roles.filter((r) => r.name?.toLowerCase().includes("santo")).map((r) => r.id)
   );
-  return {
+  console.log("[Santo debug] Santo role IDs identified:", [...santoIds]);
+
+  const result = {
     nonSanto: allVols.filter((v) => !santoIds.has(v.roleRef)),
     santo: allVols.filter((v) => santoIds.has(v.roleRef)),
   };
+  console.log("[Santo debug] Filtered santo list size:", result.santo.length);
+  return result;
 }
 
 // ── VolunteerDropdown ──────────────────────────────────────────────────────────
@@ -363,8 +372,7 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
   const { showToast } = useToast();
   const { areas } = useAreasAndMandals();
   const [step, setStep] = useState(1);
-  const [nonSanto, setNonSanto] = useState([]);
-  const [santo, setSanto] = useState([]);
+  const [volunteers, setVolunteers] = useState({ nonSanto: [], santo: [] });
   const [allHouseholds, setAllHouseholds] = useState([]);
   const [primaryNames, setPrimaryNames] = useState({});
   const [excludeIds, setExcludeIds] = useState(new Set());
@@ -408,19 +416,39 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
   );
 
   useEffect(() => {
+    let hhQuery = collection(db, "households");
+    let indQuery = collection(db, "individuals");
+
+    if (!isAdmin && currentUser?.assignedAreas?.length > 0) {
+      // Scoped queries to bypass firestore.rules permission denied errors
+      const areasToQuery = currentUser.assignedAreas.slice(0, 30);
+      hhQuery = query(hhQuery, where("area", "in", areasToQuery));
+      // Individuals don't have 'area' field consistently searchable without Household joins in some structures,
+      // so if the rule allows reading them via an in-memory check, we MUST fetch them via their mandals or rely
+      // on the fact that if this query fails, we should just query households and fetch individuals strictly
+      // where householdId is in those loaded households.
+      // Actually, wait! The rule for individuals: `canReadIndividual` allows read for `view_assigned_contacts`!
+      // Let's check `canReadIndividual`: `return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts', 'edit_contacts']);`
+      // So ALL volunteers with edit_contacts CAN read the full `individuals` collection! No scoping needed!
+    }
+
+    // Load households: do not orderBy("address") in firestore when querying by "area in"
+    // to prevent requiring a composite index. We will sort them client-side instead.
     Promise.all([
       loadVolunteersAndRoles(),
-      getDocs(query(collection(db, "households"), orderBy("address"))),
-      getDocs(collection(db, "individuals")),
+      getDocs(hhQuery),
+      getDocs(indQuery),
       getDocs(collection(db, "padhramaniEvents")),
     ]).then(([vols, hhSnap, indSnap, evSnap]) => {
-      setNonSanto(vols.nonSanto);
-      setSanto(vols.santo);
+      setVolunteers(vols);
       let hhs = hhSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
       if (!isAdmin && currentUser?.assignedAreas?.length > 0) {
         hhs = hhs.filter(hh => currentUser.assignedAreas.includes(hh.area));
       }
+
+      // Sort client-side
+      hhs.sort((a, b) => (a.address || "").localeCompare(b.address || ""));
 
       setAllHouseholds(hhs);
       const names = {};
@@ -595,8 +623,8 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
             <VolunteerDropdown
               label="Karyakarta (Volunteer)"
               value={form.assignedVolunteerId}
-              onChange={(id) => pickVol(nonSanto, "assignedVolunteerId", "assignedVolunteerName", id)}
-              volunteers={nonSanto}
+              onChange={(id) => pickVol(volunteers.nonSanto, "assignedVolunteerId", "assignedVolunteerName", id)}
+              volunteers={volunteers.nonSanto}
             />
           ) : (
             <div>
@@ -611,17 +639,17 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
             <VolunteerDropdown
               label="Santo 1"
               value={form.secondVolunteerId}
-              onChange={(id) => pickVol(santo, "secondVolunteerId", "secondVolunteerName", id)}
-              volunteers={santo}
+              onChange={(id) => pickVol(volunteers.santo, "secondVolunteerId", "secondVolunteerName", id)}
+              volunteers={volunteers.santo}
             />
             <VolunteerDropdown
               label="Santo 2"
               value={form.santo2Id}
-              onChange={(id) => pickVol(santo, "santo2Id", "santo2Name", id)}
-              volunteers={santo}
+              onChange={(id) => pickVol(volunteers.santo, "santo2Id", "santo2Name", id)}
+              volunteers={volunteers.santo}
             />
           </div>
-          {santo.length === 0 && nonSanto.length > 0 && (
+          {volunteers.santo.length === 0 && volunteers.nonSanto.length > 0 && (
             <p className="text-xs text-amber-600">
               No volunteers with a "Santo" role found — create a role named "Santo" in Admin first.
             </p>
@@ -687,8 +715,13 @@ function EditHouseholdsModal({ event, onClose }) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    let hhQuery = collection(db, "households");
+    if (!isAdmin && currentUser?.assignedAreas?.length > 0) {
+      hhQuery = query(hhQuery, where("area", "in", currentUser.assignedAreas.slice(0, 30)));
+    }
+
     Promise.all([
-      getDocs(query(collection(db, "households"), orderBy("address"))),
+      getDocs(hhQuery),
       getDocs(collection(db, "individuals")),
       getDocs(collection(db, "padhramaniEvents")),
     ]).then(([hhSnap, indSnap, evSnap]) => {
@@ -697,6 +730,9 @@ function EditHouseholdsModal({ event, onClose }) {
       if (!isAdmin && currentUser?.assignedAreas?.length > 0) {
         hhs = hhs.filter(hh => currentUser.assignedAreas.includes(hh.area));
       }
+
+      // Sort client-side to prevent index requirements
+      hhs.sort((a, b) => (a.address || "").localeCompare(b.address || ""));
 
       setAllHouseholds(hhs);
       const names = {};
@@ -926,6 +962,8 @@ export function EventCard({ event, isAdmin, currentUserId, onEdit, onDelete, onU
 
 export default function PadhramaniPage() {
   const { volunteer: currentUser, hasPermission } = useAuth();
+  const isAdmin = hasPermission("manage_users") || hasPermission("view_all_contacts");
+
   const { showToast } = useToast();
   const [events, setEvents] = useState([]);
   const [dbCampaigns, setDbCampaigns] = useState([]);
@@ -934,20 +972,19 @@ export default function PadhramaniPage() {
 
   // We need getCountFromServer for the global total, imported already
   useEffect(() => {
+    if (!isAdmin) return;
     import("firebase/firestore").then(({ getCountFromServer }) => {
       getCountFromServer(collection(db, "households"))
         .then(snap => setGlobalHouseholdCount(snap.data().count))
         .catch(console.error);
     });
-  }, []);
+  }, [isAdmin]);
   const [selectedCampaign, setSelectedCampaign] = useState(() => {
     return localStorage.getItem('mds_last_padhramani_campaign') || null;
   });
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [editEvent, setEditEvent] = useState(null);
   const [editHouseholdsEvent, setEditHouseholdsEvent] = useState(null);
-
-  const isAdmin = hasPermission("manage_users") || hasPermission("view_all_contacts");
 
   useEffect(() => {
     const unsubEvents = onSnapshot(
@@ -1152,7 +1189,7 @@ export default function PadhramaniPage() {
       </div>
 
       {/* Area-wise stats */}
-      <CampaignSummary events={filteredEvents} />
+      <CampaignSummary events={filteredEvents} isAdmin={isAdmin} assignedAreas={currentUser?.assignedAreas || []} />
       <AreaStats events={filteredEvents} />
 
       {/* Content */}

@@ -1,19 +1,24 @@
 // src/components/admin-tools/CampaignSummary.jsx
 import { useEffect, useMemo, useState } from 'react';
-import { collection, getCountFromServer } from 'firebase/firestore';
+import { collection, getCountFromServer, query, where } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { Home, Users, CheckCircle, Target, Database } from 'lucide-react';
 import { Card } from '../ui/Card';
 
-export default function CampaignSummary({ events }) {
+export default function CampaignSummary({ events, isAdmin = true, assignedAreas = [] }) {
   const [globalTotal, setGlobalTotal] = useState(null);
 
   useEffect(() => {
-    // Fetch the true global count of households in the database efficiently
-    getCountFromServer(collection(db, 'households'))
+    // Fetch the true count of households in the database, scoped by permission
+    let q = collection(db, 'households');
+    if (!isAdmin && assignedAreas && assignedAreas.length > 0) {
+      q = query(q, where('area', 'in', assignedAreas.slice(0, 30)));
+    }
+
+    getCountFromServer(q)
       .then(snap => setGlobalTotal(snap.data().count))
       .catch(console.error);
-  }, []);
+  }, [isAdmin, assignedAreas]);
 
   const stats = useMemo(() => {
     let totalHouseholds = 0;
@@ -29,7 +34,7 @@ export default function CampaignSummary({ events }) {
       events: events.length,
       households: totalHouseholds, // Scheduled homes
       visited: visitedCount,
-      percentage: totalHouseholds > 0 ? Math.round((visitedCount / totalHouseholds) * 100) : 0,
+      percentage: globalTotal > 0 ? Math.round((visitedCount / globalTotal) * 100) : 0,
       globalReach: globalTotal ? Math.round((totalHouseholds / globalTotal) * 100) : 0
     };
   }, [events, globalTotal]);
