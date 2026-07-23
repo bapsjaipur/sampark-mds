@@ -188,6 +188,11 @@ function HouseholdPicker({ selected, setSelected, allHouseholds, primaryNames, e
 
   const selectedIds = useMemo(() => new Set(selected.map((h) => h.householdId)), [selected]);
 
+  // DIAGNOSTIC LOG (TEMPORARY)
+  useEffect(() => {
+    console.log("[Picker debug] excludeIds size:", excludeIds?.size);
+  }, [excludeIds]);
+
   const results = useMemo(() => allHouseholds.filter((h) => {
     if (selectedIds.has(h.id)) return false;
     if (excludeIds?.has(h.id)) return false;
@@ -345,6 +350,9 @@ function HouseholdPicker({ selected, setSelected, allHouseholds, primaryNames, e
 // ── ScheduleEventModal (create & full edit for admin) ──────────────────────────
 
 function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = null }) {
+  const { volunteer: currentUser, hasPermission } = useAuth();
+  const isAdmin = hasPermission("manage_users") || hasPermission("view_all_contacts");
+
   const { showToast } = useToast();
   const { areas } = useAreasAndMandals();
   const [step, setStep] = useState(1);
@@ -357,17 +365,33 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
   const [saving, setSaving] = useState(false);
   const isEdit = Boolean(editEvent);
 
-  const [form, setForm] = useState({
-    name: editEvent?.name || "",
-    scheduledDate: editEvent?.scheduledDate || "",
-    area: editEvent?.area || "",
-    assignedVolunteerId: editEvent?.assignedVolunteerId || "",
-    assignedVolunteerName: editEvent?.assignedVolunteerName || "",
-    secondVolunteerId: editEvent?.secondVolunteerId || "",
-    secondVolunteerName: editEvent?.secondVolunteerName || "",
-    santo2Id: editEvent?.santo2Id || "",
-    santo2Name: editEvent?.santo2Name || "",
-    notes: editEvent?.notes || "",
+  const [form, setForm] = useState(() => {
+    if (editEvent) return {
+      name: editEvent.name || "",
+      scheduledDate: editEvent.scheduledDate || "",
+      area: editEvent.area || "",
+      assignedVolunteerId: editEvent.assignedVolunteerId || "",
+      assignedVolunteerName: editEvent.assignedVolunteerName || "",
+      secondVolunteerId: editEvent.secondVolunteerId || "",
+      secondVolunteerName: editEvent.secondVolunteerName || "",
+      santo2Id: editEvent.santo2Id || "",
+      santo2Name: editEvent.santo2Name || "",
+      notes: editEvent.notes || "",
+    };
+
+    // Auto-select the current non-admin volunteer as Karyakarta if applicable
+    return {
+      name: "",
+      scheduledDate: "",
+      area: (currentUser?.assignedAreas || [])[0] || "",
+      assignedVolunteerId: isAdmin ? "" : currentUser?.id || "",
+      assignedVolunteerName: isAdmin ? "" : currentUser?.name || "",
+      secondVolunteerId: "",
+      secondVolunteerName: "",
+      santo2Id: "",
+      santo2Name: "",
+      notes: "",
+    };
   });
 
   const [selected, setSelected] = useState(
@@ -383,7 +407,12 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
     ]).then(([vols, hhSnap, indSnap, evSnap]) => {
       setNonSanto(vols.nonSanto);
       setSanto(vols.santo);
-      const hhs = hhSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      let hhs = hhSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      if (!isAdmin && currentUser?.assignedAreas?.length > 0) {
+        hhs = hhs.filter(hh => currentUser.assignedAreas.includes(hh.area));
+      }
+
       setAllHouseholds(hhs);
       const names = {};
       indSnap.docs.forEach((d) => {
@@ -396,19 +425,26 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
       // Exclude households already scheduled on any OTHER Padhramani event —
       // once assigned to one day's visit, it's not offered for another.
       const used = new Set();
+      console.log("[Padhramani debug] Total events fetched:", evSnap.size);
       evSnap.docs.forEach((d) => {
         const data = d.data();
         const hhList = data.households || data.Households || [];
         if (isEdit && d.id === editEvent.id) return;
         hhList.forEach((hh) => {
-          const hid = typeof hh === "string" ? hh : (hh.householdId || hh.id);
-          if (hid) used.add(hid);
+          if (!hh) return;
+          // In some versions, Firebase might store refs, strings, or objects
+          const hid = typeof hh === "string" ? hh : (hh.householdId || hh.id || hh.toString());
+          if (hid && typeof hid === "string" && hid.length > 5) {
+             used.add(hid);
+          }
         });
       });
-      // Console-only diagnostic (not shown in the UI) — open browser dev
-      // tools (F12) → Console tab to see this if the exclusion still isn't
-      // working, so we can see the actual numbers instead of guessing.
-      console.log("[Padhramani debug] events found:", evSnap.docs.length, "| households excluded:", used.size, "| sample event docs:", evSnap.docs.slice(0, 2).map((d) => ({ id: d.id, households: d.data().households })));
+      console.log(`[Padhramani debug] Excluded ${used.size} unique households.`);
+      if (used.size > 0) {
+        const sampleIds = [...used].slice(0, 3);
+        const sampleAddrs = hhs.filter(h => sampleIds.includes(h.id)).map(h => h.address);
+        console.log(`[Padhramani debug] Sample excluded addresses:`, sampleAddrs);
+      }
       setExcludeIds(used);
       setExcludeLoading(false);
 
@@ -531,12 +567,22 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
               </select>
             </div>
           </div>
-          <VolunteerDropdown
-            label="Karyakarta (Volunteer)"
-            value={form.assignedVolunteerId}
-            onChange={(id) => pickVol(nonSanto, "assignedVolunteerId", "assignedVolunteerName", id)}
-            volunteers={nonSanto}
-          />
+          {isAdmin ? (
+            <VolunteerDropdown
+              label="Karyakarta (Volunteer)"
+              value={form.assignedVolunteerId}
+              onChange={(id) => pickVol(nonSanto, "assignedVolunteerId", "assignedVolunteerName", id)}
+              volunteers={nonSanto}
+            />
+          ) : (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600">Karyakarta</label>
+              <div className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-sm text-slate-700 font-medium">
+                {form.assignedVolunteerName || "Self"}
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <VolunteerDropdown
               label="Santo 1"
@@ -605,6 +651,9 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
 // ── EditHouseholdsModal (karyakarta: household list & order only) ──────────────
 
 function EditHouseholdsModal({ event, onClose }) {
+  const { volunteer: currentUser, hasPermission } = useAuth();
+  const isAdmin = hasPermission("manage_users") || hasPermission("view_all_contacts");
+
   const { showToast } = useToast();
   const [allHouseholds, setAllHouseholds] = useState([]);
   const [primaryNames, setPrimaryNames] = useState({});
@@ -619,7 +668,13 @@ function EditHouseholdsModal({ event, onClose }) {
       getDocs(collection(db, "individuals")),
       getDocs(collection(db, "padhramaniEvents")),
     ]).then(([hhSnap, indSnap, evSnap]) => {
-      setAllHouseholds(hhSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      let hhs = hhSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      if (!isAdmin && currentUser?.assignedAreas?.length > 0) {
+        hhs = hhs.filter(hh => currentUser.assignedAreas.includes(hh.area));
+      }
+
+      setAllHouseholds(hhs);
       const names = {};
       indSnap.docs.forEach((d) => {
         const ind = d.data();
@@ -860,7 +915,20 @@ export default function PadhramaniPage() {
     const unsub = onSnapshot(
       query(collection(db, "padhramaniEvents"), orderBy("scheduledDate", "desc")),
       (snap) => {
-        setEvents(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        let allDocs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+        // 1. Filter out events if not Admin (Admin sees all)
+        if (!isAdmin && currentUser?.id) {
+          allDocs = allDocs.filter(
+            (ev) =>
+              ev.assignedVolunteerId === currentUser.id ||
+              ev.secondVolunteerId === currentUser.id ||
+              ev.santo2Id === currentUser.id ||
+              (ev.santoRefs && ev.santoRefs.includes(currentUser.id))
+          );
+        }
+
+        setEvents(allDocs);
         setLoading(false);
       },
       (err) => {
@@ -869,7 +937,7 @@ export default function PadhramaniPage() {
       }
     );
     return unsub;
-  }, []);
+  }, [isAdmin, currentUser?.id]);
 
   const today = todayStr();
   const upcoming = useMemo(
