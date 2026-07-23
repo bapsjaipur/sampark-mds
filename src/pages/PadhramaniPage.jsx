@@ -646,7 +646,7 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
               label="Santo 2"
               value={form.santo2Id}
               onChange={(id) => pickVol(volunteers.santo, "santo2Id", "santo2Name", id)}
-              volunteers={volunteers.santo}
+              volunteers={volunteers.santo.filter(v => v.id !== form.secondVolunteerId)}
             />
           </div>
           {volunteers.santo.length === 0 && volunteers.nonSanto.length > 0 && (

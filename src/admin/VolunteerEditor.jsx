@@ -317,7 +317,10 @@ function VolunteerEditorInner() {
     if (!selectedId || !draft) return;
     setSaving(true); setError(null);
     try {
-      await updateDoc(doc(db, 'volunteers', selectedId), {
+      const functions = getFunctions();
+      const updateVolunteerAccount = httpsCallable(functions, 'updateVolunteerAccount');
+      await updateVolunteerAccount({
+        volunteerId: selectedId,
         name: draft.name.trim(),
         mobile: draft.mobile.trim(),
         roleRef: draft.roleRef || null,
