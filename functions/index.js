@@ -114,6 +114,7 @@ exports.scheduledFirestoreToGASSync = onSchedule('0 3 * * *', async () => {
 
 exports.createVolunteerAccount = require('./createVolunteerAccount').createVolunteerAccount;
 exports.updateVolunteerAccount = require('./updateVolunteerAccount').updateVolunteerAccount;
+exports.resetVolunteerPassword = require('./resetVolunteerPassword').resetVolunteerPassword;
 
 exports.backupDatabase = onCall({ region: 'us-central1', maxInstances: 1, timeoutSeconds: 540 }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Must be logged in.');

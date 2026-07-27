@@ -22,6 +22,7 @@ import IndividualDetailPage from "./pages/IndividualDetailPage";
 import PadhramaniPage from "./pages/PadhramaniPage";
 import SantoSchedulePage from "./pages/SantoSchedulePage";
 import MyContactsPage from "./pages/MyContactsPage";
+import ProfilePage from "./pages/ProfilePage";
 
 // 4.1 — redirect to first route the volunteer actually has permission to see
 function DefaultRedirect() {
@@ -59,6 +60,7 @@ export default function App() {
                 <Route path="/padhramani" element={<PadhramaniPage />} />
                 <Route path="/santo-schedule" element={<SantoSchedulePage />} />
                 <Route path="/my-contacts" element={<MyContactsPage />} />
+                <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/events" element={<EventsPage />} />
                 <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
                 <Route path="/admin/batches" element={<BatchesPage />} />

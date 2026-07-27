@@ -9,7 +9,7 @@
 // slides in over a backdrop) and a desktop collapse-to-icons toggle,
 // persisted in localStorage.
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet, Navigate, useLocation } from 'react-router-dom';
+import { NavLink, Link, Outlet, Navigate, useLocation } from 'react-router-dom';
 import { signOut } from 'firebase/auth';
 import {
   Home, Users, CalendarDays, Bell, ListChecks, LayoutDashboard,
@@ -98,9 +98,11 @@ function SidebarContent({ collapsed, onNavigate }) {
       </nav>
 
       <div className={`mt-3 flex items-center gap-2 border-t border-slate-100 pt-3 px-1 ${collapsed ? 'justify-center' : ''}`}>
-        <Avatar name={volunteer?.name} size="sm" />
-        {!collapsed && <span className="flex-1 truncate text-[13px] font-medium text-slate-700">{volunteer?.name || 'Signed in'}</span>}
-        <button onClick={() => signOut(auth)} aria-label="Sign out" title="Sign out" className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+        <Link to="/profile" className="flex items-center gap-2 flex-1 min-w-0 hover:opacity-80 transition-opacity" onClick={onNavigate}>
+          <Avatar name={volunteer?.name} size="sm" />
+          {!collapsed && <span className="flex-1 truncate text-[13px] font-medium text-slate-700">{volunteer?.name || 'Signed in'}</span>}
+        </Link>
+        <button onClick={() => signOut(auth)} aria-label="Sign out" title="Sign out" className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 shrink-0">
           <LogOut className="h-4 w-4" />
         </button>
       </div>

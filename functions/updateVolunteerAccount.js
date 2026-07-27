@@ -19,13 +19,17 @@ exports.updateVolunteerAccount = onCall({ region: 'us-central1' }, async (reques
   const callerRoleRef = callerDoc.data().roleRef;
   const callerRoleDoc = callerRoleRef ? await db.collection('roles').doc(callerRoleRef).get() : null;
   const callerPerms = (callerRoleDoc?.exists && callerRoleDoc.data().permissions) || [];
-  if (!callerPerms.includes('manage_users')) {
-    throw new HttpsError('permission-denied', 'Missing manage_users permission.');
-  }
 
-  const { volunteerId, name, mobile, roleRef, assignedAreas, assignedMandals } = request.data || {};
+  const { volunteerId, name, mobile, roleRef, assignedAreas, assignedMandals, profilePhotoURL } = request.data || {};
 
   if (!volunteerId) throw new HttpsError('invalid-argument', 'volunteerId is required.');
+
+  const isSelf = request.auth.uid === volunteerId;
+  const hasManageUsers = callerPerms.includes('manage_users');
+
+  if (!hasManageUsers && !isSelf) {
+    throw new HttpsError('permission-denied', 'Missing permission to update volunteer account.');
+  }
 
   // Clean the mobile number
   const cleanMobile = mobile ? String(mobile).replace(/\D/g, '') : null;
@@ -54,9 +58,14 @@ exports.updateVolunteerAccount = onCall({ region: 'us-central1' }, async (reques
     };
     if (name !== undefined) updateData.name = name;
     if (cleanMobile !== null) updateData.mobile = cleanMobile;
-    if (roleRef !== undefined) updateData.roleRef = roleRef || null;
-    if (assignedAreas !== undefined) updateData.assignedAreas = Array.isArray(assignedAreas) ? assignedAreas : [];
-    if (assignedMandals !== undefined) updateData.assignedMandals = Array.isArray(assignedMandals) ? assignedMandals : [];
+    if (profilePhotoURL !== undefined) updateData.profilePhotoURL = profilePhotoURL;
+
+    // Only allow updating roles & areas if the caller has manage_users
+    if (hasManageUsers) {
+      if (roleRef !== undefined) updateData.roleRef = roleRef || null;
+      if (assignedAreas !== undefined) updateData.assignedAreas = Array.isArray(assignedAreas) ? assignedAreas : [];
+      if (assignedMandals !== undefined) updateData.assignedMandals = Array.isArray(assignedMandals) ? assignedMandals : [];
+    }
 
     await db.collection('volunteers').doc(volunteerId).update(updateData);
   } catch (err) {
