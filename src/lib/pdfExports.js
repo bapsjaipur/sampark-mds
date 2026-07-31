@@ -13,6 +13,14 @@ function fmtDateShort(str) {
   return isNaN(d) ? str : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+function fmtDateLong(str) {
+  if (!str) return '';
+  const d = new Date(str + 'T00:00:00');
+  return isNaN(d) ? str : d.toLocaleDateString('en-IN', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+  });
+}
+
 async function fetchMembersByHousehold(householdIds) {
   const map = {};
   if (!householdIds.length) return map;

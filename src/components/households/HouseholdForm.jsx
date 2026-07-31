@@ -141,26 +141,6 @@ export default function HouseholdForm({ household, onSubmit, onCancel }) {
     e.preventDefault();
     if (!validate()) return;
 
-    // 1.6 — On first submit (create only), check for similar address+area.
-    if (!isEdit && !dupChecked) {
-      setSaving(true);
-      try {
-        const snap = await getDocs(query(collection(db, "households"), where("area", "==", form.area.trim())));
-        const found = snap.docs
-          .map((d) => ({ id: d.id, ...d.data() }))
-          .filter((h) => similarity(h.address, form.address) >= 0.5);
-        setDupChecked(true);
-        if (found.length > 0) {
-          setDuplicates(found);
-          setSaving(false);
-          return;
-        }
-      } catch {
-        // If the check fails, proceed with the save.
-      }
-      setSaving(false);
-    }
-
     setSaving(true);
     const selectedArea = areas.find(a => a.name === form.area);
     const selectedSub = selectedArea?.subAreas?.find(s => s.name === form.subArea);
