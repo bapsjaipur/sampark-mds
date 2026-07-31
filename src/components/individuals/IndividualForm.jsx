@@ -25,7 +25,7 @@ import { doc, collection, getDocs, query, orderBy } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { useAuth } from "../../hooks/usePermissions";
 import PhotoUploader from "../photo/PhotoUploader";
-import { MandalSelect, AreaSelect } from "../AreaMandalSelect";
+import { MandalSelect, AreaSelect, SubAreaSelect } from "../AreaMandalSelect";
 import { useAreasAndMandals } from "../../hooks/useAreasAndMandals";
 import { FULL_MEMBER_FIELDS } from "../../lib/areaMandalCodes";
 import { Input, Select, Label, FieldError } from "../ui/Input";
@@ -197,6 +197,7 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       // blank — that's the 1.1 fix. Standalone: use whatever was picked (if
       // this Mandal asks for Area at all), else blank.
       area: withinHousehold ? householdArea : showArea ? form.area : "",
+      subArea: withinHousehold ? "" : showArea ? form.subArea : "",
       address: withinHousehold ? "" : form.address,
       dob: showDob ? form.dob : "",
       anniversary: showAnniversary ? form.anniversary : "",
@@ -263,9 +264,20 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       )}
 
       {showArea && (
-        <div>
-          <Label>Area</Label>
-          <AreaSelect value={form.area} onChange={update("area")} className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300" />
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label>Area</Label>
+            <AreaSelect value={form.area} onChange={update("area")} className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300" />
+          </div>
+          <div>
+            <Label>Sub-area</Label>
+            <SubAreaSelect
+                areaName={form.area}
+                value={form.subArea}
+                onChange={update("subArea")}
+                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
+            />
+          </div>
         </div>
       )}
 

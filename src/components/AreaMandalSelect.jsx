@@ -15,6 +15,23 @@ export function AreaSelect({ value, onChange, className, allowBlank = true }) {
   );
 }
 
+export function SubAreaSelect({ areaName, value, onChange, className, allowBlank = true }) {
+  const { areas } = useAreasAndMandals();
+  const selectedArea = areas.find(a => a.name === areaName);
+  const subAreas = selectedArea?.subAreas || [];
+
+  if (subAreas.length === 0) return null;
+
+  return (
+    <select value={value} onChange={onChange} className={className}>
+      {allowBlank && <option value="">Select sub-area</option>}
+      {subAreas.map((sa) => (
+        <option key={sa.code || sa.name} value={sa.name}>{sa.name} ({sa.code})</option>
+      ))}
+    </select>
+  );
+}
+
 export function MandalSelect({ value, onChange, className, allowBlank = true }) {
   const { mandals } = useAreasAndMandals();
   return (

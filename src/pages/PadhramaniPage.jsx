@@ -374,6 +374,7 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
   const [step, setStep] = useState(1);
   const [volunteers, setVolunteers] = useState({ nonSanto: [], santo: [] });
   const [allHouseholds, setAllHouseholds] = useState([]);
+  const [allEvents, setAllEvents] = useState([]);
   const [primaryNames, setPrimaryNames] = useState({});
   const [excludeIds, setExcludeIds] = useState(new Set());
   const [excludeLoading, setExcludeLoading] = useState(true);
@@ -451,6 +452,7 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
       hhs.sort((a, b) => (a.address || "").localeCompare(b.address || ""));
 
       setAllHouseholds(hhs);
+      setAllEvents(evSnap.docs.map(d => ({id: d.id, ...d.data()})));
       const names = {};
       indSnap.docs.forEach((d) => {
         const ind = d.data();
@@ -458,31 +460,6 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
         if (ind.isPrimary || !names[ind.householdId]) names[ind.householdId] = ind.name;
       });
       setPrimaryNames(names);
-
-      // Exclude households already scheduled on any OTHER Padhramani event —
-      // once assigned to one day's visit, it's not offered for another.
-      const used = new Set();
-      console.log("[Padhramani debug] Total events fetched:", evSnap.size);
-      evSnap.docs.forEach((d) => {
-        const data = d.data();
-        const hhList = data.households || data.Households || [];
-        if (isEdit && d.id === editEvent.id) return;
-        hhList.forEach((hh) => {
-          if (!hh) return;
-          // In some versions, Firebase might store refs, strings, or objects
-          const hid = typeof hh === "string" ? hh : (hh.householdId || hh.id || hh.toString());
-          if (hid && typeof hid === "string" && hid.length > 5) {
-             used.add(hid);
-          }
-        });
-      });
-      console.log(`[Padhramani debug] Excluded ${used.size} unique households.`);
-      if (used.size > 0) {
-        const sampleIds = [...used].slice(0, 3);
-        const sampleAddrs = hhs.filter(h => sampleIds.includes(h.id)).map(h => h.address);
-        console.log(`[Padhramani debug] Sample excluded addresses:`, sampleAddrs);
-      }
-      setExcludeIds(used);
       setExcludeLoading(false);
 
       if (prefillHouseholdId && !isEdit) {
@@ -499,6 +476,28 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
       }
     });
   }, [prefillHouseholdId, isEdit]);
+
+  // Update excludeIds whenever campaign changes
+  useEffect(() => {
+    const used = new Set();
+    const currentCampaign = form.campaign || "General / Other";
+
+    allEvents.forEach((d) => {
+      const evCampaign = d.campaign || "General / Other";
+      if (evCampaign !== currentCampaign) return;
+
+      const hhList = d.households || d.Households || [];
+      if (isEdit && d.id === editEvent?.id) return;
+      hhList.forEach((hh) => {
+        if (!hh) return;
+        const hid = typeof hh === "string" ? hh : (hh.householdId || hh.id || hh.toString());
+        if (hid && typeof hid === "string" && hid.length > 5) {
+            used.add(hid);
+        }
+      });
+    });
+    setExcludeIds(used);
+  }, [form.campaign, allEvents, isEdit, editEvent?.id]);
 
   function pickVol(list, idField, nameField, id) {
     const v = list.find((x) => x.id === id);
@@ -708,6 +707,7 @@ function EditHouseholdsModal({ event, onClose }) {
 
   const { showToast } = useToast();
   const [allHouseholds, setAllHouseholds] = useState([]);
+  const [allEvents, setAllEvents] = useState([]);
   const [primaryNames, setPrimaryNames] = useState({});
   const [excludeIds, setExcludeIds] = useState(new Set());
   const [excludeLoading, setExcludeLoading] = useState(true);

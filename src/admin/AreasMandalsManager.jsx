@@ -14,6 +14,7 @@ import {
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { AreaTable } from './AreaTable';
 
 // ── 5.1 helper: count usages across individuals + households ─────────────────
 async function countUsages(field, value) {
@@ -492,7 +493,14 @@ function AreasMandalsManagerInner() {
       <h1 className="text-xl font-semibold text-slate-900 tracking-tight">Areas, Mandals &amp; Levels</h1>
       <p className="text-sm text-slate-400">These drive every dropdown in the app. Renaming propagates to all existing records; deleting in-use values keeps existing data intact.</p>
       <AreaStats areas={areas} />
-      <CodeTable title="Areas" collectionName="areas" defaults={DEFAULT_AREAS} renameField="area" />
+      <AreaTable areas={areas} onUpdateName={(r, n, c) => {
+          const updates = { name: n };
+          if (c) updates.code = c;
+          updateDoc(doc(db, 'areas', r.id), updates);
+        }} onDelete={async (r) => {
+          if (!window.confirm('Delete this area?')) return;
+          await deleteDoc(doc(db, 'areas', r.id));
+        }} />
       <MandalTable />
       <CodeTable title="Levels" collectionName="levels" defaults={DEFAULT_LEVELS} codeRequired={false} renameField={null} />
     </div>
