@@ -15,8 +15,8 @@
 // uid at volunteer-creation time is strongly preferred over changing this.
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged } from 'firebase/auth';
-import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 
 const PermissionsContext = createContext(null);
@@ -39,28 +39,70 @@ export function PermissionsProvider({ children }) {
   useEffect(() => {
     let unsubVolunteer = () => {};
     let unsubRole = () => {};
+    let heartbeatInterval = null;
+    let autoLogoutTimer = null;
+
+    // Reset inactivity timer on mouse/keyboard events
+    const resetInactivityTimer = () => {
+      if (autoLogoutTimer) clearTimeout(autoLogoutTimer);
+      // 12 hours = 12 * 60 * 60 * 1000 = 43200000 ms
+      autoLogoutTimer = setTimeout(() => {
+        if (auth.currentUser) {
+          signOut(auth).catch(() => {});
+        }
+      }, 43200000);
+    };
+
+    const setupActivityListeners = () => {
+      window.addEventListener('mousemove', resetInactivityTimer);
+      window.addEventListener('keypress', resetInactivityTimer);
+      window.addEventListener('click', resetInactivityTimer);
+      window.addEventListener('scroll', resetInactivityTimer);
+      resetInactivityTimer();
+    };
+
+    const cleanupActivityListeners = () => {
+      window.removeEventListener('mousemove', resetInactivityTimer);
+      window.removeEventListener('keypress', resetInactivityTimer);
+      window.removeEventListener('click', resetInactivityTimer);
+      window.removeEventListener('scroll', resetInactivityTimer);
+      if (autoLogoutTimer) clearTimeout(autoLogoutTimer);
+    };
 
     const unsubAuth = onAuthStateChanged(auth, (user) => {
       unsubVolunteer();
       unsubRole();
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+      cleanupActivityListeners();
 
       if (!user) {
         setState({ ...emptyState, loading: false });
         return;
       }
 
+      setupActivityListeners();
+
       setState((s) => ({ ...s, loading: true, authUser: user, user, error: null }));
 
-      // Stamp lastLoginAt once per session from Firebase Auth metadata.
-      // The closure variable prevents repeated writes on subsequent snapshot fires.
       let stampedLogin = false;
+
+      // Start the heartbeat!
+      // Every 3 minutes, silently update lastSeenAt
+      heartbeatInterval = setInterval(() => {
+        if (auth.currentUser) {
+           updateDoc(doc(db, 'volunteers', user.uid), { lastSeenAt: serverTimestamp() }).catch(() => {});
+        }
+      }, 3 * 60 * 1000);
 
       unsubVolunteer = onSnapshot(
         doc(db, 'volunteers', user.uid),
         (vSnap) => {
-          if (!stampedLogin && user.metadata?.lastSignInTime) {
+          if (!stampedLogin) {
             stampedLogin = true;
-            updateDoc(doc(db, 'volunteers', user.uid), { lastLoginAt: new Date(user.metadata.lastSignInTime) }).catch(() => {});
+            updateDoc(doc(db, 'volunteers', user.uid), {
+                lastLoginAt: serverTimestamp(),
+                lastSeenAt: serverTimestamp()
+            }).catch(() => {});
           }
 
           unsubRole();
@@ -71,6 +113,13 @@ export function PermissionsProvider({ children }) {
           }
 
           const volunteer = { id: vSnap.id, ...vSnap.data() };
+
+          // If the account was deactivated by an admin, log them out immediately
+          if (volunteer.isActive === false) {
+            signOut(auth).catch(() => {});
+            setState({ ...emptyState, loading: false, error: 'account-disabled' });
+            return;
+          }
 
           if (!volunteer.roleRef) {
             setState({
@@ -114,6 +163,8 @@ export function PermissionsProvider({ children }) {
       unsubAuth();
       unsubVolunteer();
       unsubRole();
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+      cleanupActivityListeners();
     };
   }, []);
 

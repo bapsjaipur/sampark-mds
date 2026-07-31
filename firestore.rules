@@ -83,11 +83,21 @@ service cloud.firestore {
     }
 
     match /volunteers/{volunteerId} {
-      // Any signed-in volunteer can read the full volunteer list — needed for
-      // name/number dropdowns (Sampark Karyakarta picker, Padhramani volunteer
-      // assignment) which are used by all roles, not just admins.
+      // Any signed-in volunteer can read the full volunteer list
       allow read: if volunteerExists();
-      allow create, update, delete: if volunteerExists() && canManageUsers();
+
+      // Admins can do anything
+      allow create, delete: if volunteerExists() && canManageUsers();
+
+      // Allow volunteers to update their OWN document, ONLY IF they are exclusively updating
+      // safe tracking fields (lastLoginAt, lastSeenAt, profilePhotoURL).
+      allow update: if volunteerExists() && (
+        canManageUsers() ||
+        (
+          request.auth.uid == volunteerId &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLoginAt', 'lastSeenAt', 'profilePhotoURL'])
+        )
+      );
     }
 
     // ---------------------------------------------------------------------

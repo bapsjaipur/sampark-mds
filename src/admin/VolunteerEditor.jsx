@@ -281,7 +281,10 @@ function VolunteerEditorInner() {
     const v = volunteers.find((x) => x.id === selectedId);
     if (v) {
       setDraft({
-        name: v.name || '', mobile: v.mobile || '', roleRef: v.roleRef || '',
+        name: v.name || '',
+        mobile: v.mobile || '',
+        roleRef: v.roleRef || '',
+        isActive: v.isActive !== false, // default to true
         assignedAreas: Array.isArray(v.assignedAreas) ? v.assignedAreas : [],
         assignedMandals: Array.isArray(v.assignedMandals) ? v.assignedMandals : [],
       });
@@ -326,6 +329,7 @@ function VolunteerEditorInner() {
         roleRef: draft.roleRef || null,
         assignedAreas: draft.assignedAreas,
         assignedMandals: draft.assignedMandals,
+        isActive: draft.isActive,
       });
     } catch (err) {
       setError(err.message);
@@ -432,16 +436,33 @@ function VolunteerEditorInner() {
         <div className="rounded-lg border border-slate-100 divide-y divide-slate-50 max-h-[60vh] overflow-y-auto">
           {filteredVolunteers.map((v) => {
             const lastLogin = formatLastLogin(v.lastLoginAt);
-            const isRecent = v.lastLoginAt && (Date.now() - (v.lastLoginAt.toDate?.() ?? new Date(v.lastLoginAt)).getTime()) < 24 * 60 * 60 * 1000;
+            const loginTime = v.lastLoginAt?.toDate ? v.lastLoginAt.toDate().getTime() : (v.lastLoginAt ? new Date(v.lastLoginAt).getTime() : 0);
+            const lastSeenTime = v.lastSeenAt?.toDate ? v.lastSeenAt.toDate().getTime() : (v.lastSeenAt ? new Date(v.lastSeenAt).getTime() : 0);
+            // If they had activity (heartbeat) in the last 5 minutes, they are currently live
+            const isLive = lastSeenTime && (Date.now() - lastSeenTime) < 5 * 60 * 1000;
+            const isRecent = loginTime && (Date.now() - loginTime) < 24 * 60 * 60 * 1000;
+
             return (
-              <div key={v.id} className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-sm hover:bg-slate-50 ${selectedId === v.id ? 'bg-slate-50 border-l-2 border-orange-500' : ''}`}>
+              <div key={v.id} className={`flex w-full items-center justify-between px-3 py-2.5 text-sm hover:bg-slate-50 ${selectedId === v.id ? 'bg-slate-50 border-l-2 border-orange-500' : ''} ${v.isActive === false ? 'opacity-50' : ''}`}>
                 <button onClick={() => setSelectedId(v.id)} className="flex flex-1 items-center gap-2.5 text-left min-w-0">
-                  <Avatar name={v.name} size="sm" />
+                  <div className="relative">
+                    <Avatar name={v.name} size="sm" />
+                    {isLive && (
+                      <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 border border-white" title="Live Now" />
+                    )}
+                  </div>
                   <div className="min-w-0 flex-1">
-                    <div className="font-medium text-slate-900 truncate">{v.name || 'Unnamed'}</div>
+                    <div className="font-medium text-slate-900 truncate">
+                      {v.name || 'Unnamed'}
+                      {v.isActive === false && <span className="ml-1.5 rounded bg-slate-200 px-1 py-0.5 text-[10px] font-medium text-slate-500">Disabled</span>}
+                    </div>
                     <div className="text-xs text-slate-400 truncate">{v.mobile || 'no number'} · {roleName(v.roleRef)}</div>
-                    {lastLogin ? (
-                      <div className={`flex items-center gap-1 text-xs mt-0.5 ${isRecent ? 'text-emerald-600' : 'text-slate-300'}`}>
+                    {isLive ? (
+                      <div className="flex items-center gap-1 text-[11px] font-semibold text-emerald-600 mt-0.5">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" /> Live Now
+                      </div>
+                    ) : lastLogin ? (
+                      <div className={`flex items-center gap-1 text-xs mt-0.5 ${isRecent ? 'text-slate-500' : 'text-slate-300'}`}>
                         <Clock className="h-3 w-3" /> {lastLogin}
                       </div>
                     ) : (
@@ -502,6 +523,22 @@ function VolunteerEditorInner() {
                 <Label>Mobile</Label>
                 <Input value={draft.mobile} onChange={(e) => setDraft({ ...draft, mobile: e.target.value })} placeholder="10-digit mobile" inputMode="numeric" />
               </div>
+            </div>
+
+            <div className="flex items-center justify-between rounded-lg border border-slate-100 p-3 bg-slate-50/50">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">Login Access</p>
+                <p className="text-xs text-slate-400">If disabled, the volunteer will be logged out and cannot sign in.</p>
+              </div>
+              <label className="relative inline-flex cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  checked={draft.isActive}
+                  onChange={(e) => setDraft({ ...draft, isActive: e.target.checked })}
+                  className="peer sr-only"
+                />
+                <div className="peer h-6 w-11 rounded-full bg-slate-200 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-orange-500 peer-checked:after:translate-x-full peer-checked:after:border-white focus:outline-none" />
+              </label>
             </div>
 
             <div>
