@@ -1,5 +1,5 @@
 // src/admin/AreasMandalsManager.jsx
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import {
   collection, addDoc, updateDoc, deleteDoc, doc,
   onSnapshot, writeBatch, getDocs, query, where,
@@ -8,7 +8,7 @@ import { BarChart2 } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { RequirePermission } from '../components/RequirePermission';
 import {
-  DEFAULT_AREAS, DEFAULT_MANDALS, DEFAULT_LEVELS,
+  DEFAULT_MANDALS, DEFAULT_LEVELS,
   MEMBER_FIELD_DEFS, FULL_MEMBER_FIELDS, MINIMAL_MEMBER_FIELDS,
 } from '../lib/areaMandalCodes';
 import { Input } from '../components/ui/Input';
