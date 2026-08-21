@@ -12,7 +12,8 @@ import HouseholdForm from "../components/households/HouseholdForm";
 import Modal from "../components/ui/Modal";
 import RequirePermission from "../components/RequirePermission";
 import ImportContactsWizard from "../components/import-export/ImportContactsWizard";
-import ExportButtons from "../components/import-export/ExportButtons";
+import ExportButtons, { HOUSEHOLD_COLUMNS } from "../components/import-export/ExportButtons";
+import { buildHouseholdExportRows } from "../lib/householdExport";
 import { exportBlankFormPdf } from "../lib/pdfExports";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -100,11 +101,22 @@ export default function HouseholdsPage() {
 
   // Actual member count per household from loaded individuals — used when
   // totalFamilyMembers was skipped at entry time.
-  const memberCountByHousehold = useMemo(() => {
+  const membersByHousehold = useMemo(() => {
     const map = new Map();
-    individuals.forEach((ind) => { if (ind.householdId) map.set(ind.householdId, (map.get(ind.householdId) || 0) + 1); });
+    individuals.forEach((ind) => {
+      if (!ind.householdId) return;
+      const list = map.get(ind.householdId);
+      if (list) list.push(ind);
+      else map.set(ind.householdId, [ind]);
+    });
     return map;
   }, [individuals]);
+
+  const memberCountByHousehold = useMemo(() => {
+    const map = new Map();
+    membersByHousehold.forEach((members, id) => map.set(id, members.length));
+    return map;
+  }, [membersByHousehold]);
 
   // Area-wise breakdown across ALL loaded households (not just filtered page)
   const areaStats = useMemo(() => {
@@ -168,10 +180,20 @@ export default function HouseholdsPage() {
     setCurrentPage(1);
   }, [areaFilter, mandalFilter, localSearch, dateFrom, dateTo]);
 
-  // Members of selected households — exported when user clicks Export Selected
+  // Members of selected households — used for the delete-confirmation counts
   const selectedHouseholdMembers = useMemo(
     () => individuals.filter((ind) => selected.has(ind.householdId)),
     [individuals, selected]
+  );
+
+  // Export rows — ONE row per household, with a Family Member Count column.
+  const householdExportRows = useMemo(
+    () => buildHouseholdExportRows(filtered, membersByHousehold),
+    [filtered, membersByHousehold]
+  );
+  const selectedHouseholdExportRows = useMemo(
+    () => buildHouseholdExportRows(filtered.filter((h) => selected.has(h.id)), membersByHousehold),
+    [filtered, selected, membersByHousehold]
   );
 
   function toggleOne(id) {
@@ -238,7 +260,7 @@ export default function HouseholdsPage() {
           <Button variant="secondary" onClick={() => exportBlankFormPdf()}>
             <FileText className="h-3.5 w-3.5" /> Blank form
           </Button>
-          <ExportButtons rows={individuals} label="contacts" />
+          <ExportButtons rows={householdExportRows} columns={HOUSEHOLD_COLUMNS} label="households" />
           <RequirePermission permission="edit_contacts">
             <Button variant="secondary" onClick={() => setImportOpen(true)}><Upload className="h-3.5 w-3.5" /> Import</Button>
           </RequirePermission>
@@ -334,7 +356,7 @@ export default function HouseholdsPage() {
           <p className="text-sm font-medium text-orange-800">{selected.size} household{selected.size !== 1 ? "s" : ""} selected ({selectedHouseholdMembers.length} member{selectedHouseholdMembers.length !== 1 ? "s" : ""})</p>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
-            <ExportButtons rows={selectedHouseholdMembers} label={`${selected.size}-households`} />
+            <ExportButtons rows={selectedHouseholdExportRows} columns={HOUSEHOLD_COLUMNS} label={`${selected.size}-households`} />
             {canDelete && (
               <Button variant="ghost" size="sm" onClick={() => setConfirmBulkDelete(true)} className="text-rose-600 hover:bg-rose-50 hover:text-rose-700">
                 <Trash2 className="h-3.5 w-3.5" /> Delete {selected.size}

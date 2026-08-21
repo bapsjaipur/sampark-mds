@@ -15,6 +15,25 @@ const ALL_COLUMNS = [
   { key: 'samparkKaryakartaName', label: 'Sampark Karyakarta', default: false }, { key: 'remark', label: 'Remark', default: false },
 ];
 
+// Household-grouped column set — one row per household, not per member.
+// Pass as <ExportButtons columns={HOUSEHOLD_COLUMNS} rows={householdRows} />.
+// Rows are built by buildHouseholdExportRow() in src/lib/householdExport.js.
+export const HOUSEHOLD_COLUMNS = [
+  { key: 'primaryName', label: 'Primary Name', default: true },
+  { key: 'familyMemberCount', label: 'Family Member Count', default: true },
+  { key: 'mobile', label: 'Primary Phone', default: true },
+  { key: 'address', label: 'Address', default: true },
+  { key: 'area', label: 'Area', default: true },
+  { key: 'subArea', label: 'Sub Area', default: false },
+  { key: 'mandal', label: 'Mandal', default: true },
+  { key: 'level', label: 'Level', default: false },
+  { key: 'familyMembers', label: 'Family Members', default: false },
+  { key: 'samparkKaryakartaName', label: 'Sampark Karyakarta', default: false },
+  { key: 'samparkKaryakartaNumber', label: 'SK Mobile', default: false },
+  { key: 'remark', label: 'Remark', default: false },
+  { key: 'createdAt', label: 'Added On', default: false },
+];
+
 function toCSV(rows, columns) {
   const header = columns.map((c) => c.label).join(',');
   const lines = rows.map((r) => columns.map((c) => `"${String(r[c.key] ?? '').replace(/"/g, '""')}"`).join(','));
@@ -32,10 +51,14 @@ function downloadBlob(content, filename, type) {
 
 // fetchAllRows: optional async fn () => Record[] — when provided, clicking export
 // fetches the full dataset from Firestore instead of using the paginated `rows` prop.
-export default function ExportButtons({ rows, label = 'contacts', fetchAllRows = null }) {
+// columns: optional column definition list — pass a household-shaped set (see
+// HouseholdsPage) to export one row per household instead of one row per contact.
+// Must be a stable module-level constant; the initial checkbox selection is read
+// from it once on mount.
+export default function ExportButtons({ rows, label = 'contacts', fetchAllRows = null, columns: columnDefs = ALL_COLUMNS }) {
   const [open, setOpen] = useState(false);
   const [format, setFormat] = useState(null);
-  const [selected, setSelected] = useState(() => new Set(ALL_COLUMNS.filter((c) => c.default).map((c) => c.key)));
+  const [selected, setSelected] = useState(() => new Set(columnDefs.filter((c) => c.default).map((c) => c.key)));
   const [busy, setBusy] = useState(false);
 
   function openPicker(fmt) { setFormat(fmt); setOpen(true); }
@@ -45,7 +68,7 @@ export default function ExportButtons({ rows, label = 'contacts', fetchAllRows =
   }
 
   async function runExport() {
-    const columns = ALL_COLUMNS.filter((c) => selected.has(c.key));
+    const columns = columnDefs.filter((c) => selected.has(c.key));
     if (columns.length === 0) return;
     setBusy(true);
     try {
@@ -55,14 +78,14 @@ export default function ExportButtons({ rows, label = 'contacts', fetchAllRows =
       } else {
         const pdf = new jsPDF({ orientation: 'landscape' });
         pdf.setFontSize(14);
-        pdf.text(`BAPS Jaipur MDS — ${label}`, 14, 15);
+        pdf.text(`BAPS Jaipur MDS - ${label}`, 14, 15);
         pdf.setFontSize(9);
-        pdf.text(new Date().toLocaleString('en-IN'), 14, 21);
+        pdf.text(`${exportRows.length} rows | ${new Date().toLocaleString('en-IN')}`, 14, 21);
         autoTable(pdf, {
           startY: 26,
           head: [columns.map((c) => c.label)],
           body: exportRows.map((r) => columns.map((c) => String(r[c.key] ?? ''))),
-          styles: { fontSize: 8 },
+          styles: { fontSize: 8, valign: 'top' },
           headStyles: { fillColor: [234, 88, 12] },
         });
         pdf.save(`${label}-${Date.now()}.pdf`);
@@ -86,7 +109,7 @@ export default function ExportButtons({ rows, label = 'contacts', fetchAllRows =
       <Modal open={open} onClose={() => setOpen(false)} title={`Export as ${format?.toUpperCase()}`} size="sm">
         <p className="mb-3 text-sm text-slate-500">Choose which columns to include:</p>
         <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto">
-          {ALL_COLUMNS.map((c) => (
+          {columnDefs.map((c) => (
             <label key={c.key} className="flex items-center gap-2 text-sm text-slate-700">
               <input type="checkbox" checked={selected.has(c.key)} onChange={() => toggleColumn(c.key)} className="h-4 w-4 rounded accent-orange-600" />
               {c.label}

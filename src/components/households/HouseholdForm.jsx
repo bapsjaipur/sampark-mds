@@ -1,8 +1,5 @@
 // src/components/households/HouseholdForm.jsx — Phase 18 + Section 7 (7.1 + 7.2)
 import { useState, useRef, useEffect } from "react";
-import { getDocs, collection, query, where } from "firebase/firestore";
-import { db } from "../../lib/firebase";
-import { Link } from "react-router-dom";
 import { AreaSelect, SubAreaSelect, LevelSelect } from "../AreaMandalSelect";
 import { useAreasAndMandals } from "../../hooks/useAreasAndMandals";
 import { Input, Textarea, Label, FieldError } from "../ui/Input";
@@ -14,22 +11,6 @@ const emptyForm = {
   address: "", area: "", subArea: "", level: "", totalFamilyMembers: "", remark: "",
   location: null, placeId: "",
 };
-
-function normalizeAddress(s) {
-  return (s || "").toLowerCase().replace(/[^a-z0-9ऀ-ॿ]/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function similarity(a, b) {
-  const na = normalizeAddress(a);
-  const nb = normalizeAddress(b);
-  if (!na || !nb) return 0;
-  if (na === nb) return 1;
-  const wordsA = new Set(na.split(" ").filter((w) => w.length > 2));
-  const wordsB = new Set(nb.split(" ").filter((w) => w.length > 2));
-  if (!wordsA.size || !wordsB.size) return 0;
-  const shared = [...wordsA].filter((w) => wordsB.has(w)).length;
-  return shared / Math.max(wordsA.size, wordsB.size);
-}
 
 export default function HouseholdForm({ household, onSubmit, onCancel }) {
   const { areas } = useAreasAndMandals();
@@ -50,8 +31,6 @@ export default function HouseholdForm({ household, onSubmit, onCancel }) {
   );
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
-  const [duplicates, setDuplicates] = useState([]);
-  const [dupChecked, setDupChecked] = useState(false);
   const [locStatus, setLocStatus] = useState(""); // "" | "loading" | "ok" | "error"
   const [mapsReady, setMapsReady] = useState(false);
   const addressRef = useRef(null);
@@ -79,8 +58,6 @@ export default function HouseholdForm({ household, onSubmit, onCancel }) {
             location: { lat, lng },
             placeId: place.place_id || "",
           }));
-          setDuplicates([]);
-          setDupChecked(false);
         });
         autocompleteRef.current = ac;
       })
@@ -104,8 +81,6 @@ export default function HouseholdForm({ household, onSubmit, onCancel }) {
       // Reset subArea if area changes
       ...(field === "area" ? { subArea: "" } : {}),
     }));
-    setDuplicates([]);
-    setDupChecked(false);
   };
 
   // 7.2 — Browser Geolocation
@@ -237,33 +212,10 @@ export default function HouseholdForm({ household, onSubmit, onCancel }) {
         <Textarea value={form.remark} onChange={update("remark")} rows={2} />
       </div>
 
-      {duplicates.length > 0 && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
-          <p className="font-medium text-amber-800">
-            Possible duplicate household{duplicates.length > 1 ? "s" : ""} found in {form.area}:
-          </p>
-          <ul className="mt-1.5 space-y-1">
-            {duplicates.map((h) => (
-              <li key={h.id}>
-                <Link
-                  to={`/households/${h.id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-amber-700 underline hover:text-amber-900"
-                >
-                  {h.address}
-                </Link>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2 text-amber-700">If this is a different household, click "Add household" again to save anyway.</p>
-        </div>
-      )}
-
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
         <Button type="submit" variant="accent" disabled={saving}>
-          {saving ? "Checking…" : isEdit ? "Save changes" : dupChecked && duplicates.length > 0 ? "Add anyway" : "Add household"}
+          {saving ? "Saving…" : isEdit ? "Save changes" : "Add household"}
         </Button>
       </div>
     </form>
