@@ -1,30 +1,41 @@
 // src/components/AppLayout.jsx
-// FIX: the sidebar was a normal flex child, not fixed/sticky — on a tall
-// page (1240 households!), the flex row stretched the <aside> to match the
-// page's full scrollable height, which pushed the sign-out button (pinned
-// to the BOTTOM of that now-enormous aside) far below the viewport. Fixed
-// by making the sidebar `fixed` to the viewport with its own independent
-// scroll, and the main content area scrolls separately.
-// ADDED: a mobile hamburger drawer (sidebar is off-canvas below `md`,
-// slides in over a backdrop) and a desktop collapse-to-icons toggle,
-// persisted in localStorage.
-import { useEffect, useState } from 'react';
+// FIX (earlier phase): the sidebar was a normal flex child, not fixed/sticky —
+// on a tall page (1240 households!), the flex row stretched the <aside> to match
+// the page's full scrollable height, which pushed the sign-out button (pinned to
+// the BOTTOM of that now-enormous aside) far below the viewport. Fixed by making
+// the sidebar `fixed` to the viewport with its own independent scroll.
+//
+// PHASE 20 — role-shaped navigation + a mobile bottom tab bar.
+//
+// Previously this file held the nav list inline and wrapped each item in
+// <RequirePermission>. That produced identical ordering for every role: a
+// volunteer's own calling queue was not linked at all (the /calling route
+// existed but nothing pointed at it), and an admin found admin tools below six
+// volunteer-facing links. The list now comes from lib/roleView.js, already
+// filtered and ordered for the signed-in person's role.
+//
+// The hamburger drawer is kept, but it is no longer the ONLY way to navigate on
+// a phone — a bottom tab bar carries the 4 destinations that role uses most,
+// within thumb reach, plus a Menu button for the rest.
+import { useEffect, useMemo, useState } from 'react';
 import { NavLink, Link, Outlet, Navigate, useLocation } from 'react-router-dom';
 import { signOut } from 'firebase/auth';
-import {
-  Home, Users, CalendarDays, Bell, ListChecks, LayoutDashboard,
-  ShieldCheck, UserCog, MapPin, Wrench, LogOut, Menu, X, ChevronsLeft, ChevronsRight,
-  HeartHandshake, CalendarCheck, PhoneCall,
-} from 'lucide-react';
+import { LogOut, Menu, X, ChevronsLeft, ChevronsRight, MoreHorizontal } from 'lucide-react';
 import { auth } from '../lib/firebase';
 import { useAuth } from '../hooks/usePermissions';
-import { RequirePermission } from './RequirePermission';
+import { getRoleView } from '../lib/roleView';
 import { Avatar } from './ui/Avatar';
+import { cn } from '../lib/cn';
+
+// Screens that take over the whole viewport on mobile and manage their own
+// bottom action bar. Showing the tab bar here would stack two fixed bars on top
+// of each other and cover the primary action.
+const IMMERSIVE_MOBILE_ROUTES = ['/calling'];
 
 export function RequireAuth() {
   const { authUser, loading } = useAuth();
   const location = useLocation();
-  if (loading) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-400">Loading…</div>;
+  if (loading) return <div className="flex min-h-screen items-center justify-center bg-cream-100 text-sm text-slate-400">Loading…</div>;
   if (!authUser) return <Navigate to="/login" replace state={{ from: location }} />;
   return <Outlet />;
 }
@@ -50,59 +61,50 @@ function SectionLabel({ collapsed, children }) {
   return <p className="px-2.5 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{children}</p>;
 }
 
-function SidebarContent({ collapsed, onNavigate }) {
+export function RoleBadge({ roleView, className }) {
+  if (!roleView || roleView.key === 'none') return null;
+  return (
+    <span className={cn('rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide', roleView.badgeClass, className)}>
+      {roleView.label}
+    </span>
+  );
+}
+
+function SidebarContent({ collapsed, onNavigate, roleView }) {
   const { volunteer } = useAuth();
 
   return (
     <>
       <div className={`mb-2 flex items-center px-2.5 py-1 ${collapsed ? 'justify-center' : 'justify-between'}`}>
-        {!collapsed && <p className="text-[13px] font-semibold text-slate-900 tracking-tight truncate">BAPS Jaipur MDS</p>}
+        {!collapsed && <p className="text-[13px] font-semibold tracking-tight text-slate-900 truncate">BAPS Jaipur MDS</p>}
       </div>
 
       <nav className="flex-1 space-y-0.5 overflow-y-auto">
-        <NavItem to="/households" icon={Home} collapsed={collapsed} onNavigate={onNavigate}>Households</NavItem>
-        <RequirePermission anyOf={['view_all_contacts', 'view_assigned_contacts', 'edit_contacts']}>
-          <NavItem to="/contacts" icon={Users} collapsed={collapsed} onNavigate={onNavigate}>All Contacts</NavItem>
-        </RequirePermission>
-        <NavItem to="/events" icon={CalendarDays} collapsed={collapsed} onNavigate={onNavigate}>Events</NavItem>
-        <RequirePermission anyOf={['edit_contacts', 'view_all_contacts', 'manage_users']}>
-          <NavItem to="/padhramani" icon={HeartHandshake} collapsed={collapsed} onNavigate={onNavigate}>Padhramani</NavItem>
-        </RequirePermission>
-        <RequirePermission permission="view_padhramani">
-          <NavItem to="/santo-schedule" icon={CalendarCheck} collapsed={collapsed} onNavigate={onNavigate}>My Schedule</NavItem>
-        </RequirePermission>
-        <NavItem to="/my-contacts" icon={PhoneCall} collapsed={collapsed} onNavigate={onNavigate}>My Contacts</NavItem>
-        <NavItem to="/reminders" icon={Bell} collapsed={collapsed} onNavigate={onNavigate}>Reminders</NavItem>
-
-        <RequirePermission anyOf={['assign_batches', 'view_all_contacts', 'view_assigned_contacts', 'manage_users', 'manage_roles', 'run_gas_sync']}>
-          <SectionLabel collapsed={collapsed}>Admin</SectionLabel>
-        </RequirePermission>
-        <RequirePermission permission="assign_batches">
-          <NavItem to="/admin/batches" icon={ListChecks} collapsed={collapsed} onNavigate={onNavigate}>Batches</NavItem>
-        </RequirePermission>
-        <RequirePermission anyOf={['view_all_contacts', 'view_assigned_contacts']}>
-          <NavItem to="/admin/dashboard" icon={LayoutDashboard} collapsed={collapsed} onNavigate={onNavigate}>Dashboard</NavItem>
-        </RequirePermission>
-        <RequirePermission permission="manage_roles">
-          <NavItem to="/admin/roles" icon={ShieldCheck} collapsed={collapsed} onNavigate={onNavigate}>Roles</NavItem>
-        </RequirePermission>
-        <RequirePermission permission="manage_users">
-          <NavItem to="/admin/volunteers" icon={UserCog} collapsed={collapsed} onNavigate={onNavigate}>Volunteers</NavItem>
-        </RequirePermission>
-        <RequirePermission permission="manage_users">
-          <NavItem to="/admin/areas-mandals" icon={MapPin} collapsed={collapsed} onNavigate={onNavigate}>Areas & Mandals</NavItem>
-        </RequirePermission>
-        <RequirePermission anyOf={['view_all_contacts', 'manage_users', 'run_gas_sync']}>
-          <NavItem to="/admin/tools" icon={Wrench} collapsed={collapsed} onNavigate={onNavigate}>Admin Tools</NavItem>
-        </RequirePermission>
+        {roleView.sections.map((section, si) => (
+          <div key={section.label || `main-${si}`}>
+            {section.label && <SectionLabel collapsed={collapsed}>{section.label}</SectionLabel>}
+            <div className="space-y-0.5">
+              {section.items.map((item) => (
+                <NavItem key={item.to} to={item.to} icon={item.icon} collapsed={collapsed} onNavigate={onNavigate}>
+                  {item.label}
+                </NavItem>
+              ))}
+            </div>
+          </div>
+        ))}
       </nav>
 
-      <div className={`mt-3 flex items-center gap-2 border-t border-slate-100 pt-3 px-1 ${collapsed ? 'justify-center' : ''}`}>
-        <Link to="/profile" className="flex items-center gap-2 flex-1 min-w-0 hover:opacity-80 transition-opacity" onClick={onNavigate}>
+      <div className={`mt-3 flex items-center gap-2 border-t border-slate-100 px-1 pt-3 ${collapsed ? 'justify-center' : ''}`}>
+        <Link to="/profile" className="flex min-w-0 flex-1 items-center gap-2 transition-opacity hover:opacity-80" onClick={onNavigate}>
           <Avatar name={volunteer?.name} size="sm" />
-          {!collapsed && <span className="flex-1 truncate text-[13px] font-medium text-slate-700">{volunteer?.name || 'Signed in'}</span>}
+          {!collapsed && (
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] font-medium text-slate-700">{volunteer?.name || 'Signed in'}</span>
+              <RoleBadge roleView={roleView} />
+            </span>
+          )}
         </Link>
-        <button onClick={() => signOut(auth)} aria-label="Sign out" title="Sign out" className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 shrink-0">
+        <button onClick={() => signOut(auth)} aria-label="Sign out" title="Sign out" className="shrink-0 rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
           <LogOut className="h-4 w-4" />
         </button>
       </div>
@@ -110,27 +112,73 @@ function SidebarContent({ collapsed, onNavigate }) {
   );
 }
 
+// ── Mobile bottom tab bar ────────────────────────────────────────────────────
+// 4 role-specific destinations + Menu. Tab targets are h-14 with the label
+// beneath the icon, matching platform conventions and keeping every target
+// comfortably above the 44px minimum.
+function BottomTabBar({ roleView, onOpenMenu }) {
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden">
+      {roleView.mobileTabs.map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          className={({ isActive }) =>
+            cn(
+              'flex h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors',
+              isActive ? 'text-orange-600' : 'text-slate-400',
+            )
+          }
+        >
+          <item.icon className="h-5 w-5" />
+          <span className="max-w-full truncate px-0.5">{item.label}</span>
+        </NavLink>
+      ))}
+      <button
+        onClick={onOpenMenu}
+        aria-label="Open menu"
+        className="flex h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[10px] font-medium text-slate-400"
+      >
+        <MoreHorizontal className="h-5 w-5" />
+        <span>More</span>
+      </button>
+    </nav>
+  );
+}
+
 export default function AppLayout() {
+  const { permissions, volunteer } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('mds_sidebar_collapsed') === '1');
+
+  const roleView = useMemo(() => getRoleView(permissions), [permissions]);
 
   useEffect(() => {
     localStorage.setItem('mds_sidebar_collapsed', collapsed ? '1' : '0');
   }, [collapsed]);
 
-  // Close the mobile drawer whenever the route changes (handled via onNavigate on links too, this is a fallback).
+  // Close the mobile drawer whenever the route changes (the onNavigate handlers
+  // on links cover the common case; this is the fallback for programmatic nav).
   const location = useLocation();
   useEffect(() => setMobileOpen(false), [location.pathname]);
 
+  const immersive = IMMERSIVE_MOBILE_ROUTES.includes(location.pathname);
+
   return (
-    <div className="min-h-screen bg-slate-50/50">
-      {/* Mobile top bar — only visible below md */}
-      <div className="sticky top-0 z-30 flex items-center gap-3 border-b border-slate-100 bg-white px-4 py-2.5 md:hidden">
-        <button onClick={() => setMobileOpen(true)} aria-label="Open menu" className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100">
-          <Menu className="h-5 w-5" />
-        </button>
-        <p className="text-[13px] font-semibold text-slate-900 tracking-tight">BAPS Jaipur MDS</p>
-      </div>
+    <div className="min-h-screen bg-cream-100">
+      {/* Mobile top bar — hidden on immersive screens, which supply their own header */}
+      {!immersive && (
+        <div className="sticky top-0 z-30 flex items-center gap-3 border-b border-slate-100 bg-white px-4 py-2.5 md:hidden">
+          <button onClick={() => setMobileOpen(true)} aria-label="Open menu" className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100">
+            <Menu className="h-5 w-5" />
+          </button>
+          <p className="text-[13px] font-semibold tracking-tight text-slate-900">BAPS Jaipur MDS</p>
+          <div className="ml-auto flex items-center gap-2">
+            <RoleBadge roleView={roleView} />
+            <Link to="/profile" aria-label="Profile"><Avatar name={volunteer?.name} size="sm" /></Link>
+          </div>
+        </div>
+      )}
 
       {/* Mobile drawer + backdrop */}
       {mobileOpen && (
@@ -140,14 +188,14 @@ export default function AppLayout() {
             <button onClick={() => setMobileOpen(false)} aria-label="Close menu" className="absolute right-3 top-3 rounded-md p-1.5 text-slate-400 hover:bg-slate-100">
               <X className="h-4 w-4" />
             </button>
-            <SidebarContent collapsed={false} onNavigate={() => setMobileOpen(false)} />
+            <SidebarContent collapsed={false} onNavigate={() => setMobileOpen(false)} roleView={roleView} />
           </aside>
         </div>
       )}
 
-      {/* Desktop sidebar — fixed to the viewport, independent scroll, doesn't stretch with page content */}
+      {/* Desktop sidebar — fixed to the viewport, independent scroll */}
       <aside className={`hidden md:fixed md:inset-y-0 md:left-0 md:flex md:flex-col md:border-r md:border-slate-100 md:bg-white md:px-3 md:py-4 md:transition-all ${collapsed ? 'md:w-16' : 'md:w-56'}`}>
-        <SidebarContent collapsed={collapsed} onNavigate={undefined} />
+        <SidebarContent collapsed={collapsed} onNavigate={undefined} roleView={roleView} />
         <button
           onClick={() => setCollapsed((c) => !c)}
           className="mt-2 flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs text-slate-400 hover:bg-slate-50 hover:text-slate-600"
@@ -157,10 +205,14 @@ export default function AppLayout() {
         </button>
       </aside>
 
-      {/* Main content — offset to clear the fixed desktop sidebar, scrolls independently */}
-      <main className={`min-w-0 transition-all ${collapsed ? 'md:pl-16' : 'md:pl-56'}`}>
+      {/* Main content — offset to clear the fixed desktop sidebar. The bottom
+          padding clears the mobile tab bar; without it the last row of any list
+          sits permanently underneath it and can't be tapped. */}
+      <main className={cn('min-w-0 transition-all', collapsed ? 'md:pl-16' : 'md:pl-56', !immersive && 'pb-14 md:pb-0')}>
         <Outlet />
       </main>
+
+      {!immersive && <BottomTabBar roleView={roleView} onOpenMenu={() => setMobileOpen(true)} />}
     </div>
   );
 }

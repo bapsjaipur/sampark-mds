@@ -130,10 +130,10 @@ export default function SantoSchedulePage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-8">
+    <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
       {/* Header */}
       <div className="mb-6">
-        <h1 className="text-xl font-semibold text-slate-900 tracking-tight">My Schedule</h1>
+        <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">My Schedule</h1>
         <p className="text-sm text-slate-400">
           {events.length} event{events.length !== 1 ? "s" : ""} assigned ·{" "}
           {totalVisited} of {totalHouseholds} households visited

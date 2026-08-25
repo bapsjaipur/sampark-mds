@@ -2,7 +2,11 @@
 // Reusable PDF export functions used by PadhramaniPage and HouseholdsPage.
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, query, where } from 'firebase/firestore';
+// PHASE 24 — metered drop-in. A padhramani PDF over 400 households reads every
+// member of every one of them; unmetered, that spend was invisible to the quota
+// tile in Admin Tools, which is the one place it would have been noticed.
+import { getDocs } from './fsMetered';
 import { db } from './firebase';
 
 const ORANGE = [234, 88, 12];

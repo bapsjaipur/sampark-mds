@@ -1,11 +1,13 @@
 // src/pages/HouseholdDetailPage.jsx — Phase 18: member viewer (1.2), activity timeline (1.5), merge (1.7)
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import { ArrowLeft, Pencil, Trash2, Plus, Search, ChevronLeft, ChevronRight, X, Merge, Clock, HeartHandshake, MapPin } from "lucide-react";
 import { collection, query, where, orderBy, onSnapshot, getDocs, writeBatch, serverTimestamp, doc, updateDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useHouseholds } from "../hooks/useHouseholds";
 import { useIndividuals } from "../hooks/useIndividuals";
+import { useVolunteerIdentity } from "../hooks/useVolunteerIdentity";
+import { VolunteerBadge, VolunteerRing } from "../components/ui/VolunteerBadge";
 import IndividualCard from "../components/individuals/IndividualCard";
 import IndividualForm from "../components/individuals/IndividualForm";
 import LinkExistingContact from "../components/individuals/LinkExistingContact";
@@ -26,6 +28,8 @@ function MemberViewer({ individuals, startIndex, onClose }) {
   const [idx, setIdx] = useState(startIndex);
   const touchStartX = useRef(null);
   const ind = individuals[idx];
+  const { identify } = useVolunteerIdentity();
+  const sevak = identify(ind);
 
   function prev() { setIdx((i) => Math.max(0, i - 1)); }
   function next() { setIdx((i) => Math.min(individuals.length - 1, i + 1)); }
@@ -72,14 +76,19 @@ function MemberViewer({ individuals, startIndex, onClose }) {
         </div>
 
         <div className="flex flex-col items-center gap-3 px-8 py-8">
-          {ind.profilePhotoURL ? (
-            <img src={ind.profilePhotoURL} alt={ind.name} className="h-28 w-28 rounded-full object-cover ring-2 ring-slate-100" />
-          ) : (
-            <Avatar name={ind.name} size="xl" />
-          )}
+          <VolunteerRing active={Boolean(sevak)}>
+            {ind.profilePhotoURL ? (
+              <img src={ind.profilePhotoURL} alt={ind.name} className="h-28 w-28 rounded-full object-cover ring-2 ring-slate-100" />
+            ) : (
+              <Avatar name={ind.name} size="xl" />
+            )}
+          </VolunteerRing>
           <div className="text-center">
             <p className="text-lg font-semibold text-slate-900">{ind.name}</p>
-            {ind.isPrimary && <span className="mt-0.5 inline-block rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700">Primary</span>}
+            <div className="mt-0.5 flex flex-wrap items-center justify-center gap-1.5">
+              {ind.isPrimary && <span className="inline-block rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700">Primary</span>}
+              <VolunteerBadge volunteer={sevak} />
+            </div>
           </div>
           <div className="w-full space-y-1.5 text-sm text-slate-600">
             {ind.mobile && <p><span className="text-slate-400">Mobile:</span> {ind.mobile}</p>}
@@ -238,6 +247,19 @@ export default function HouseholdDetailPage() {
   const { households, updateHousehold, deleteHousehold, deleteHouseholdOnly } = useHouseholds();
   const { individuals, loading, createIndividual, updateIndividual, deleteIndividual } = useIndividuals(householdId);
   const { showToast } = useToast();
+  const { identify } = useVolunteerIdentity();
+
+  // PHASE 21 — the sevaks living in this household, deduped. Drives the header
+  // tint so a karyakarta's own home reads differently from the homes they call.
+  const householdSevaks = useMemo(() => {
+    const seen = new Map();
+    individuals.forEach((m) => {
+      const v = identify(m);
+      if (v && !seen.has(v.id)) seen.set(v.id, { volunteer: v, member: m });
+    });
+    return [...seen.values()];
+  }, [individuals, identify]);
+  const isSevakHome = householdSevaks.length > 0;
 
   const household = households.find((h) => h.id === householdId);
   const primaryMember = individuals.find((i) => i.isPrimary && i.samparkKaryakartaName);
@@ -347,15 +369,27 @@ export default function HouseholdDetailPage() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
+    <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
       <Link to="/households" className="inline-flex items-center gap-1 text-sm text-slate-400 hover:text-slate-600">
         <ArrowLeft className="h-3.5 w-3.5" /> All households
       </Link>
 
-      <Card className="mt-3 flex flex-wrap items-start justify-between gap-4 p-6">
+      <Card
+        className={`mt-3 flex flex-wrap items-start justify-between gap-4 p-6 ${
+          isSevakHome ? "border-indigo-200 bg-indigo-50/40" : ""
+        }`}
+      >
         <div>
           <h1 className="text-lg font-semibold text-slate-900 tracking-tight">{household.address}</h1>
           <p className="text-sm text-slate-400">{household.area}{household.mandal ? ` · ${household.mandal}` : ""}</p>
+          {isSevakHome && (
+            <p className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-indigo-700">
+              <VolunteerBadge volunteer={householdSevaks[0].volunteer} roleName="Sevak home" showName />
+              <span className="text-indigo-600">
+                {householdSevaks.map((s) => s.member.name || s.volunteer.name).join(", ")}
+              </span>
+            </p>
+          )}
           <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-500">
             {household.level && <span>Level: {household.level}</span>}
             <span>{household.totalFamilyMembers || 0} family members</span>

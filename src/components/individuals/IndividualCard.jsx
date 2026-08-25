@@ -1,16 +1,33 @@
 // src/components/individuals/IndividualCard.jsx
-import { Pencil, Trash2, Eye } from "lucide-react";
+import { Pencil, Trash2, Eye, PhoneOff } from "lucide-react";
 import RequirePermission from "../RequirePermission";
 import { formatDate } from "../../lib/dateHelpers";
 import { Avatar } from "../ui/Avatar";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
+import { useVolunteerIdentity } from "../../hooks/useVolunteerIdentity";
+import { VolunteerBadge, VolunteerRing } from "../ui/VolunteerBadge";
 
 const RELATION_LABEL = { head: "Head", spouse: "Spouse", member: "Member" };
 
 export default function IndividualCard({ individual, onEdit, onDelete, onView, deletePermission = "delete_contacts", deleteLabel = "Delete" }) {
+  // PHASE 21 — every member row in the app renders through this component, so
+  // marking the sevak here covers the household page, the family-member list and
+  // anything added later, in one place. The hook shares one `volunteers`
+  // listener across all rows.
+  const { identify } = useVolunteerIdentity();
+  const sevak = identify(individual);
+
   return (
-    <div className={`flex items-center gap-3 rounded-lg border border-slate-100 p-3.5 hover:bg-slate-50/50 ${individual._pending ? "opacity-60" : ""}`}>
+    <div
+      className={[
+        "flex items-center gap-3 rounded-lg border p-3.5",
+        sevak
+          ? "border-indigo-200 bg-indigo-50/40 hover:bg-indigo-50/70"
+          : "border-slate-100 hover:bg-slate-50/50",
+        individual._pending ? "opacity-60" : "",
+      ].join(" ")}
+    >
       {/* Clicking the avatar opens the viewer */}
       <button
         onClick={() => onView?.(individual)}
@@ -18,13 +35,25 @@ export default function IndividualCard({ individual, onEdit, onDelete, onView, d
         aria-label={`View ${individual.name}`}
         tabIndex={onView ? 0 : -1}
       >
-        <Avatar src={individual.profilePhotoURL} name={individual.name} />
+        <VolunteerRing active={Boolean(sevak)}>
+          <Avatar src={individual.profilePhotoURL} name={individual.name} />
+        </VolunteerRing>
       </button>
 
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <p className="truncate text-sm font-medium text-slate-900">{individual.name}</p>
           {individual.isPrimary && <Badge tone="orange">Primary</Badge>}
+          {/* PHASE 26 — off the follow-up calling list. Shown because the
+              alternative is a karyakarta wondering for weeks why this name never
+              turns up in a batch. Absent means on, so only `false` shows a chip
+              and nothing changes for the 1000+ contacts that predate the field. */}
+          {individual.callingPool === false && (
+            <Badge tone="slate" className="gap-1" title="Not pulled into weekly follow-up batches. Still on the roster.">
+              <PhoneOff className="h-3 w-3" /> Not calling
+            </Badge>
+          )}
+          <VolunteerBadge volunteer={sevak} />
         </div>
         <p className="truncate text-xs text-slate-400">
           {RELATION_LABEL[individual.relation] || individual.relation} &middot; {individual.mobile || "No mobile"}

@@ -7,6 +7,8 @@ import { Plus, Trash2, Upload, Users, ChevronLeft, ChevronRight, BarChart2, File
 import { useHouseholds, useFilteredHouseholds } from "../hooks/useHouseholds";
 import { useAuth } from "../hooks/usePermissions";
 import { useAreasAndMandals } from "../hooks/useAreasAndMandals";
+import { useVolunteerIdentity } from "../hooks/useVolunteerIdentity";
+import { VolunteerBadge } from "../components/ui/VolunteerBadge";
 import GlobalSearchBar from "../components/search/GlobalSearchBar";
 import HouseholdForm from "../components/households/HouseholdForm";
 import Modal from "../components/ui/Modal";
@@ -28,6 +30,7 @@ export default function HouseholdsPage() {
   // pagination work across the full dataset, not just the current page.
   const { households, loading, createHousehold, deleteHousehold, deleteHouseholdOnly } = useHouseholds();
   const { areas: allAreas, mandals } = useAreasAndMandals();
+  const { identify } = useVolunteerIdentity();
   const { showToast } = useToast();
   const navigate = useNavigate();
   const { permissions, hasPermission } = useAuth();
@@ -42,7 +45,13 @@ export default function HouseholdsPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
-  const [showStats, setShowStats] = useState(true);
+  // Open on a desktop, closed on a phone. Expanded, the "By area" grid is 17
+  // tiles: three wide rows on a laptop, twelve stacked rows on a 375px screen,
+  // which pushed the search box and the first household clean off the bottom of
+  // the viewport. The panel is a summary — the list is the reason you came.
+  const [showStats, setShowStats] = useState(
+    () => typeof window === "undefined" || window.innerWidth >= 768
+  );
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
@@ -117,6 +126,25 @@ export default function HouseholdsPage() {
     membersByHousehold.forEach((members, id) => map.set(id, members.length));
     return map;
   }, [membersByHousehold]);
+
+  // PHASE 21 — "there household different little bit highlight different".
+  // A karyakarta's own home should read differently from the households they
+  // call. Derived from the members already loaded above rather than from a new
+  // query, so it costs nothing extra and follows the same scoping.
+  const sevaksByHousehold = useMemo(() => {
+    const map = new Map();
+    membersByHousehold.forEach((members, id) => {
+      const found = members.map((m) => identify(m)).filter(Boolean);
+      if (found.length) {
+        // Dedupe: two members matching the same volunteer (an explicit link plus
+        // a shared family phone number) is one sevak, not two.
+        const seen = new Map();
+        found.forEach((v) => { if (!seen.has(v.id)) seen.set(v.id, v); });
+        map.set(id, [...seen.values()]);
+      }
+    });
+    return map;
+  }, [membersByHousehold, identify]);
 
   // Area-wise breakdown across ALL loaded households (not just filtered page)
   const areaStats = useMemo(() => {
@@ -219,8 +247,20 @@ export default function HouseholdsPage() {
 
 
   function HouseholdCard({ h }) {
+    const sevaks = sevaksByHousehold.get(h.id) || [];
+    const isSevakHome = sevaks.length > 0;
     return (
-      <Card className={`relative p-4 transition hover:border-slate-200 hover:shadow-sm ${h._pending ? "opacity-60" : ""}`}>
+      <Card
+        className={[
+          "relative p-4 transition hover:shadow-sm",
+          // The highlight is the border + a faint wash, not a loud badge colour:
+          // on a page of 20 cards it has to be scannable without shouting.
+          isSevakHome
+            ? "border-indigo-200 bg-indigo-50/40 hover:border-indigo-300"
+            : "hover:border-slate-200",
+          h._pending ? "opacity-60" : "",
+        ].join(" ")}
+      >
         <RequirePermission permission="edit_contacts">
           <input
             type="checkbox"
@@ -230,7 +270,16 @@ export default function HouseholdsPage() {
           />
         </RequirePermission>
         <Link to={`/households/${h.id}`} className="block pr-6">
-          <p className="font-medium text-slate-900">{primaryNameByHousehold.get(h.id) || h.address || "Unnamed household"}</p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <p className="font-medium text-slate-900">{primaryNameByHousehold.get(h.id) || h.address || "Unnamed household"}</p>
+            {isSevakHome && (
+              <VolunteerBadge
+                volunteer={sevaks[0]}
+                roleName={sevaks.length > 1 ? `${sevaks.length} sevaks` : sevaks[0].name}
+                showName
+              />
+            )}
+          </div>
           <p className="text-sm text-slate-400">{h.area}{h.mandal ? ` · ${h.mandal}` : ""}</p>
           <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-400">
             <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {h.totalFamilyMembers || memberCountByHousehold.get(h.id) || 0}</span>
@@ -246,17 +295,17 @@ export default function HouseholdsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
+    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900 tracking-tight">Households</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">Households</h1>
           <p className="text-sm text-slate-400">
             {loading ? "Loading…" : hasActiveFilters
               ? `${filtered.length} of ${households.length} households`
               : `${households.length} households total`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" onClick={() => exportBlankFormPdf()}>
             <FileText className="h-3.5 w-3.5" /> Blank form
           </Button>
@@ -320,13 +369,15 @@ export default function HouseholdsPage() {
         </div>
       )}
 
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      {/* Two fixed w-44 selects plus the search bar overflowed a 375px viewport
+          once they wrapped — they share the row from sm up instead. */}
+      <div className="mb-4 flex flex-wrap items-center gap-2 sm:gap-3">
         <GlobalSearchBar households={households} />
-        <Select value={areaFilter} onChange={(e) => setAreaFilter(e.target.value)} className="w-44">
+        <Select value={areaFilter} onChange={(e) => setAreaFilter(e.target.value)} className="min-w-0 flex-1 sm:w-44 sm:flex-none">
           <option value="">All areas</option>
           {areas.map((a) => <option key={a} value={a}>{a}</option>)}
         </Select>
-        <Select value={mandalFilter} onChange={(e) => setMandalFilter(e.target.value)} className="w-44">
+        <Select value={mandalFilter} onChange={(e) => setMandalFilter(e.target.value)} className="min-w-0 flex-1 sm:w-44 sm:flex-none">
           <option value="">All Mandals</option>
           {mandals.map((m) => <option key={m.code || m.name} value={m.name}>{m.name}</option>)}
         </Select>
@@ -334,16 +385,19 @@ export default function HouseholdsPage() {
           value={localSearch}
           onChange={(e) => setLocalSearch(e.target.value)}
           placeholder="Filter this list…"
-          className="h-9 w-48 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-600 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300"
+          /* Full width below sm so it takes its own row. Sharing a flex line
+             with the two selects left them 67px each — both read "All are…"
+             and "All Ma…", i.e. the area filter became unusable on a phone. */
+          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-600 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300 sm:w-48"
         />
         {/* Date range filter */}
-        <div className="flex items-center gap-1.5">
-          <label className="text-xs text-slate-500 whitespace-nowrap">Added</label>
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <label className="shrink-0 text-xs text-slate-500 whitespace-nowrap">Added</label>
           <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-            className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-600 focus:outline-none focus:ring-1 focus:ring-slate-300" />
+            className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-600 focus:outline-none focus:ring-1 focus:ring-slate-300 sm:flex-none" />
           <span className="text-xs text-slate-400">–</span>
           <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-            className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-600 focus:outline-none focus:ring-1 focus:ring-slate-300" />
+            className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-600 focus:outline-none focus:ring-1 focus:ring-slate-300 sm:flex-none" />
           {(dateFrom || dateTo) && (
             <button onClick={() => { setDateFrom(""); setDateTo(""); }}
               className="rounded p-0.5 text-sm leading-none text-slate-400 hover:text-slate-700">✕</button>
@@ -352,9 +406,9 @@ export default function HouseholdsPage() {
       </div>
 
       {selected.size > 0 && (
-        <div className="mb-3 flex items-center justify-between rounded-lg border border-orange-200 bg-orange-50 px-4 py-2.5">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-orange-200 bg-orange-50 px-4 py-2.5">
           <p className="text-sm font-medium text-orange-800">{selected.size} household{selected.size !== 1 ? "s" : ""} selected ({selectedHouseholdMembers.length} member{selectedHouseholdMembers.length !== 1 ? "s" : ""})</p>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
             <ExportButtons rows={selectedHouseholdExportRows} columns={HOUSEHOLD_COLUMNS} label={`${selected.size}-households`} />
             {canDelete && (

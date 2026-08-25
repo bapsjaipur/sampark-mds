@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { Plus, Home, Pencil, Trash2, Upload, Eye, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { useAllContacts } from "../hooks/useAllContacts";
 import { useHouseholds } from "../hooks/useHouseholds";
+import { useVolunteerIdentity } from "../hooks/useVolunteerIdentity";
 import { useAreasAndMandals } from "../hooks/useAreasAndMandals";
 import { useAuth } from "../hooks/usePermissions";
 import IndividualForm from "../components/individuals/IndividualForm";
@@ -13,10 +14,11 @@ import Modal from "../components/ui/Modal";
 import RequirePermission from "../components/RequirePermission";
 import ExportButtons from "../components/import-export/ExportButtons";
 import { formatDate } from "../lib/dateHelpers";
-import { statusColorClasses } from "../lib/callingStatuses";
+import { useCallOutcomes } from "../hooks/useCallOutcomes";
 import { Button } from "../components/ui/Button";
 import { Input, Select } from "../components/ui/Input";
 import { Avatar } from "../components/ui/Avatar";
+import { VolunteerBadge, VolunteerRing } from "../components/ui/VolunteerBadge";
 import { Badge } from "../components/ui/Badge";
 
 const PAGE_SIZE = 20;
@@ -68,6 +70,10 @@ export default function ContactsPage() {
   const { households } = useHouseholds();
   const { areas, mandals } = useAreasAndMandals();
   const { permissions } = useAuth();
+  const { colorClasses: statusColorClasses } = useCallOutcomes();
+  // PHASE 21 — karyakartas appear in this list as ordinary contacts. The badge
+  // and the tinted row make them findable without a separate volunteer screen.
+  const { identify } = useVolunteerIdentity();
   const [search, setSearch] = useState("");
   const [mandalFilter, setMandalFilter] = useState("");
   const [areaFilter, setAreaFilter] = useState("");
@@ -159,19 +165,19 @@ export default function ContactsPage() {
   const totalCount = serverTotal ?? contacts.length;
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
+    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900 tracking-tight">All Contacts</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">All Contacts</h1>
           <p className="text-sm text-slate-400">
             {hasActiveFilters ? (
               <><span className="text-orange-600">{filtered.length} match filters</span> of {totalCount} total</>
             ) : (
-              <>{totalCount} {isViewAll ? "total" : "in your area"}{serverUngrouped ? <> · <span className="text-orange-500">{serverUngrouped} not yet grouped</span></> : null}</>
+              <>{totalCount} {isViewAll ? "total" : "assigned to you"}{serverUngrouped ? <> · <span className="text-orange-500">{serverUngrouped} not yet grouped</span></> : null}</>
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <ExportButtons rows={selected.size > 0 ? selectedContacts : filtered} label="contacts" />
           <RequirePermission permission="edit_contacts">
             <Button variant="secondary" onClick={() => setImportOpen(true)}><Upload className="h-3.5 w-3.5" /> Import</Button>
@@ -182,18 +188,19 @@ export default function ContactsPage() {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="mb-3 flex flex-wrap items-center gap-3">
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or mobile…" className="w-56" />
-        <Select value={mandalFilter} onChange={(e) => setMandalFilter(e.target.value)} className="w-40">
+      {/* Filters — full-width stacked on a phone, inline from sm up. Fixed widths
+          (w-56/w-40) overflowed a 375px viewport once three selects wrapped. */}
+      <div className="mb-3 flex flex-wrap items-center gap-2 sm:gap-3">
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or mobile…" className="w-full sm:w-56" />
+        <Select value={mandalFilter} onChange={(e) => setMandalFilter(e.target.value)} className="min-w-0 flex-1 sm:w-40 sm:flex-none">
           <option value="">All Mandals</option>
           {mandals.map((m) => <option key={m.code || m.name} value={m.name}>{m.name}</option>)}
         </Select>
-        <Select value={areaFilter} onChange={(e) => setAreaFilter(e.target.value)} className="w-40">
+        <Select value={areaFilter} onChange={(e) => setAreaFilter(e.target.value)} className="min-w-0 flex-1 sm:w-40 sm:flex-none">
           <option value="">All Areas</option>
           {areas.map((a) => <option key={a.code || a.name} value={a.name}>{a.name}</option>)}
         </Select>
-        <Select value={householdFilter} onChange={(e) => setHouseholdFilter(e.target.value)} className="w-44">
+        <Select value={householdFilter} onChange={(e) => setHouseholdFilter(e.target.value)} className="min-w-0 flex-1 sm:w-44 sm:flex-none">
           <option value="">All contacts</option>
           <option value="with">In a household</option>
           <option value="without">Not grouped yet</option>
@@ -270,20 +277,34 @@ export default function ContactsPage() {
             </div>
           </RequirePermission>
           <div className="divide-y divide-slate-50">
-            {pageContacts.map((c) => (
-              <div key={c.id} className={`flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50/70 ${c._pending ? "opacity-60" : ""}`}>
+            {pageContacts.map((c) => {
+              const sevak = identify(c);
+              return (
+              <div key={c.id} className={`relative flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50/70 ${c._pending ? "opacity-60" : ""} ${sevak ? "bg-indigo-50/40" : ""}`}>
+                {/* On a phone the "Not grouped" badge below is hidden — it is ~80px
+                    of the ~167px this row has left over for a name, so every name
+                    truncated to two characters. The spine carries the same signal in
+                    2px, and the badge comes back from sm up where there is room. */}
+                {!c.householdId && <span className="absolute inset-y-0 left-0 w-0.5 bg-amber-300 sm:hidden" aria-hidden="true" />}
                 <RequirePermission permission="edit_contacts">
                   <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleOne(c.id)} className="h-4 w-4 shrink-0 rounded accent-orange-600" />
                 </RequirePermission>
-                <Avatar src={c.profilePhotoURL} name={c.name} size="sm" />
+                <VolunteerRing active={Boolean(sevak)}>
+                  <Avatar src={c.profilePhotoURL} name={c.name} size="sm" />
+                </VolunteerRing>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-slate-900">{c.name}</p>
+                  <p className="flex items-center gap-1.5">
+                    <span className="truncate text-sm font-medium text-slate-900">{c.name}</span>
+                    <VolunteerBadge volunteer={sevak} />
+                  </p>
                   <p className="truncate text-xs text-slate-400">
                     {c.displayAddress ? c.displayAddress : (c.mobile || "No mobile")}
                     {c.mandal ? ` · ${c.mandal}` : ""}{c.area ? ` · ${c.area}` : ""}{c.dob ? ` · Born ${formatDate(c.dob)}` : ""}
                   </p>
                 </div>
-                {!c.householdId && <Badge tone="yellow">Not grouped</Badge>}
+                {!c.householdId && <Badge tone="yellow" className="hidden sm:inline-flex">Not grouped</Badge>}
+                {/* The call outcome STAYS on mobile — unlike "Not grouped" it is
+                    per-contact state you cannot get from anywhere else in this list. */}
                 {c.status && <Badge className={statusColorClasses(c.status)}>{c.status}</Badge>}
                 <div className="flex shrink-0 gap-0.5">
                   <Link to={`/contacts/${c.id}`}>
@@ -298,7 +319,8 @@ export default function ContactsPage() {
                   </RequirePermission>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

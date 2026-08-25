@@ -175,7 +175,7 @@ export default function HouseholdForm({ household, onSubmit, onCancel }) {
         {locStatus === "error" && <span className="text-rose-500"> (denied or unavailable)</span>}
       </button>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <Label required>Area</Label>
           <AreaSelect

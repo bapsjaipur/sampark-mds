@@ -3,13 +3,19 @@ import { useState } from 'react';
 import { Phone } from 'lucide-react';
 import { useAuth } from '../../hooks/usePermissions';
 import { PERMISSIONS, hasPermission } from '../../constants/permissions';
-import { updateContactField, incrementCallCount, STATUS_OPTIONS } from '../../services/contactService';
+import { updateContactField, incrementCallCount } from '../../services/contactService';
+import { useCallOutcomes } from '../../hooks/useCallOutcomes';
+import { useVolunteerIdentity } from '../../hooks/useVolunteerIdentity';
+import { VolunteerBadge } from '../ui/VolunteerBadge';
 import { Select, Input } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 
 export default function ContactCard({ individual, onUpdated }) {
   const { volunteer, permissions } = useAuth();
+  const { outcomes } = useCallOutcomes();
+  const { identify } = useVolunteerIdentity();
+  const sevak = identify(individual);
   const canEdit = hasPermission(permissions, PERMISSIONS.EDIT_CONTACTS);
   const [saving, setSaving] = useState(null);
   const [local, setLocal] = useState(individual);
@@ -51,10 +57,13 @@ export default function ContactCard({ individual, onUpdated }) {
   }
 
   return (
-    <Card className="p-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-sm font-semibold text-slate-900">{individual.name}</p>
+    <Card className={sevak ? 'border-indigo-200 bg-indigo-50/40 p-4' : 'p-4'}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <p className="text-sm font-semibold text-slate-900">{individual.name}</p>
+            <VolunteerBadge volunteer={sevak} />
+          </div>
           <p className="text-xs text-slate-400">{individual.mobile}</p>
         </div>
         <Button variant="accent" size="sm" onClick={handleCall} disabled={saving === 'call'}><Phone className="h-3 w-3" /> Call now</Button>
@@ -65,7 +74,7 @@ export default function ContactCard({ individual, onUpdated }) {
           <label className="mb-1 block text-xs text-slate-500">Status</label>
           <Select value={local.status || ''} onChange={handleStatusChange} disabled={!canEdit || saving === 'status'}>
             <option value="">Not contacted yet</option>
-            {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            {outcomes.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </Select>
         </div>
         <div>

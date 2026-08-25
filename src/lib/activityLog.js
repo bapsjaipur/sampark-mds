@@ -1,19 +1,18 @@
 // src/lib/activityLog.js
-// CANONICAL activity logger. Merges Phase 3's version (which fired a
-// fire-and-forget mirror to the GAS webhook on every CRUD op) with Phase 4's
-// simpler version (activity write only).
+// CANONICAL activity logger — the only writer to the `activity` collection,
+// which firestore.rules keeps append-only (create allowed, update/delete
+// denied) so the audit trail cannot be edited after the fact.
 //
-// DROPPED at merge: Phase 3's mirrorToBackup() call. It POSTed action names
-// like "create_individual"/"update_household" to the GAS webhook, but those
-// are not real doPost actions in CodeGSV5.gs — the real action is
-// `importContacts`, called in scheduled batches by Phase 5's
-// syncFirestoreToGAS Cloud Function. Because Phase 3's call used
-// mode: "no-cors", GAS's `{error: 'Unknown action'}` response was silently
-// unreadable — it looked like it worked in the browser but did nothing.
-// Removing it here avoids that false signal; the real backup path is
-// Phase 5's scheduled sync.
+// Read back by src/components/admin-tools/AuditTrailTab.jsx. That screen
+// renders a friendly label per `action` from its own ACTIONS list, so a new
+// action string added here should be added there too — otherwise the audit
+// trail shows the raw key.
 
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { collection, serverTimestamp } from 'firebase/firestore';
+// PHASE 24 — metered drop-in (src/lib/fsMetered.js): same signature, it counts.
+// Every call, WhatsApp tap and edit writes one of these, so on a busy calling
+// evening the audit trail is a real slice of the daily write quota.
+import { addDoc } from './fsMetered';
 import { db } from './firebase';
 
 /**

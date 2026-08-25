@@ -2,7 +2,10 @@
 // Phase 16 — bulk delete, for undoing accidental imports quickly. Both
 // functions chunk into batches of 400 (Firestore's per-batch write limit).
 
-import { collection, doc, writeBatch, getDocs, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, serverTimestamp } from 'firebase/firestore';
+// PHASE 24 — metered drop-ins; identical signatures, they just count what they
+// spend. See src/lib/fsMetered.js.
+import { writeBatch, getDocs } from '../lib/fsMetered';
 import { db } from '../lib/firebase';
 
 function chunk(arr, size = 400) {

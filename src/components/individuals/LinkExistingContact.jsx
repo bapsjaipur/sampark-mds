@@ -90,7 +90,7 @@ export default function LinkExistingContact({ currentHouseholdId, onLinked, onCa
         {results.map((r) => (
           <div key={r.id} className="flex items-center justify-between px-3 py-2.5">
             <div className="flex items-center gap-2.5">
-              <Avatar name={r.name} size="sm" />
+              <Avatar src={r.profilePhotoURL} name={r.name} size="sm" />
               <div>
                 <p className="text-sm font-medium text-slate-800">{r.name}</p>
                 <p className="text-xs text-slate-400">{r.mobile || 'No mobile'}{r.mandal ? ` · ${r.mandal}` : ''}</p>

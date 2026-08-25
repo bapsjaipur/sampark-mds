@@ -67,7 +67,7 @@ function SamparkPicker({ name, number, onChangeName, onChangeNumber }) {
   );
 
   return (
-    <div className="grid grid-cols-2 gap-4">
+    <div className="grid gap-4 sm:grid-cols-2">
       <div className="relative" ref={ref}>
         <Label>Sampark Karyakarta name</Label>
         <Input
@@ -122,13 +122,22 @@ const RELATIONS = [
 
 const emptyForm = {
   name: "", mobile: "", dob: "", anniversary: "", mandal: "", area: "",
+  // subArea belongs here even though it was added later: the payload below reads
+  // form.subArea, and without a key the value is `undefined`, which Firestore
+  // rejects outright ("Unsupported field value: undefined") on any Mandal that
+  // asks for Area.
+  subArea: "",
   address: "", relation: "member", isPrimary: false, profilePhotoURL: "",
   study: "", profession: "", skill: "",
   samparkKaryakartaName: "", samparkKaryakartaNumber: "",
   photoPending: false,
+  // PHASE 26 — on the follow-up calling list. New contacts default to ON: a
+  // freshly-added person is precisely the one somebody should ring.
+  // See services/callingPoolService.js for why absent also means on.
+  callingPool: true,
 };
 
-export default function IndividualForm({ individual, onSubmit, onCancel, withinHousehold = false, householdArea = "", householdAddress = "" }) {
+export default function IndividualForm({ individual, onSubmit, onCancel, withinHousehold = false, householdArea = "", householdAddress = "", initialValues = null }) {
   const isEdit = Boolean(individual);
   const { mandals } = useAreasAndMandals();
   const [form, setForm] = useState(() =>
@@ -136,13 +145,20 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       ? {
           name: individual.name || "", mobile: individual.mobile || "", dob: individual.dob || "",
           anniversary: individual.anniversary || "", mandal: individual.mandal || "", area: individual.area || "",
+          subArea: individual.subArea || "",
           address: individual.address || "", relation: individual.relation || "member",
           isPrimary: Boolean(individual.isPrimary), profilePhotoURL: individual.profilePhotoURL || "",
           study: individual.study || "", profession: individual.profession || "", skill: individual.skill || "",
           samparkKaryakartaName: individual.samparkKaryakartaName || "", samparkKaryakartaNumber: individual.samparkKaryakartaNumber || "",
           photoPending: Boolean(individual.photoPending),
+          // Absent means on — the 1000+ contacts that predate this field are all
+          // on the list, which is what makes the feature migration-free.
+          callingPool: individual.callingPool !== false,
         }
-      : emptyForm
+      // `initialValues` pre-fills a new record — e.g. the walk-in add on the
+      // attendance screen seeds the sabha's own Mandal and Area, which are right
+      // far more often than blank is.
+      : { ...emptyForm, ...(initialValues || {}) }
   );
   // Pre-generated so a photo can be uploaded before the individual doc
   // exists. Only needed when creating — on edit we already have a real id.
@@ -197,7 +213,7 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       // blank — that's the 1.1 fix. Standalone: use whatever was picked (if
       // this Mandal asks for Area at all), else blank.
       area: withinHousehold ? householdArea : showArea ? form.area : "",
-      subArea: withinHousehold ? "" : showArea ? form.subArea : "",
+      subArea: withinHousehold ? "" : showArea ? form.subArea || "" : "",
       address: withinHousehold ? "" : form.address,
       dob: showDob ? form.dob : "",
       anniversary: showAnniversary ? form.anniversary : "",
@@ -208,9 +224,17 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       skill: showSkill ? form.skill : "",
       samparkKaryakartaName: showSamparkKaryakarta ? form.samparkKaryakartaName : "",
       samparkKaryakartaNumber: showSamparkKaryakarta ? form.samparkKaryakartaNumber.replace(/\D/g, "") : "",
-      profilePhotoURL: showPhoto ? form.profilePhotoURL : "",
+      // Blanking a hidden field is right for text, but a photo is a Storage
+      // object that can't be recovered from the form. If this Mandal stopped
+      // asking for photos, an unrelated edit (fixing a phone number) would
+      // silently orphan an existing photo — so on edit we keep what's there.
+      profilePhotoURL: showPhoto ? form.profilePhotoURL : isEdit ? individual.profilePhotoURL || "" : "",
       // photoPending: true only when photo is expected but not yet uploaded
       photoPending: showPhoto && !form.profilePhotoURL ? Boolean(form.photoPending) : false,
+      // Always a real boolean. Left as `undefined` Firestore would reject the
+      // whole write; left off entirely the contact would read as on-the-list,
+      // which is right by default but wrong the moment somebody ticks it off.
+      callingPool: form.callingPool !== false,
     };
     if (!isEdit) payload.id = draftId;
     const ok = await onSubmit(payload);
@@ -257,14 +281,14 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       )}
 
       {(showDob || showAnniversary) && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid gap-4 sm:grid-cols-2">
           {showDob && <div><Label>Date of birth</Label><Input type="date" value={form.dob} onChange={update("dob")} /></div>}
           {showAnniversary && <div><Label>Anniversary</Label><Input type="date" value={form.anniversary} onChange={update("anniversary")} /></div>}
         </div>
       )}
 
       {showArea && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <Label>Area</Label>
             <AreaSelect value={form.area} onChange={update("area")} className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300" />
@@ -282,7 +306,7 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       )}
 
       {(withinHousehold && (showRelation || showIsPrimary)) && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid gap-4 sm:grid-cols-2">
           {showRelation && (
             <div>
               <Label required>Relation</Label>
@@ -305,7 +329,7 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       )}
 
       {(showStudy || showProfession) && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid gap-4 sm:grid-cols-2">
           {showStudy && <div><Label>Study</Label><Input value={form.study} onChange={update("study")} placeholder="e.g. B.Com" /></div>}
           {showProfession && <div><Label>Profession</Label><Input value={form.profession} onChange={update("profession")} placeholder="e.g. Engineer" /></div>}
         </div>
@@ -355,6 +379,29 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
           )}
         </div>
       )}
+
+      {/* ── Follow-up calling ────────────────────────────────────────────
+          Not gated by the Mandal's field config: every contact is either rung
+          in the weekly round or not, whatever else the Mandal asks for. */}
+      <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+        <Label>Follow-up calling</Label>
+        <label className="mt-1 flex cursor-pointer items-start gap-2.5 text-sm text-slate-700">
+          <input
+            type="checkbox"
+            checked={form.callingPool !== false}
+            onChange={(e) => setForm((f) => ({ ...f, callingPool: e.target.checked }))}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 accent-orange-600"
+          />
+          <span>
+            On the follow-up calling list
+            <span className="mt-0.5 block text-xs leading-snug text-slate-400">
+              {form.callingPool !== false
+                ? "Included when batches are generated for weekly follow-up."
+                : "Won’t be pulled into weekly batches. Stays on the roster with full history, and a once-a-year sweep (Batches → Generate → “Everyone on the roster”) still reaches them."}
+            </span>
+          </span>
+        </label>
+      </div>
 
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>

@@ -17,9 +17,44 @@ rules_version = '2';
 //      be used inline inside an `allow ... : if (...)` condition directly,
 //      which is why every check below is wrapped in a named function.
 //   3. Phase 4's `batches` collection rules are added (new in Phase 4).
-//   4. `syncLogs` collection added (Phase 5) — written only by the Cloud
-//      Function via the Admin SDK (which bypasses rules entirely); this
-//      block only governs client reads.
+//
+// PHASE 21 — scopeKind. `assignedAreas` OR `assignedMandals` used to be the
+// only shape these rules could express. It is now one of six (see
+// src/lib/scope.js, which this file mirrors function for function):
+//   global · area · mandal · intersect · union · none
+// The shape is read from the ROLE document (`scopeKind`); the values stay on
+// the volunteer.
+//
+// PHASE 23 — when neither the volunteer nor the role states a shape, ctx() now
+// DERIVES it from the assignment (both an area and a mandal → 'intersect', one
+// axis → that axis) instead of falling back to 'union'. 'union' is area OR
+// mandal, the widest shape short of global, so every role saved before Phase 21
+// silently granted a karyakarta their whole area PLUS their mandal city-wide.
+// Keep this in step with inferScopeKind() in src/lib/scope.js: if the two ever
+// disagree the database wins, silently, by returning empty lists.
+//
+// PHASE 23b — a 'union' stored on a ROLE document is only honoured when the role
+// also carries `scopeKindChosen: true`. Older builds re-wrote scopeKind on every
+// save from a helper that reported an unset shape as 'union', so roles nobody had
+// scoped ended up looking as if UNION had been chosen on purpose.
+// Mirrors roleStatedScopeKind() in src/lib/scope.js. The volunteer's own stamp is
+// NOT discounted the same way: for a multi-role holder it is the only shape this
+// file can see, and dropping it could make the server NARROWER than the client,
+// which surfaces as "Missing or insufficient permissions" on a legitimate write.
+// Leaving it makes the server laxer than the UI until an admin re-saves that
+// volunteer or the role's shape — the safe direction, and self-correcting.
+//
+// KNOWN AND DELIBERATE — two gaps, both forced by the rules language:
+//   a) A volunteer may hold SEVERAL roles (roleRefs[]). ctx() cannot iterate an
+//      array doing a get() per element (10 get()/exists() per request, no
+//      map/reduce), so it reads `roleRef`, which the client writes as the MOST
+//      SENIOR of the held roles. The rules therefore enforce a CONSERVATIVE
+//      SUBSET of what the UI grants — never more.
+//   b) individuals READ is permission-only, not scope-checked. Rules cannot see
+//      a query's constraints, so any scope predicate on `resource.data` would
+//      make every list query fail outright rather than return fewer rows.
+//      Contact-level scoping for reads is enforced client-side in
+//      lib/scope.js. Writes, deletes and household reads ARE scope-checked here.
 //
 // ASSUMPTION (unchanged from both source files): volunteers/{id} doc ID ===
 // request.auth.uid. See src/hooks/usePermissions.jsx for the client-side
@@ -49,11 +84,66 @@ service cloud.firestore {
       let v = get(/databases/$(database)/documents/volunteers/$(request.auth.uid)).data;
       let hasRole = ('roleRef' in v) && v.roleRef != null;
       let r = hasRole ? get(/databases/$(database)/documents/roles/$(v.roleRef)).data : {};
+      // `is list` / `is string`, not just `in`: a malformed field would otherwise
+      // make .size() or a comparison below raise an error, and an error in a rule
+      // is a denial with no message — the hardest failure in this file to debug.
+      let areas = (('assignedAreas' in v) && (v.assignedAreas is list)) ? v.assignedAreas : [];
+      let mandals = (('assignedMandals' in v) && (v.assignedMandals is list)) ? v.assignedMandals : [];
+      // The volunteer's own `scopeKind` wins when present: with SEVERAL roles
+      // the UI honours the WIDEST of their shapes, and this file can only read
+      // one role document, so Admin → Volunteers stamps the resolved shape on
+      // the volunteer (see VolunteerEditor.handleSave). Only a manage_users
+      // holder can write that field — the same trust level as changing
+      // roleRef — so it opens no new escalation path. Falls back to the role
+      // document, and then to the inference below.
+      let vk = (('scopeKind' in v) && (v.scopeKind is string)) ? v.scopeKind : '';
+      // PHASE 23b — a stored 'union' on the ROLE is only trusted when the role
+      // also carries `scopeKindChosen: true`. Builds before Phase 23 rewrote
+      // `scopeKind` on EVERY save using a helper that reported an unset shape as
+      // 'union', so renaming a role or ticking one checkbox permanently stamped
+      // the widest shape short of global onto roles nobody had ever scoped.
+      // `scopeKindChosen` is written only by a save that actually STATES a shape —
+      // the Scope picker, a preset, or a merge — so it tells a deliberate UNION
+      // apart from that accident. Mirrors roleStatedScopeKind() in
+      // src/lib/scope.js. Every other shape is trusted either way: union is the
+      // only value that was ever written by accident.
+      let rkRaw = (('scopeKind' in r) && (r.scopeKind is string)) ? r.scopeKind : '';
+      let rChosen = ('scopeKindChosen' in r) && (r.scopeKindChosen == true);
+      let rk = (rkRaw == 'union' && !rChosen) ? '' : rkRaw;
+      let stated = (vk != '') ? vk : rk;
       return {
         'perms': ('permissions' in r) ? r.permissions : [],
-        'areas': ('assignedAreas' in v) ? v.assignedAreas : [],
-        'mandals': ('assignedMandals' in v) ? v.assignedMandals : [],
+        'areas': areas,
+        'mandals': mandals,
+        // PHASE 23 — when NOBODY has stated a shape, derive it from what this
+        // volunteer actually holds, exactly as inferScopeKind() does on the
+        // client. This used to fall back to 'union' (area OR mandal), which is the
+        // widest shape short of global: a karyakarta holding one area and one
+        // mandal was granted their whole area PLUS their mandal across the entire
+        // city. Holding both now means the cell where the two cross.
+        // Fully parenthesised — the rules parser is fussy about chained ternaries.
+        'kind': (stated != '') ? stated
+          : ((areas.size() > 0 && mandals.size() > 0) ? 'intersect'
+            : ((areas.size() > 0) ? 'area'
+              : ((mandals.size() > 0) ? 'mandal' : 'union'))),
       };
+    }
+
+    // The AND-vs-OR decision, in one place. `inArea` / `inMandal` are already
+    // evaluated by the caller (each axis is cheap for one of them and needs a
+    // household get() for the other, so the caller decides how to obtain them).
+    //
+    // This is the server mirror of matchesScope() in src/lib/scope.js:
+    //   global    → everything          area   → the area row
+    //   mandal    → the mandal column   intersect → the single cell (AND)
+    //   union     → either axis (OR)    none   → nothing
+    function scopeAllows(c, inArea, inMandal) {
+      return c.perms.hasAny(['view_all_contacts']) ||
+        c.kind == 'global' ||
+        (c.kind == 'area' && inArea) ||
+        (c.kind == 'mandal' && inMandal) ||
+        (c.kind == 'intersect' && inArea && inMandal) ||
+        (c.kind == 'union' && (inArea || inMandal));
     }
 
     // ---------------------------------------------------------------------
@@ -82,6 +172,39 @@ service cloud.firestore {
       return c.perms.hasAny(['manage_users']);
     }
 
+    // PHASE 21 — a Moderator (Area head) / Super Moderator (Mandal head) fixes
+    // the details of the karyakartas under them without holding manage_users,
+    // which is effectively full control (it can change anyone's role, including
+    // its own). Deliberately strict, in three ways:
+    //   • the target's territory must be a SUBSET of the editor's, on the axis
+    //     the editor's own role is shaped by — checked on the document BEFORE
+    //     and AFTER the write, so nobody can be lifted out of scope;
+    //   • kind 'global' is not accepted here. A role that should edit every
+    //     volunteer is a role that should hold manage_users;
+    //   • roleRef/roleRefs are untouchable, so this can never grant permissions,
+    //     and neither is scopeKind — writing 'global' there would otherwise be a
+    //     one-field escalation from "my area" to "every area".
+    function volunteerSubsetOk(data, c) {
+      let areas = (('assignedAreas' in data) && data.assignedAreas != null) ? data.assignedAreas : [];
+      let mandals = (('assignedMandals' in data) && data.assignedMandals != null) ? data.assignedMandals : [];
+      // size() > 0 matters: [].hasOnly(anything) is true, which would make a
+      // volunteer with no territory yet editable by every moderator.
+      let inArea = areas.size() > 0 && areas.hasOnly(c.areas);
+      let inMandal = mandals.size() > 0 && mandals.hasOnly(c.mandals);
+      return (c.kind == 'area' && inArea) ||
+        (c.kind == 'mandal' && inMandal) ||
+        (c.kind == 'intersect' && inArea && inMandal) ||
+        (c.kind == 'union' && (inArea || inMandal));
+    }
+
+    function canManageScopedVolunteer(oldData, newData) {
+      let c = ctx();
+      return c.perms.hasAny(['manage_scoped_volunteers']) &&
+        !newData.diff(oldData).affectedKeys().hasAny(['roleRef', 'roleRefs', 'scopeKind']) &&
+        volunteerSubsetOk(oldData, c) &&
+        volunteerSubsetOk(newData, c);
+    }
+
     match /volunteers/{volunteerId} {
       // Any signed-in volunteer can read the full volunteer list
       allow read: if volunteerExists();
@@ -90,12 +213,21 @@ service cloud.firestore {
       allow create, delete: if volunteerExists() && canManageUsers();
 
       // Allow volunteers to update their OWN document, ONLY IF they are exclusively updating
-      // safe tracking fields (lastLoginAt, lastSeenAt, profilePhotoURL).
+      // safe tracking fields (lastLoginAt, lastSeenAt, profilePhotoURL, usage).
+      //
+      // PHASE 24 — `usage` is this device's own Firestore read/write tally for the
+      // day, written by the existing heartbeat in usePermissions.jsx so the Admin
+      // Tools usage dashboard can total the team's spend without a write of its
+      // own. It is self-reported and advisory: a volunteer could put any number
+      // there, which is harmless because nothing is authorised by it. Leaving it
+      // off this list would make the heartbeat itself fail, taking the "online
+      // now" indicator with it.
       allow update: if volunteerExists() && (
         canManageUsers() ||
+        canManageScopedVolunteer(resource.data, request.resource.data) ||
         (
           request.auth.uid == volunteerId &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLoginAt', 'lastSeenAt', 'profilePhotoURL'])
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLoginAt', 'lastSeenAt', 'profilePhotoURL', 'usage'])
         )
       );
     }
@@ -106,29 +238,39 @@ service cloud.firestore {
     //   createdAt, updatedAt
     // ---------------------------------------------------------------------
 
+    // PHASE 21 — mirrors filterHouseholdsByScope() in src/lib/scope.js.
+    // A household has an `area` but NO mandal of its own, so a Mandal head is
+    // allowed every household: their people live all over the city, and hiding
+    // the household would hide the only route to its members. Every other
+    // scoped shape is decided by the household's area.
+    function householdScopeOk(data, c) {
+      return c.perms.hasAny(['view_all_contacts']) ||
+        c.kind == 'global' ||
+        c.kind == 'mandal' ||
+        (c.kind != 'none' && ('area' in data) && data.area in c.areas);
+    }
+
     function canReadHousehold(data) {
       let c = ctx();
       return c.perms.hasAny(['view_all_contacts']) ||
-        (c.perms.hasAny(['view_assigned_contacts']) && data.area in c.areas);
+        (c.perms.hasAny(['view_assigned_contacts']) && householdScopeOk(data, c));
     }
 
     function canCreateHousehold(data) {
       let c = ctx();
-      return c.perms.hasAny(['edit_contacts']) &&
-        (c.perms.hasAny(['view_all_contacts']) || data.area in c.areas);
+      return c.perms.hasAny(['edit_contacts']) && householdScopeOk(data, c);
     }
 
     function canUpdateHousehold(oldData, newData) {
       let c = ctx();
       return c.perms.hasAny(['edit_contacts']) &&
-        (c.perms.hasAny(['view_all_contacts']) ||
-          (oldData.area in c.areas && newData.area in c.areas));
+        householdScopeOk(oldData, c) && householdScopeOk(newData, c);
     }
 
     function canDeleteHousehold(data) {
       let c = ctx();
       return c.perms.hasAny(['delete_contacts', 'manage_users']) &&
-        (c.perms.hasAny(['view_all_contacts']) || data.area in c.areas);
+        householdScopeOk(data, c);
     }
 
     match /households/{householdId} {
@@ -143,24 +285,69 @@ service cloud.firestore {
     //   anniversary, anniversaryMonthDay, mandal, relation, isPrimary,
     //   profilePhotoURL, status, reference, callCount, createdAt, updatedAt
     //
+    // PHASE 27 adds `lastRound`, a map holding the frozen verdict of the calling
+    // round just gone: { eventId, eventDate, eventTitle, status, reference,
+    // attended, cleared, closedAt }. Written only by closeRound() and only for
+    // contacts that were actually called. There is no field whitelist on this
+    // collection, so it needs no rules change — noted here because a reader of
+    // these rules would otherwise not know the field exists.
+    //
     // individuals don't carry `area` directly — only their parent household
-    // does — so a scoped check also looks at the household. mandal is
-    // checked first since it's free (already on the individual).
+    // does — so a scoped check also looks at the household (Phase 16 standalone
+    // contacts are the exception and carry their own).
     //
     // MERGE FIX: Phase 4's rules left create/update ungated by area/mandal
     // for scoped volunteers. Fixed below by applying the same scoping used
     // for read to create and update as well.
+    //
+    // PHASE 21: that scoping is no longer a fixed OR — see individualScopeOk.
+    // Both axes are now evaluated and scopeAllows() decides whether the role
+    // wants either (union), one (area / mandal) or both (intersect).
     // ---------------------------------------------------------------------
 
     // Standalone contacts (no household — see Phase 13) have data.householdId
     // == null but may now carry their own `area` field directly (Phase 16),
     // so scoping checks that first before falling back to a household lookup.
+    function individualArea(data) {
+      let own = (('area' in data) && data.area != null) ? data.area : null;
+      let hid = (('householdId' in data) && data.householdId != null) ? data.householdId : null;
+      // The get() only runs when the individual has no area of its own AND has
+      // a household that exists — 2 lookups worst case, on top of ctx()'s 2.
+      let hh = (own == null && hid != null &&
+        exists(/databases/$(database)/documents/households/$(hid)))
+        ? get(/databases/$(database)/documents/households/$(hid)).data
+        : {};
+      return own != null ? own : (('area' in hh) ? hh.area : null);
+    }
+
+    // PHASE 21 — this used to be a fixed OR of (mandal, own area, household
+    // area). That is the 'union' shape and only the 'union' shape: it let a
+    // karyakarta scoped to ONE mandal in ONE area write to every household in
+    // their area and to every member of their mandal city-wide. The shape now
+    // comes from the role, and 'intersect' means AND — the single cell of the
+    // area × mandal grid, which is what a plain karyakarta actually holds.
+    // The 'in' checks are guarded because a doc may lack the field entirely
+    // (the old code read data.mandal unguarded, which errors on such docs).
     function individualScopeOk(data, c) {
-      return data.mandal in c.mandals ||
-        (('area' in data) && data.area != null && data.area in c.areas) ||
-        (data.householdId != null &&
-          exists(/databases/$(database)/documents/households/$(data.householdId)) &&
-          get(/databases/$(database)/documents/households/$(data.householdId)).data.area in c.areas);
+      let mandal = (('mandal' in data) && data.mandal != null) ? data.mandal : null;
+      let inMandal = mandal != null && mandal in c.mandals;
+      let area = individualArea(data);
+      let inArea = area != null && area in c.areas;
+      return scopeAllows(c, inArea, inMandal);
+    }
+
+    // PHASE 25 — used in four places: the importer creates contacts and sabhas,
+    // and Undo deletes the ones it created. Declared here because it is needed
+    // above the importRuns block that documents it.
+    function canImportData() {
+      let c = ctx();
+      return c.perms.hasAny(['import_data']);
+    }
+
+    // A document this import created, and therefore one its own Undo may remove.
+    // `get` with a default because everything predating Phase 21 lacks the field.
+    function isImported(data) {
+      return data.get('source', '') == 'history-import';
     }
 
     function canReadIndividual(data) {
@@ -168,22 +355,39 @@ service cloud.firestore {
       return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts', 'edit_contacts']);
     }
 
+    // create / update. `import_data` is accepted alongside `edit_contacts`
+    // because the CSV importer writes contacts in bulk and is a separate grant.
     function canWriteIndividual(data) {
       let c = ctx();
-      return c.perms.hasAny(['edit_contacts']) &&
-        (c.perms.hasAny(['view_all_contacts']) || individualScopeOk(data, c));
+      return c.perms.hasAny(['edit_contacts', 'import_data']) &&
+        individualScopeOk(data, c);
     }
 
+    // On update BOTH versions are checked, so a scoped volunteer cannot move a
+    // contact into — or out of — someone else's area/mandal.
+    function canUpdateIndividual(oldData, newData) {
+      let c = ctx();
+      return c.perms.hasAny(['edit_contacts', 'import_data']) &&
+        individualScopeOk(oldData, c) && individualScopeOk(newData, c);
+    }
+
+    // PHASE 25 — import_data may delete a contact the IMPORT created, so that
+    // whoever can start a half import can also reverse it. Without this, undoing
+    // needed delete_contacts, and the role that caused the mess could not clean
+    // it up. Contacts that existed before the import lack the marker and are
+    // untouchable here, which is the point: undo must not mean "delete part of
+    // my database".
     function canDeleteIndividual(data) {
       let c = ctx();
-      return c.perms.hasAny(['delete_contacts', 'manage_users']) &&
-        (c.perms.hasAny(['view_all_contacts']) || individualScopeOk(data, c));
+      return (c.perms.hasAny(['delete_contacts', 'manage_users']) ||
+          (c.perms.hasAny(['import_data']) && isImported(data))) &&
+        individualScopeOk(data, c);
     }
 
     match /individuals/{individualId} {
       allow read: if volunteerExists() && canReadIndividual(resource.data);
       allow create: if volunteerExists() && canWriteIndividual(request.resource.data);
-      allow update: if volunteerExists() && canWriteIndividual(resource.data);
+      allow update: if volunteerExists() && canUpdateIndividual(resource.data, request.resource.data);
       allow delete: if volunteerExists() && canDeleteIndividual(resource.data);
     }
 
@@ -204,8 +408,18 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // batches/{id}: name, area, individualIds[], assignedVolunteerId,
-    //   createdBy, createdAt   (new collection, introduced in Phase 4)
+    // batches/{id}: name, batchNumber, area, mandal, individualIds[],
+    //   assignedVolunteerId, createdBy, createdAt   (Phase 4; area × mandal
+    //   generation added in Phase 21)
+    //
+    // READ stays permission-only, on purpose. subscribeToBatches() listens to
+    // the whole collection (orderBy createdAt would hide the Phase 4 documents
+    // that predate the field), and a per-document scope predicate makes
+    // Firestore reject a collection-wide listen outright rather than return
+    // fewer rows — scoped volunteers would see an error instead of their own
+    // batches. Which batches a volunteer SEES is decided by
+    // filterBatchesByScope() in src/services/batchService.js, which also always
+    // shows a volunteer the batch assigned to them. Writes are scoped here.
     // ---------------------------------------------------------------------
 
     function canReadBatches() {
@@ -213,14 +427,34 @@ service cloud.firestore {
       return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts']);
     }
 
-    function canAssignBatches() {
+    // A batch's area/mandal may be null, which means "spans everything". For a
+    // scoped volunteer that is BROADER than their own territory, so it is
+    // correctly refused: cutting or reassigning a city-wide batch is an admin
+    // act. Legacy batches with no `mandal` therefore need an admin to edit,
+    // which is the conservative side to err on.
+    function batchScopeOk(data, c) {
+      let a = (('area' in data) && data.area != null) ? data.area : null;
+      let m = (('mandal' in data) && data.mandal != null) ? data.mandal : null;
+      return scopeAllows(c, a != null && a in c.areas, m != null && m in c.mandals);
+    }
+
+    // generate_batches (cut new batches) is a separate grant from
+    // assign_batches (hand an existing batch to someone) — see
+    // src/constants/permissions.js. Either one may write here.
+    function canWriteBatch(data) {
       let c = ctx();
-      return c.perms.hasAny(['assign_batches']);
+      return c.perms.hasAny(['assign_batches', 'generate_batches']) &&
+        batchScopeOk(data, c);
     }
 
     match /batches/{batchId} {
       allow read: if volunteerExists() && canReadBatches();
-      allow create, update, delete: if volunteerExists() && canAssignBatches();
+      allow create: if volunteerExists() && canWriteBatch(request.resource.data);
+      // Both versions checked so a batch cannot be pushed out of the editor's
+      // own scope by the same write that edits it.
+      allow update: if volunteerExists() &&
+        canWriteBatch(resource.data) && canWriteBatch(request.resource.data);
+      allow delete: if volunteerExists() && canWriteBatch(resource.data);
     }
 
     // ---------------------------------------------------------------------
@@ -238,9 +472,28 @@ service cloud.firestore {
       return c.perms.hasAny(['manage_events']);
     }
 
+    // PHASE 25 — import_data may CREATE a sabha, but not edit or delete one.
+    // runHistoryImport() (src/services/historyImportService.js) materialises one
+    // event per date column in the sheet, so a role holding only "Import
+    // Contacts & History" was refused on the very FIRST write of the import —
+    // while the same grant was already accepted for the contacts those sabhas
+    // are about (see canWriteIndividual). Editing and deleting existing sabhas
+    // stays manage_events: an import has no business rewriting the calendar
+    // that is already in place.
+    function canCreateEvents() {
+      let c = ctx();
+      return c.perms.hasAny(['manage_events', 'import_data']);
+    }
+
     match /events/{eventId} {
       allow read: if volunteerExists() && canReadEvents();
-      allow create, update, delete: if volunteerExists() && canManageEvents();
+      allow create: if volunteerExists() && canCreateEvents();
+      allow update: if volunteerExists() && canManageEvents();
+      // Undo deletes the sabhas the import created. Everything else stays
+      // manage_events — an importer must not be able to remove a sabha somebody
+      // organised in the app.
+      allow delete: if volunteerExists() &&
+        (canManageEvents() || (canImportData() && isImported(resource.data)));
     }
 
     // ---------------------------------------------------------------------
@@ -257,13 +510,63 @@ service cloud.firestore {
 
     function canMarkAttendance() {
       let c = ctx();
-      return c.perms.hasAny(['edit_contacts']);
+      // PHASE 21 — manage_attendance is the dedicated grant ("Mark Sabha
+      // Attendance"), added so a role can mark presence WITHOUT being able to
+      // edit contact records. edit_contacts still works, so no existing role
+      // loses the ability it has today.
+      //
+      // PHASE 25 — import_data too. The history importer's entire output is
+      // attendance rows; it was being refused by the one rule most central to
+      // what it does.
+      return c.perms.hasAny(['edit_contacts', 'manage_attendance', 'import_data']);
     }
 
     match /attendance/{attendanceId} {
       allow read: if volunteerExists() && canReadEvents();
       allow create, delete: if volunteerExists() && canMarkAttendance();
-      allow update: if false; // presence is a create/delete toggle, never edited in place
+      // PHASE 25 — this was `allow update: if false`, on the reasoning that
+      // presence is a create/delete toggle and is never edited in place. True of
+      // the app's own marking (markPresent creates, unmarkPresent deletes) — but
+      // NOT of the history importer, which set()s the deterministic ID
+      // `${eventId}_${individualId}` on purpose, so that a second run overwrites
+      // instead of duplicating. Firestore evaluates a set() over an EXISTING
+      // document as an update, so every re-import — and every sabha where
+      // somebody had already been marked by hand in the app — died partway
+      // through with permission-denied. That is what the "Firestore refused the
+      // write" toast on Admin Tools → Import History was actually reporting, and
+      // no amount of fixing the role could have cleared it.
+      //
+      // An update is allowed only when it does not repoint the mark at a
+      // different sabha or a different person, which is what `if false` was
+      // really protecting: a mark may be rewritten, never moved.
+      allow update: if volunteerExists() && canMarkAttendance() &&
+        request.resource.data.eventId == resource.data.eventId &&
+        request.resource.data.individualId == resource.data.individualId;
+    }
+
+    // ---------------------------------------------------------------------
+    // importRuns/{id}: kind, fileName, status, startedBy, startedAt,
+    //   finishedAt, events, contacts, marks, error   (Phase 25)
+    //
+    // One row per attempt at Admin Tools → Import Sabha History. It is what
+    // makes Undo possible: a refused write rejects a whole 450-operation
+    // WriteBatch atomically, so a failed import leaves part of itself committed,
+    // and reversing that needs to know which documents came from WHICH run.
+    //
+    // Never deleted, only marked `undone`. An admin reading this tab later has to
+    // be able to tell "that import was reversed" from "that import never
+    // happened" — particularly when the reversal was itself interrupted.
+    // ---------------------------------------------------------------------
+
+    // canImportData() is declared up with the individuals helpers — the importer
+    // creates contacts and sabhas, so the gate is needed above this block.
+
+    match /importRuns/{runId} {
+      // Readable by anyone who can see the audit trail: a half import is
+      // something a moderator may need to explain without being able to cause one.
+      allow read: if volunteerExists() && canReadActivity();
+      allow create, update: if volunteerExists() && canImportData();
+      allow delete: if false;
     }
 
     // ---------------------------------------------------------------------
@@ -326,30 +629,120 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // syncLogs/{id}: ranAt, totalMandals, totalRows, inserted, skipped, errors
-    // Written ONLY by the syncFirestoreToGAS Cloud Function via the Admin
-    // SDK, which bypasses these rules entirely — this block only governs
-    // client reads (so the admin UI can show sync history) and blocks any
-    // client-side write outright.
-    // ---------------------------------------------------------------------
-
-    function canReadSyncLogs() {
-      let c = ctx();
-      return c.perms.hasAny(['run_gas_sync', 'manage_users']);
-    }
-
-    match /syncLogs/{logId} {
-      allow read: if volunteerExists() && canReadSyncLogs();
-      allow write: if false;
-    }
-
-    // ---------------------------------------------------------------------
     // campaigns/{id}: name, isActive
     // ---------------------------------------------------------------------
 
     match /campaigns/{campaignId} {
       allow read: if volunteerExists();
       allow write: if volunteerExists() && canManageUsers();
+    }
+
+    // ---------------------------------------------------------------------
+    // settings/{docId} (Phase 20): three singleton documents —
+    //   settings/email           → automation toggles, sender, dryRun,
+    //                              maxRecipients, extraRecipients[]
+    //   settings/messageTemplate → the WhatsApp message template
+    //   settings/callOutcomes    → the calling screen's outcome buttons
+    //
+    // messageTemplate and callOutcomes are read by every volunteer on the
+    // calling screen — settings/messageTemplate is loaded per contact to build
+    // the WhatsApp link — so a permission check there would silently strip the
+    // button for exactly the people who need it. Read stays open for those.
+    //
+    // PHASE 22 — settings/email is NOT one of them, and used to be. It holds
+    // `extraRecipients[]`: the personal email addresses of sanchalaks, trustees
+    // and accountants who receive the reports without ever signing in. Those
+    // people are not app users and did not hand their address to 21 karyakartas;
+    // it was readable by every one of them, and by anything with a volunteer
+    // login. It also exposes `fromAddress` and the dryRun/maxRecipients config,
+    // which together tell an attacker exactly how the outbox is wired.
+    //
+    // Nothing on the volunteer-facing side reads it: the only reader is
+    // src/components/admin-tools/EmailAutomationTab.jsx, and AdminToolsPage
+    // already gates that tab on send_emails. So the read gate below is a strict
+    // superset of who could reach the screen — no volunteer loses anything.
+    //
+    // IMPORTANT for describeSettingsError() in src/services/settingsService.js:
+    // it distinguishes "rules not deployed" from "role lacks manage_templates"
+    // by whether the READ was also denied, which relies on reads being
+    // unrestricted. That still holds for anyone who can open the Report Emails
+    // tab, because that tab requires send_emails and send_emails is accepted
+    // here. Keep those two in step if either changes.
+    // ---------------------------------------------------------------------
+
+    function canManageTemplates() {
+      let c = ctx();
+      return c.perms.hasAny(['manage_templates']);
+    }
+
+    function canSeeEmailSettings() {
+      let c = ctx();
+      return c.perms.hasAny(['send_emails', 'manage_templates', 'manage_users']);
+    }
+
+    match /settings/{docId} {
+      allow read: if volunteerExists() && (docId != 'email' || canSeeEmailSettings());
+      allow write: if volunteerExists() && canManageTemplates();
+    }
+
+    // ---------------------------------------------------------------------
+    // passwordResets/{mobile} (Phase 22): "I'm locked out, please reset me".
+    //
+    // Replaces the old self-service reset, which was callable by anyone and set
+    // the password to the mobile number the caller typed — see the header of
+    // functions/resetVolunteerPassword.js. A row here changes nothing; an admin
+    // with manage_users has to approve it and type the new password.
+    //
+    // CREATE IS CLOSED TO EVERY CLIENT. The document is written by the
+    // requestPasswordReset callable through the Admin SDK, which bypasses these
+    // rules, and only after confirming the number belongs to an active
+    // volunteer. If clients could create rows, anyone could fabricate a request
+    // in another volunteer's name and wait for an admin to approve it — turning
+    // the approval step into the very hole it was added to close.
+    //
+    // Read is admin-only: the row carries a volunteer's name and mobile, and the
+    // list of who is currently locked out is not everyone's business. Update and
+    // delete are allowed so the admin screen can deny or clear a request without
+    // needing a callable for it.
+    // ---------------------------------------------------------------------
+
+    match /passwordResets/{mobile} {
+      allow read, update, delete: if volunteerExists() && canManageUsers();
+      allow create: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // emailLogs/{id} (Phase 20): one row per report the scheduler tried to
+    // send — queued / dry-run / skipped, with the recipient list.
+    //
+    // Written only by Cloud Functions through the Admin SDK, which bypasses
+    // these rules entirely, so client writes are refused outright. Being
+    // able to read them is the same trust level as being able to trigger a
+    // send, hence send_emails.
+    // ---------------------------------------------------------------------
+
+    function canSeeEmailLogs() {
+      let c = ctx();
+      return c.perms.hasAny(['send_emails', 'manage_users']);
+    }
+
+    match /emailLogs/{logId} {
+      allow read: if volunteerExists() && canSeeEmailLogs();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // mail/{id} (Phase 20): the outbox consumed by the Firebase "Trigger
+    // Email from Firestore" extension.
+    //
+    // Closed to every client, in both directions. A writable outbox is an
+    // open relay — any authenticated volunteer could mail arbitrary HTML to
+    // arbitrary addresses from the temple's domain. Only the Admin SDK (in
+    // functions/lib/mailer.js) writes here, and only the extension reads.
+    // ---------------------------------------------------------------------
+
+    match /mail/{mailId} {
+      allow read, write: if false;
     }
   }
 }

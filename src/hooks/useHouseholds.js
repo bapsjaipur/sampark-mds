@@ -1,9 +1,24 @@
 // src/hooks/useHouseholds.js
 // MERGE FIX: import path — '../contexts/AuthContext' -> '../hooks/usePermissions'
 // (canonical hook; `useAuth` is exported as an alias so this line barely changed).
+//
+// PHASE 23c — SCOPE. This hook narrowed by `assignedAreas` regardless of the
+// role's scopeKind, which is wrong in one direction that matters: a MANDAL-scoped
+// volunteer (a Mandal head) holds no areas at all, so they were shown an empty
+// list and lost the only route to their own members. A household carries an
+// `area` but NO mandal — its members may be in several — so the server rule
+// householdScopeOk() allows a mandal-scoped volunteer EVERY household and leaves
+// the narrowing to the member level. filterHouseholdsByScope() in src/lib/scope.js
+// says the same thing; this file now matches both.
+//
+// PHASE 24 — READS. Five pages call this hook and each mount used to open its own
+// listener over all ~420 households, so simply walking Contacts → Households →
+// Events billed three full sweeps. It now goes through useSharedCollection: one
+// listener per distinct query for the whole session, replayed free to every later
+// subscriber, and returning to a page inside the grace window costs nothing.
 import { useEffect, useMemo, useState, useCallback } from "react";
 import {
-  collection, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, query, orderBy, limit, where,
+  collection, addDoc, updateDoc, doc, serverTimestamp, query, orderBy, limit, where,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useToast } from "../contexts/ToastContext";
@@ -11,6 +26,9 @@ import { useAuth } from "./usePermissions";
 import { logActivity } from "../lib/activityLog";
 import { deleteHouseholdCascade, deleteHouseholdOnly as deleteHouseholdOnlySvc } from "../services/householdService";
 import { friendlyFirestoreError } from "../lib/firestoreErrorMessage";
+import { SCOPE_KINDS } from "../lib/scope";
+import { useSharedCollection } from "./useSharedCollection";
+import { meterWrites } from "../lib/usageMeter";
 
 /**
  * @param {{ pageSize?: number }} [opts] — pass a pageSize (e.g. 20) to
@@ -22,44 +40,73 @@ import { friendlyFirestoreError } from "../lib/firestoreErrorMessage";
  */
 export function useHouseholds({ pageSize } = {}) {
   const [households, setHouseholds] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [limitCount, setLimitCount] = useState(pageSize || null);
-  const [hasMore, setHasMore] = useState(false);
   const { showToast } = useToast();
-  const { volunteer, permissions, assignedAreas } = useAuth();
+  const { volunteer, scope } = useAuth();
 
-  const isViewAll = permissions.includes("view_all_contacts");
-  // Scoped if they have view_assigned or edit_contacts but NOT view_all
-  const isViewAssigned = !isViewAll && (
-    permissions.includes("view_assigned_contacts") || permissions.includes("edit_contacts")
-  );
+  const isViewAll = scope.unrestricted;
+  // A household has no mandal, so a mandal-shaped scope cannot be expressed as a
+  // filter on this collection — every household is potentially relevant and the
+  // scoping happens where the members are. Matches householdScopeOk() in
+  // firestore.rules, which allows kind == 'mandal' unconditionally.
+  const byArea = !isViewAll
+    && scope.kind !== SCOPE_KINDS.NONE
+    && scope.kind !== SCOPE_KINDS.MANDAL;
+  const areasKey = (scope.areas || []).join(",");
+
+  const specs = useMemo(() => {
+    const col = collection(db, "households");
+    // No contact access at all; and an area-shaped scope with nothing assigned
+    // matches nothing (`in` rejects an empty array anyway). Either way, no
+    // listener is opened, so proving it costs no reads.
+    if (!isViewAll && scope.kind === SCOPE_KINDS.NONE) return [];
+    if (byArea && !(scope.areas || []).length) return [];
+
+    const areas = (scope.areas || []).slice(0, 30);
+    const tail = limitCount ? `|${limitCount}` : "";
+    return [byArea
+      ? {
+        key: `households|area|${areas.join(",")}${tail}`,
+        source: "households (area)",
+        build: () => {
+          const q = query(col, where("area", "in", areas), orderBy("area"));
+          return limitCount ? query(q, limit(limitCount)) : q;
+        },
+      }
+      : {
+        key: `households|all${tail}`,
+        source: "households",
+        build: () => {
+          const q = query(col, orderBy("updatedAt", "desc"));
+          return limitCount ? query(q, limit(limitCount)) : q;
+        },
+      }];
+  }, [isViewAll, byArea, scope.kind, areasKey, limitCount]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // `in` accepts at most 30 values. More than 30 areas on one volunteer is not a
+  // real assignment, but silently dropping the rest would read as missing data, so
+  // it is said out loud.
+  useEffect(() => {
+    const n = (scope.areas || []).length;
+    if (byArea && n > 30) {
+      console.warn(
+        `[households] ${n} areas assigned; Firestore can filter on 30. `
+        + `Households in the remaining ${n - 30} are not listed.`,
+      );
+    }
+  }, [byArea, areasKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const { rows, loading, error } = useSharedCollection(specs);
 
   useEffect(() => {
-    // Scoped volunteer with no areas assigned — return empty immediately.
-    if (isViewAssigned && (!assignedAreas || assignedAreas.length === 0)) {
-      setHouseholds([]);
-      setLoading(false);
-      return;
-    }
+    if (error) showToast({ type: "error", message: friendlyFirestoreError(error, "households") });
+  }, [error, showToast]);
 
-    let q = isViewAssigned
-      ? query(collection(db, "households"), where("area", "in", assignedAreas.slice(0, 30)), orderBy("area"))
-      : query(collection(db, "households"), orderBy("updatedAt", "desc"));
+  // The shared store is the source of truth; local state exists only so the
+  // optimistic mutations below can paint before the server answers.
+  useEffect(() => { setHouseholds(rows); }, [rows]);
 
-    if (limitCount) q = query(q, limit(limitCount));
-
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        setHouseholds(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setHasMore(limitCount ? snap.size === limitCount : false);
-        setLoading(false);
-      },
-      (err) => { console.error(err); setError(err); setLoading(false); showToast({ type: "error", message: friendlyFirestoreError(err, "households") }); }
-    );
-    return unsub;
-  }, [showToast, limitCount, isViewAll, isViewAssigned, assignedAreas?.join(",")]);
+  const hasMore = Boolean(limitCount) && rows.length === limitCount;
 
   const loadMore = useCallback(() => {
     if (pageSize) setLimitCount((c) => (c || 0) + pageSize);
@@ -72,6 +119,7 @@ export function useHouseholds({ pageSize } = {}) {
       setHouseholds((prev) => [optimisticDoc, ...prev]);
       try {
         const ref = await addDoc(collection(db, "households"), { ...data, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+        meterWrites(1, "households");
         setHouseholds((prev) => prev.map((h) => (h.id === tempId ? { ...h, id: ref.id, _pending: false } : h)));
         logActivity({ volunteerId: volunteer?.id, action: "create_household", details: { householdId: ref.id } });
         showToast({ type: "success", message: "Household added." });
@@ -92,6 +140,7 @@ export function useHouseholds({ pageSize } = {}) {
       setHouseholds((prev) => prev.map((h) => (h.id === id ? { ...h, ...data, updatedAt: new Date() } : h)));
       try {
         await updateDoc(doc(db, "households", id), { ...data, updatedAt: serverTimestamp() });
+        meterWrites(1, "households");
         logActivity({ volunteerId: volunteer?.id, action: "update_household", details: { householdId: id, fields: Object.keys(data) } });
         showToast({ type: "success", message: "Household updated." });
         return true;

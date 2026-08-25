@@ -1,50 +1,112 @@
 // src/admin/AreasMandalsManager.jsx
+//
+// PHASE 22 — renames now actually propagate, and Areas/Mandals can be merged.
+//
+// Areas, Mandals, Levels and Sub-areas are stored on every record as NAME TEXT,
+// never as a reference to areas/{id}. That has one consequence this screen has to
+// respect everywhere: editing `name` on the taxonomy document renames the
+// dropdown option and nothing else. Every existing household keeps the old
+// spelling, and worse, volunteers.assignedAreas[] keeps it too — and
+// firestore.rules gates every read with an exact string match against that
+// array, so an un-propagated rename silently empties the contact list of every
+// karyakarta assigned to it. No error, no empty-state explanation.
+//
+// Before this phase only Mandal renames cascaded, and only across `individuals`
+// and `households`. Area renames did not cascade at all, while the blurb at the
+// top of the page claimed they did. Now every rename here goes through
+// services/taxonomyService.js, which knows the full list of collections that
+// store a taxonomy name, and the page's promise is true.
 import { useEffect, useState } from 'react';
 import {
   collection, addDoc, updateDoc, deleteDoc, doc,
-  onSnapshot, writeBatch, getDocs, query, where,
+  onSnapshot, writeBatch, getDocs,
 } from 'firebase/firestore';
-import { BarChart2 } from 'lucide-react';
+import { BarChart2, X } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { RequirePermission } from '../components/RequirePermission';
 import {
   DEFAULT_MANDALS, DEFAULT_LEVELS,
   MEMBER_FIELD_DEFS, FULL_MEMBER_FIELDS, MINIMAL_MEMBER_FIELDS,
 } from '../lib/areaMandalCodes';
+import {
+  countTaxonomyUsage, describeTaxonomyError, describeUsage,
+  renameTaxonomyValue, TAXONOMY_LABELS,
+} from '../services/taxonomyService';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { AreaTable } from './AreaTable';
+import { MergeTaxonomyPanel } from './MergeTaxonomyPanel';
+import { UnlistedTaxonomyPanel } from './UnlistedTaxonomyPanel';
 
-// ── 5.1 helper: count usages across individuals + households ─────────────────
-async function countUsages(field, value) {
-  const [indSnap, hhSnap] = await Promise.all([
-    getDocs(query(collection(db, 'individuals'), where(field, '==', value))),
-    getDocs(query(collection(db, 'households'), where(field, '==', value))),
-  ]);
-  return { individuals: indSnap.size, households: hhSnap.size };
+// ── Rename: count, confirm, cascade ──────────────────────────────────────────
+// Returns { applied, records } — `applied: false` means the admin cancelled at
+// the confirmation, so the caller must not touch the taxonomy document either.
+//
+// Records are rewritten BEFORE the taxonomy document, deliberately. If the
+// cascade throws, the option in the dropdown still reads with its old name and
+// re-running the rename finishes the rest. The reverse order would leave the
+// records orphaned behind a name that no longer exists anywhere.
+async function confirmAndCascade({ kind, oldValue, newValue, parentArea = null, onProgress }) {
+  const label = (TAXONOMY_LABELS[kind] || 'value').toLowerCase();
+  const usage = await countTaxonomyUsage(kind, oldValue, { parentArea });
+  if (usage.total === 0) return { applied: true, records: 0 };
+
+  const affectsVolunteers = usage.rows.some((r) => r.collection === 'volunteers' && r.count > 0);
+  const go = window.confirm(
+    `Rename ${label} "${oldValue}" to "${newValue}"?\n\n`
+    + `This also rewrites ${describeUsage(usage)}.\n\n`
+    + (affectsVolunteers
+      ? 'Karyakarta assignments are included — they have to be, or everyone assigned '
+        + `to "${oldValue}" would stop seeing their own contacts.\n\n`
+      : '')
+    + 'Leave this page open until it finishes.',
+  );
+  if (!go) return { applied: false, records: 0 };
+
+  const res = await renameTaxonomyValue(kind, oldValue, newValue, { parentArea, onProgress });
+  return { applied: true, records: res.total };
 }
 
-// ── 5.2 helper: cascade-rename field across individuals + households ──────────
-async function cascadeRename(field, oldValue, newValue) {
-  const [indSnap, hhSnap] = await Promise.all([
-    getDocs(query(collection(db, 'individuals'), where(field, '==', oldValue))),
-    getDocs(query(collection(db, 'households'), where(field, '==', oldValue))),
-  ]);
-  const CHUNK = 400;
-  const all = [
-    ...indSnap.docs.map((d) => ({ ref: doc(db, 'individuals', d.id) })),
-    ...hhSnap.docs.map((d) => ({ ref: doc(db, 'households', d.id) })),
-  ];
-  for (let i = 0; i < all.length; i += CHUNK) {
-    const batch = writeBatch(db);
-    all.slice(i, i + CHUNK).forEach(({ ref }) => batch.update(ref, { [field]: newValue }));
-    await batch.commit();
-  }
-  return all.length;
+// ── Delete confirmation, shared by all four tables ───────────────────────────
+function DeleteTaxonomyDialog({ pending, busy, onCancel, onConfirm }) {
+  if (!pending) return null;
+  const { row, usage, kind } = pending;
+  const label = (TAXONOMY_LABELS[kind] || 'value').toLowerCase();
+  const inUse = usage && usage.total > 0;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl">
+        <h3 className="text-sm font-semibold text-slate-900">Delete {label} “{row.name}”?</h3>
+        {inUse ? (
+          <>
+            <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Still used by <strong>{describeUsage(usage)}</strong>. Those records keep the text
+              “{row.name}”, which will no longer appear in any dropdown — so they become hard to
+              find and, for karyakarta assignments, stop matching anything at all.
+            </p>
+            {(kind === 'area' || kind === 'mandal') && (
+              <p className="mt-2 text-xs text-slate-500">
+                To move them somewhere instead of stranding them, cancel and use
+                “Merge {label}s” — it rewrites every record onto another {label} first.
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="mt-2 text-sm text-slate-500">Not used by any record — safe to delete.</p>
+        )}
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>Cancel</Button>
+          <Button variant="dangerSolid" size="sm" onClick={onConfirm} disabled={busy}>
+            {busy ? 'Deleting…' : inUse ? 'Delete anyway' : 'Delete'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-// ── 5.3 Area stats panel ──────────────────────────────────────────────────────
+// ── Area stats panel ──────────────────────────────────────────────────────────
 function AreaStats({ areas }) {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -72,8 +134,20 @@ function AreaStats({ areas }) {
         individuals: indByArea[a.name] || 0,
         households: hhByArea[a.name] || 0,
       }));
+      // Area names on records that no longer match any option in the dropdown —
+      // usually the debris of a rename made before renames cascaded. Surfaced
+      // here because these records are otherwise invisible to every scoped
+      // query in the app.
+      const known = new Set(areas.map((a) => a.name));
+      const orphans = Object.keys({ ...indByArea, ...hhByArea })
+        .filter((name) => name !== '(none)' && !known.has(name))
+        .map((name) => ({
+          name,
+          individuals: indByArea[name] || 0,
+          households: hhByArea[name] || 0,
+        }));
       const unassigned = indByArea['(none)'] || 0;
-      setStats({ rows, unassigned });
+      setStats({ rows, unassigned, orphans });
     } finally {
       setLoading(false);
     }
@@ -85,7 +159,7 @@ function AreaStats({ areas }) {
         <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
           <BarChart2 className="h-4 w-4 text-slate-400" /> Area Statistics
         </h2>
-        <Button variant="secondary" size="sm" onClick={() => { setOpen((v) => !v); if (!open && !stats) load(); }}>
+        <Button variant="secondary" size="sm" onClick={() => { setOpen((v) => !v); if (!open) load(); }}>
           {open ? 'Hide' : 'Show stats'}
         </Button>
       </div>
@@ -93,41 +167,62 @@ function AreaStats({ areas }) {
         loading ? (
           <p className="text-sm text-slate-400">Loading…</p>
         ) : stats ? (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm divide-y divide-slate-100">
-              <thead className="bg-slate-50/60">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium text-slate-600">Area</th>
-                  <th className="px-3 py-2 text-right font-medium text-slate-600">Households</th>
-                  <th className="px-3 py-2 text-right font-medium text-slate-600">People</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {stats.rows.map((r) => (
-                  <tr key={r.name} className="hover:bg-slate-50/50">
-                    <td className="px-3 py-2 text-slate-800">{r.name}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.households}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.individuals}</td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm divide-y divide-slate-100">
+                <thead className="bg-slate-50/60">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium text-slate-600">Area</th>
+                    <th className="px-3 py-2 text-right font-medium text-slate-600">Households</th>
+                    <th className="px-3 py-2 text-right font-medium text-slate-600">People</th>
                   </tr>
-                ))}
-                {stats.unassigned > 0 && (
-                  <tr className="bg-amber-50/40">
-                    <td className="px-3 py-2 text-slate-400 italic">No area assigned</td>
-                    <td className="px-3 py-2 text-right" />
-                    <td className="px-3 py-2 text-right tabular-nums text-amber-600">{stats.unassigned}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {stats.rows.map((r) => (
+                    <tr key={r.name} className="hover:bg-slate-50/50">
+                      <td className="px-3 py-2 text-slate-800">{r.name}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.households}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.individuals}</td>
+                    </tr>
+                  ))}
+                  {stats.orphans.map((r) => (
+                    <tr key={`orphan-${r.name}`} className="bg-rose-50/40">
+                      <td className="px-3 py-2 text-rose-700">
+                        {r.name}
+                        <span className="ml-1.5 text-xs text-rose-400">not in the list</span>
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-rose-600">{r.households}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-rose-600">{r.individuals}</td>
+                    </tr>
+                  ))}
+                  {stats.unassigned > 0 && (
+                    <tr className="bg-amber-50/40">
+                      <td className="px-3 py-2 text-slate-400 italic">No area assigned</td>
+                      <td className="px-3 py-2 text-right" />
+                      <td className="px-3 py-2 text-right tabular-nums text-amber-600">{stats.unassigned}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {stats.orphans.length > 0 && (
+              <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                The rows in red hold an area name that is not in the Areas list, so no dropdown
+                offers it and area-scoped karyakartas cannot see them. Add an area with exactly
+                that name to adopt the records, then use “Merge areas” to fold it into the right one.
+              </p>
+            )}
+          </>
         ) : null
       )}
     </Card>
   );
 }
 
-// ── Generic CodeTable (Areas / Levels) with 5.1 + 5.2 ────────────────────────
-function CodeTable({ title, collectionName, defaults, codeRequired = true, renameField = null }) {
+// ── Generic CodeTable (Levels) ───────────────────────────────────────────────
+// `kind` is a taxonomyService key ('level'); pass null for a list that no record
+// stores by name.
+function CodeTable({ title, collectionName, defaults, codeRequired = true, kind = null, onNotice }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
@@ -135,8 +230,9 @@ function CodeTable({ title, collectionName, defaults, codeRequired = true, renam
   const [code, setCode] = useState('');
   const [error, setError] = useState(null);
   const [seeding, setSeeding] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState(null); // { row, individuals, households }
+  const [pendingDelete, setPendingDelete] = useState(null); // { row, usage, kind }
   const [deleting, setDeleting] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, collectionName), (snap) => {
@@ -148,6 +244,7 @@ function CodeTable({ title, collectionName, defaults, codeRequired = true, renam
 
   async function handleAdd() {
     if (!name.trim() || (codeRequired && !code.trim())) { setError('Name (and code) are required.'); return; }
+    if (rows.some((r) => (r.name || '').toLowerCase() === name.trim().toLowerCase())) { setError(`"${name.trim()}" already exists.`); return; }
     if (code.trim() && rows.some((r) => r.code?.toLowerCase() === code.trim().toLowerCase())) { setError('That code is already in use.'); return; }
     setError(null);
     try {
@@ -158,42 +255,49 @@ function CodeTable({ title, collectionName, defaults, codeRequired = true, renam
     }
   }
 
-  // 5.2 — on blur, check if name changed and offer cascade rename
-  async function handleNameBlur(row, newName) {
-    if (!newName.trim() || newName === row.name) return;
-    if (!renameField) {
-      await updateDoc(doc(db, collectionName, row.id), { name: newName.trim() });
+  async function handleNameBlur(row, el) {
+    const next = el.value.trim();
+    if (!next || next === row.name) return;
+    if (rows.some((r) => r.id !== row.id && (r.name || '').toLowerCase() === next.toLowerCase())) {
+      setError(`"${next}" already exists in this list.`);
+      el.value = row.name;
       return;
     }
-    const usages = await countUsages(renameField, row.name);
-    const total = usages.individuals + usages.households;
-    if (total === 0) {
-      await updateDoc(doc(db, collectionName, row.id), { name: newName.trim() });
+    setError(null);
+    if (!kind) {
+      try { await updateDoc(doc(db, collectionName, row.id), { name: next }); }
+      catch (err) { el.value = row.name; setError(err.message); }
       return;
     }
-    const go = window.confirm(
-      `Rename "${row.name}" to "${newName.trim()}"?\n\nThis will also update ${total} existing record(s) (${usages.households} household(s), ${usages.individuals} individual(s)).`
-    );
-    if (!go) return;
-    await Promise.all([
-      updateDoc(doc(db, collectionName, row.id), { name: newName.trim() }),
-      cascadeRename(renameField, row.name, newName.trim()),
-    ]);
+    setBusy(true);
+    try {
+      const { applied, records } = await confirmAndCascade({ kind, oldValue: row.name, newValue: next });
+      if (!applied) { el.value = row.name; return; }
+      await updateDoc(doc(db, collectionName, row.id), { name: next });
+      onNotice?.(`Renamed “${row.name}” to “${next}”.`
+        + (records ? ` ${records} record(s) updated.` : ''));
+    } catch (err) {
+      el.value = row.name;
+      setError(describeTaxonomyError(err, kind));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleUpdate(row, field, value) {
     try { await updateDoc(doc(db, collectionName, row.id), { [field]: value }); } catch (err) { setError(err.message); }
   }
 
-  // 5.1 — check usages before delete
   async function handleDelete(row) {
-    if (!renameField) {
-      if (!window.confirm(`Delete "${row.name}"?`)) return;
-      await deleteDoc(doc(db, collectionName, row.id));
+    if (!kind) {
+      setPendingDelete({ row, usage: null, kind });
       return;
     }
-    const usages = await countUsages(renameField, row.name);
-    setPendingDelete({ row, ...usages });
+    try {
+      setPendingDelete({ row, usage: await countTaxonomyUsage(kind, row.name), kind });
+    } catch (err) {
+      setError(describeTaxonomyError(err, kind));
+    }
   }
 
   async function confirmDelete() {
@@ -228,8 +332,8 @@ function CodeTable({ title, collectionName, defaults, codeRequired = true, renam
       {error && <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
       {loadError && <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">Couldn't load: {loadError}.</div>}
 
-      <div className="mb-3 flex gap-2">
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" className="flex-1" />
+      <div className="mb-3 flex flex-wrap gap-2">
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" className="flex-1 min-w-[140px]" />
         <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code" className="w-24 uppercase" />
         <Button variant="accent" onClick={handleAdd}>Add</Button>
       </div>
@@ -246,49 +350,36 @@ function CodeTable({ title, collectionName, defaults, codeRequired = true, renam
           {rows.map((r) => (
             <div key={r.id} className="flex items-center gap-2 py-1.5">
               <input
+                key={`n-${r.name}`}
                 defaultValue={r.name}
-                onBlur={(e) => handleNameBlur(r, e.target.value)}
-                className="flex-1 rounded border border-transparent px-1.5 py-1 text-sm hover:border-slate-200 focus:border-slate-300 focus:outline-none"
+                onBlur={(e) => handleNameBlur(r, e.target)}
+                disabled={busy}
+                className="min-w-0 flex-1 rounded border border-transparent px-1.5 py-1 text-sm hover:border-slate-200 focus:border-slate-300 focus:outline-none disabled:bg-slate-50"
               />
               <input
+                key={`c-${r.code}`}
                 defaultValue={r.code}
                 onBlur={(e) => e.target.value !== r.code && handleUpdate(r, 'code', e.target.value.toUpperCase())}
-                className="w-20 rounded border border-transparent px-1.5 py-1 text-sm uppercase hover:border-slate-200 focus:border-slate-300 focus:outline-none"
+                className="w-20 shrink-0 rounded border border-transparent px-1.5 py-1 text-sm uppercase hover:border-slate-200 focus:border-slate-300 focus:outline-none"
               />
-              <button onClick={() => handleDelete(r)} className="text-xs text-rose-500 hover:underline">Delete</button>
+              <button onClick={() => handleDelete(r)} className="shrink-0 text-xs text-rose-500 hover:underline">Delete</button>
             </div>
           ))}
         </div>
       )}
 
-      {/* 5.1 — delete confirmation with usage count */}
-      {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-80 rounded-xl bg-white p-5 shadow-xl">
-            <h3 className="text-sm font-semibold text-slate-900">Delete "{pendingDelete.row.name}"?</h3>
-            {(pendingDelete.individuals + pendingDelete.households) > 0 ? (
-              <p className="mt-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                This value is used by <strong>{pendingDelete.households}</strong> household(s) and <strong>{pendingDelete.individuals}</strong> individual(s). Those records will keep the old value as a plain string — it won't appear in dropdowns anymore.
-              </p>
-            ) : (
-              <p className="mt-2 text-sm text-slate-500">Not used anywhere — safe to delete.</p>
-            )}
-            <div className="mt-4 flex justify-end gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setPendingDelete(null)}>Cancel</Button>
-              <Button variant="dangerSolid" size="sm" onClick={confirmDelete} disabled={deleting}>{deleting ? 'Deleting…' : 'Delete anyway'}</Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DeleteTaxonomyDialog
+        pending={pendingDelete}
+        busy={deleting}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={confirmDelete}
+      />
     </Card>
   );
 }
 
-// ── MandalTable with 5.1 + 5.2 ────────────────────────────────────────────────
-function MandalTable() {
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(null);
+// ── MandalTable ──────────────────────────────────────────────────────────────
+function MandalTable({ rows, loading, loadError, onNotice }) {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [gender, setGender] = useState('');
@@ -297,17 +388,12 @@ function MandalTable() {
   const [savingCell, setSavingCell] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
-
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'mandals'), (snap) => {
-      setRows(snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || '')));
-      setLoading(false); setLoadError(null);
-    }, (err) => { setLoading(false); setLoadError(err.message || "Couldn't load mandals."); });
-    return unsub;
-  }, []);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(null);
 
   async function handleAdd() {
     if (!name.trim() || !code.trim()) { setError('Name and code are required.'); return; }
+    if (rows.some((r) => (r.name || '').toLowerCase() === name.trim().toLowerCase())) { setError(`"${name.trim()}" already exists.`); return; }
     if (rows.some((r) => r.code?.toLowerCase() === code.trim().toLowerCase())) { setError('That code is already in use.'); return; }
     setError(null);
     try {
@@ -318,23 +404,34 @@ function MandalTable() {
     }
   }
 
-  // 5.2 — cascade rename mandal
-  async function handleNameBlur(row, newName) {
-    if (!newName.trim() || newName === row.name) return;
-    const usages = await countUsages('mandal', row.name);
-    const total = usages.individuals + usages.households;
-    if (total === 0) {
-      await updateDoc(doc(db, 'mandals', row.id), { name: newName.trim() });
+  // `el`, not the string: a cancelled or refused rename has to put the stored
+  // name back in the box. Typed text left next to unchanged data reads exactly
+  // like a save that worked.
+  async function handleNameBlur(row, el) {
+    const next = el.value.trim();
+    if (!next || next === row.name) return;
+    if (rows.some((r) => r.id !== row.id && (r.name || '').toLowerCase() === next.toLowerCase())) {
+      setError(`"${next}" is already a Mandal. Use “Merge mandals” below to combine the two.`);
+      el.value = row.name;
       return;
     }
-    const go = window.confirm(
-      `Rename "${row.name}" to "${newName.trim()}"?\n\nThis will also update ${total} existing record(s) (${usages.individuals} individual(s)).`
-    );
-    if (!go) return;
-    await Promise.all([
-      updateDoc(doc(db, 'mandals', row.id), { name: newName.trim() }),
-      cascadeRename('mandal', row.name, newName.trim()),
-    ]);
+    setError(null);
+    setBusy(true);
+    try {
+      const { applied, records } = await confirmAndCascade({
+        kind: 'mandal', oldValue: row.name, newValue: next, onProgress: setProgress,
+      });
+      if (!applied) { el.value = row.name; return; }
+      await updateDoc(doc(db, 'mandals', row.id), { name: next });
+      onNotice?.(`Renamed Mandal “${row.name}” to “${next}”.`
+        + (records ? ` ${records} record(s) updated.` : ''));
+    } catch (err) {
+      el.value = row.name;
+      setError(describeTaxonomyError(err, 'mandal'));
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
   }
 
   async function handleUpdate(row, field, value) {
@@ -359,10 +456,12 @@ function MandalTable() {
     try { await updateDoc(doc(db, 'mandals', row.id), { fields: preset }); } catch (err) { setError(err.message); }
   }
 
-  // 5.1 — check usages before delete
   async function handleDelete(row) {
-    const usages = await countUsages('mandal', row.name);
-    setPendingDelete({ row, ...usages });
+    try {
+      setPendingDelete({ row, usage: await countTaxonomyUsage('mandal', row.name), kind: 'mandal' });
+    } catch (err) {
+      setError(describeTaxonomyError(err, 'mandal'));
+    }
   }
 
   async function confirmDelete() {
@@ -397,6 +496,9 @@ function MandalTable() {
       <p className="mb-3 text-xs text-slate-400">Gender groups your Mandals for reporting. Checkboxes control which extra questions appear when adding a member under that Mandal.</p>
       {error && <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
       {loadError && <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">Couldn't load: {loadError}.</div>}
+      {progress && (
+        <p className="mb-3 text-xs text-slate-500">Updating records — {progress.done} of {progress.total}…</p>
+      )}
 
       <div className="mb-3 flex flex-wrap gap-2">
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" className="flex-1 min-w-[140px]" />
@@ -420,23 +522,30 @@ function MandalTable() {
         <div className="space-y-3">
           {rows.map((r) => (
             <div key={r.id} className="rounded-lg border border-slate-100 p-3">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Full width on a phone. Sharing one line with the code box,
+                    the gender select and Delete left the name 45px wide, so
+                    "Balak Mandal" edited as "Bal M" — the field you actually
+                    rename was the one squeezed out. */}
                 <input
+                  key={`n-${r.name}`}
                   defaultValue={r.name}
-                  onBlur={(e) => handleNameBlur(r, e.target.value)}
-                  className="flex-1 rounded border border-transparent px-1.5 py-1 text-sm font-medium hover:border-slate-200 focus:border-slate-300 focus:outline-none"
+                  onBlur={(e) => handleNameBlur(r, e.target)}
+                  disabled={busy}
+                  className="w-full min-w-0 rounded border border-transparent px-1.5 py-1 text-sm font-medium hover:border-slate-200 focus:border-slate-300 focus:outline-none disabled:bg-slate-50 sm:w-auto sm:flex-1"
                 />
                 <input
+                  key={`c-${r.code}`}
                   defaultValue={r.code}
                   onBlur={(e) => e.target.value !== r.code && handleUpdate(r, 'code', e.target.value.toUpperCase())}
-                  className="w-20 rounded border border-transparent px-1.5 py-1 text-sm uppercase hover:border-slate-200 focus:border-slate-300 focus:outline-none"
+                  className="w-20 shrink-0 rounded border border-transparent px-1.5 py-1 text-sm uppercase hover:border-slate-200 focus:border-slate-300 focus:outline-none"
                 />
-                <select value={r.gender || ''} onChange={(e) => handleUpdate(r, 'gender', e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:outline-none focus:ring-1 focus:ring-slate-300">
+                <select value={r.gender || ''} onChange={(e) => handleUpdate(r, 'gender', e.target.value)} className="h-8 shrink-0 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:outline-none focus:ring-1 focus:ring-slate-300">
                   <option value="">No gender</option>
                   <option value="Male">Male</option>
                   <option value="Female">Female</option>
                 </select>
-                <button onClick={() => handleDelete(r)} className="text-xs text-rose-500 hover:underline">Delete</button>
+                <button onClick={() => handleDelete(r)} className="shrink-0 text-xs text-rose-500 hover:underline">Delete</button>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 pl-1.5">
                 {MEMBER_FIELD_DEFS.map((f) => {
@@ -457,30 +566,27 @@ function MandalTable() {
         </div>
       )}
 
-      {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-80 rounded-xl bg-white p-5 shadow-xl">
-            <h3 className="text-sm font-semibold text-slate-900">Delete "{pendingDelete.row.name}"?</h3>
-            {pendingDelete.individuals > 0 ? (
-              <p className="mt-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                <strong>{pendingDelete.individuals}</strong> individual(s) are assigned to this Mandal. They'll keep the old value as a string — it won't appear in dropdowns anymore.
-              </p>
-            ) : (
-              <p className="mt-2 text-sm text-slate-500">Not assigned to anyone — safe to delete.</p>
-            )}
-            <div className="mt-4 flex justify-end gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setPendingDelete(null)}>Cancel</Button>
-              <Button variant="dangerSolid" size="sm" onClick={confirmDelete} disabled={deleting}>{deleting ? 'Deleting…' : 'Delete anyway'}</Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DeleteTaxonomyDialog
+        pending={pendingDelete}
+        busy={deleting}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={confirmDelete}
+      />
     </Card>
   );
 }
 
 function AreasMandalsManagerInner() {
   const [areas, setAreas] = useState([]);
+  const [mandals, setMandals] = useState([]);
+  const [mandalsLoading, setMandalsLoading] = useState(true);
+  const [mandalsError, setMandalsError] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const [error, setError] = useState(null);
+  const [progress, setProgress] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'areas'), (snap) => {
       setAreas(snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || '')));
@@ -488,21 +594,177 @@ function AreasMandalsManagerInner() {
     return unsub;
   }, []);
 
+  // Lifted out of MandalTable so the merge panel below it can see the same list.
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'mandals'), (snap) => {
+      setMandals(snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || '')));
+      setMandalsLoading(false); setMandalsError(null);
+    }, (err) => { setMandalsLoading(false); setMandalsError(err.message || "Couldn't load mandals."); });
+    return unsub;
+  }, []);
+
+  function announce(message) { setError(null); setNotice(message); }
+
+  // Returns false when nothing was applied, so AreaTable can put the stored name
+  // back in the box instead of leaving the typed text there.
+  async function handleRenameArea(area, { name }) {
+    setError(null); setNotice(null);
+    try {
+      const { applied, records } = await confirmAndCascade({
+        kind: 'area', oldValue: area.name, newValue: name, onProgress: setProgress,
+      });
+      if (!applied) return false;
+      await updateDoc(doc(db, 'areas', area.id), { name });
+      announce(`Renamed area “${area.name}” to “${name}”.`
+        + (records ? ` ${records} record(s) updated.` : ' Nothing else referenced it.'));
+      return true;
+    } catch (err) {
+      setError(describeTaxonomyError(err, 'area'));
+      return false;
+    } finally {
+      setProgress(null);
+    }
+  }
+
+  async function handleRenameSubArea(area, oldSub, { name, code }) {
+    setError(null); setNotice(null);
+    try {
+      let records = 0;
+      // Only a name change reaches records — households store subArea as text.
+      if (name !== oldSub.name) {
+        const res = await confirmAndCascade({
+          kind: 'subArea', oldValue: oldSub.name, newValue: name,
+          parentArea: area.name, onProgress: setProgress,
+        });
+        if (!res.applied) return false;
+        records = res.records;
+      }
+      const subAreas = (area.subAreas || []).map((s) => (
+        s.name === oldSub.name && s.code === oldSub.code ? { name, code } : s
+      ));
+      await updateDoc(doc(db, 'areas', area.id), { subAreas });
+      if (name !== oldSub.name) {
+        announce(`Renamed sub-area “${oldSub.name}” to “${name}” in ${area.name}.`
+          + (records ? ` ${records} record(s) updated.` : ''));
+      }
+      return true;
+    } catch (err) {
+      setError(describeTaxonomyError(err, 'subArea'));
+      return false;
+    } finally {
+      setProgress(null);
+    }
+  }
+
+  async function handleDeleteSubArea(area, sub) {
+    setError(null); setNotice(null);
+    try {
+      const usage = await countTaxonomyUsage('subArea', sub.name, { parentArea: area.name });
+      const go = window.confirm(
+        `Delete sub-area "${sub.name}" from ${area.name}?\n\n`
+        + (usage.total
+          ? `${describeUsage(usage)} still carry it. They keep the text, which will no longer `
+            + 'appear in the Sub-area dropdown.'
+          : 'Nothing uses it.'),
+      );
+      if (!go) return;
+      await updateDoc(doc(db, 'areas', area.id), {
+        subAreas: (area.subAreas || []).filter((s) => s.name !== sub.name || s.code !== sub.code),
+      });
+      if (usage.total) {
+        announce(`Removed sub-area “${sub.name}”. ${describeUsage(usage)} still carry the old text.`);
+      }
+    } catch (err) {
+      setError(describeTaxonomyError(err, 'subArea'));
+    }
+  }
+
+  async function handleAskDeleteArea(area) {
+    setError(null); setNotice(null);
+    try {
+      setPendingDelete({ row: area, usage: await countTaxonomyUsage('area', area.name), kind: 'area' });
+    } catch (err) {
+      setError(describeTaxonomyError(err, 'area'));
+    }
+  }
+
+  async function confirmDeleteArea() {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    try {
+      await deleteDoc(doc(db, 'areas', pendingDelete.row.id));
+      setPendingDelete(null);
+    } catch (err) {
+      setError(describeTaxonomyError(err, 'area'));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8 space-y-6">
-      <h1 className="text-xl font-semibold text-slate-900 tracking-tight">Areas, Mandals &amp; Levels</h1>
-      <p className="text-sm text-slate-400">These drive every dropdown in the app. Renaming propagates to all existing records; deleting in-use values keeps existing data intact.</p>
+    <div className="mx-auto max-w-3xl px-4 py-6 space-y-6 sm:px-6 sm:py-8">
+      <div>
+        <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">Areas, Mandals &amp; Levels</h1>
+        <p className="mt-1 text-sm text-slate-400">
+          These drive every dropdown in the app. Renaming rewrites the name on every household,
+          contact, calling batch, event and karyakarta assignment that uses it, so nothing is left
+          behind on the old spelling. Deleting an in-use value strands those records instead — merge
+          it into another one if you want them moved.
+        </p>
+      </div>
+
+      {notice && (
+        <div className="flex items-start justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">
+          <span>{notice}</span>
+          <button onClick={() => setNotice(null)} className="shrink-0 text-emerald-600 hover:text-emerald-800"><X className="h-4 w-4" /></button>
+        </div>
+      )}
+      {error && (
+        <div className="flex items-start justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="shrink-0 text-rose-500 hover:text-rose-700"><X className="h-4 w-4" /></button>
+        </div>
+      )}
+      {progress && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
+          Updating records — {progress.done} of {progress.total}. Keep this page open.
+        </div>
+      )}
+
       <AreaStats areas={areas} />
-      <AreaTable areas={areas} onUpdateName={(r, n, c) => {
-          const updates = { name: n };
-          if (c) updates.code = c;
-          updateDoc(doc(db, 'areas', r.id), updates);
-        }} onDelete={async (r) => {
-          if (!window.confirm('Delete this area?')) return;
-          await deleteDoc(doc(db, 'areas', r.id));
-        }} />
-      <MandalTable />
-      <CodeTable title="Levels" collectionName="levels" defaults={DEFAULT_LEVELS} codeRequired={false} renameField={null} />
+      <AreaTable
+        areas={areas}
+        onRename={handleRenameArea}
+        onUpdateCode={(area, code) => updateDoc(doc(db, 'areas', area.id), { code })}
+        onDelete={handleAskDeleteArea}
+        onRenameSubArea={handleRenameSubArea}
+        onDeleteSubArea={handleDeleteSubArea}
+      />
+      <MergeTaxonomyPanel kind="area" rows={areas} onDone={announce} />
+      {/* Sits after Merge, deliberately: Merge handles two options that both
+          exist, this handles a name that only exists on records. Same fix, but
+          you only come looking for it after finding the option missing. */}
+      <UnlistedTaxonomyPanel kind="area" rows={areas} onDone={announce} />
+
+      <MandalTable rows={mandals} loading={mandalsLoading} loadError={mandalsError} onNotice={announce} />
+      <MergeTaxonomyPanel kind="mandal" rows={mandals} onDone={announce} />
+      <UnlistedTaxonomyPanel kind="mandal" rows={mandals} onDone={announce} />
+
+      <CodeTable
+        title="Levels"
+        collectionName="levels"
+        defaults={DEFAULT_LEVELS}
+        codeRequired={false}
+        kind="level"
+        onNotice={announce}
+      />
+
+      <DeleteTaxonomyDialog
+        pending={pendingDelete}
+        busy={deleting}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={confirmDeleteArea}
+      />
     </div>
   );
 }

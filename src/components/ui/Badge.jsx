@@ -11,9 +11,15 @@ const TONE_CLASSES = {
   orange: 'bg-orange-50 text-orange-700',
 };
 
-export function Badge({ tone = 'slate', className, children }) {
+// `...rest` so a caller can hang a `title` (or an aria attribute) on a badge —
+// several of them are the only explanation on screen for why a record behaves
+// differently, and a chip nobody can hover is a chip nobody understands.
+export function Badge({ tone = 'slate', className, children, ...rest }) {
   return (
-    <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium', TONE_CLASSES[tone] || TONE_CLASSES.slate, className)}>
+    <span
+      className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium', TONE_CLASSES[tone] || TONE_CLASSES.slate, className)}
+      {...rest}
+    >
       {children}
     </span>
   );

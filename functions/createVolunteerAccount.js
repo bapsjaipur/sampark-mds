@@ -18,6 +18,7 @@
 
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const admin = require('firebase-admin');
+const { permissionsForVolunteer, normalizeRoleRefs } = require('./lib/callerAccess');
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -33,20 +34,15 @@ exports.createVolunteerAccount = onCall({ region: 'us-central1' }, async (reques
   // Caller must have manage_users.
   const callerDoc = await db.collection('volunteers').doc(request.auth.uid).get();
   if (!callerDoc.exists) throw new HttpsError('permission-denied', 'Volunteer record not found.');
-  // BUG FIX: `db.collection('roles').doc(undefined)` throws synchronously
-  // (not an HttpsError, just a raw JS error) whenever the caller's own
-  // volunteer doc has no roleRef yet — Functions then reports that as an
-  // opaque "internal" error to the client, which is what was showing up as
-  // "some internal error" when creating a new volunteer. Guard it instead
-  // of assuming roleRef is always set.
-  const callerRoleRef = callerDoc.data().roleRef;
-  const callerRoleDoc = callerRoleRef ? await db.collection('roles').doc(callerRoleRef).get() : null;
-  const callerPerms = (callerRoleDoc?.exists && callerRoleDoc.data().permissions) || [];
+  // Resolved across ALL the caller's roles (PHASE 21 multi-role) — and tolerant
+  // of a caller with no role at all, which used to throw a raw
+  // `doc(undefined)` error that Functions reported as an opaque "internal".
+  const callerPerms = await permissionsForVolunteer(db, callerDoc.data());
   if (!callerPerms.includes('manage_users')) {
     throw new HttpsError('permission-denied', 'Missing manage_users permission.');
   }
 
-  const { name, phone, password, roleRef, assignedAreas, assignedMandals } = request.data || {};
+  const { name, phone, password, roleRef, roleRefs, scopeKind, assignedAreas, assignedMandals, reportEmail, linkedIndividualId } = request.data || {};
 
   if (!name || !phone || !password) {
     throw new HttpsError('invalid-argument', 'name, phone, and password are required.');
@@ -56,6 +52,23 @@ exports.createVolunteerAccount = onCall({ region: 'us-central1' }, async (reques
   }
   if (String(password).length < 6) {
     throw new HttpsError('invalid-argument', 'password must be at least 6 characters (Firebase Auth minimum).');
+  }
+
+  // PHASE 21 — the resolved scope SHAPE (see src/lib/scope.js), denormalised
+  // onto the volunteer because firestore.rules can read only one role document
+  // and a volunteer may hold several. Whitelisted so a malformed value cannot
+  // reach a field the rules branch on; null/absent means "nobody has stated a
+  // shape", which the rules resolve from the assignment (PHASE 23).
+  const SCOPE_KINDS = ['global', 'area', 'mandal', 'intersect', 'union', 'none'];
+  if (scopeKind !== undefined && scopeKind !== null && !SCOPE_KINDS.includes(scopeKind)) {
+    throw new HttpsError('invalid-argument', `scopeKind must be one of: ${SCOPE_KINDS.join(', ')}.`);
+  }
+
+  // PHASE 20 — optional. Where automated reports get sent; distinct from the
+  // synthetic login address built below, which is not a real mailbox.
+  const cleanReportEmail = String(reportEmail || '').trim();
+  if (cleanReportEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanReportEmail)) {
+    throw new HttpsError('invalid-argument', 'reportEmail does not look like a valid email address.');
   }
 
   const email = phoneToSyntheticEmail(phone);
@@ -71,14 +84,45 @@ exports.createVolunteerAccount = onCall({ region: 'us-central1' }, async (reques
   }
 
   try {
+    const roles = normalizeRoleRefs({ roleRefs, roleRef }) || { roleRefs: [], roleRef: null };
     await db.collection('volunteers').doc(userRecord.uid).set({
       name,
       mobile: String(phone).replace(/\D/g, ''),
-      roleRef: roleRef || null,
+      reportEmail: cleanReportEmail,
+      // Both fields: roleRefs[] is authoritative, roleRef is what firestore.rules
+      // reads (it cannot iterate an array of get()s). See lib/callerAccess.js.
+      roleRefs: roles.roleRefs,
+      roleRef: roles.roleRef,
+      // PHASE 23 — null, not 'union'. This field is a DENORMALISED copy of the
+      // role's scope shape that firestore.rules reads because it cannot iterate
+      // roleRefs[]. Writing 'union' when the role states no shape pinned every
+      // new volunteer to the widest shape there is: `v.scopeKind` wins over the
+      // role in ctx(), so the rules' own inference (area + mandal → intersect)
+      // could never apply, and the server stayed wide open while the client
+      // filtered narrowly. Left null, ctx() falls through to the role and then to
+      // the inference — and Admin → Volunteers stamps a real value on first save.
+      scopeKind: scopeKind || null,
+      isActive: true,
+      // PHASE 21 — the "From contact" mode in VolunteerEditor has always SENT
+      // this and it was never stored, so linking a login to the karyakarta's own
+      // contact record silently did nothing. It is what lets the app mark that
+      // contact as a volunteer everywhere it appears, so it now persists on both
+      // sides of the link.
+      linkedIndividualId: linkedIndividualId || null,
       assignedAreas: Array.isArray(assignedAreas) ? assignedAreas : [],
       assignedMandals: Array.isArray(assignedMandals) ? assignedMandals : [],
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+
+    // The reverse pointer. Written best-effort and AFTER the volunteer doc: if the
+    // individual has since been deleted, a failure here must not roll back a login
+    // that was created correctly. Phone matching covers the un-stamped case.
+    if (linkedIndividualId) {
+      await db.collection('individuals').doc(linkedIndividualId).update({
+        volunteerId: userRecord.uid,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }).catch(() => {});
+    }
   } catch (err) {
     // Don't leave an orphaned Auth account with no matching volunteers/{uid}
     // doc — that's a login that can sign in but has no permissions and

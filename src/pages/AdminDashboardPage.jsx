@@ -1,50 +1,58 @@
 // src/pages/AdminDashboardPage.jsx — Attio redesign.
+//
+// PHASE 24 — READS. The three listeners this page opened by hand were duplicates
+// of ones the app already has open. They now go through the shared store using the
+// SAME query keys as useAllContacts/useVolunteers, so an admin arriving from
+// Contacts is billed nothing for the individuals sweep. The queries themselves are
+// unchanged — which documents arrive, and therefore every number on this page, is
+// exactly as before.
 import { useEffect, useMemo, useState } from 'react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, query, where, orderBy } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { computeOverviewStats, computeVolunteerStats } from '../services/statsService';
 import { getHouseholdIdsForAreas } from '../services/reminderService';
 import { useAuth } from '../hooks/usePermissions';
 import RequirePermission from '../components/RequirePermission';
-import { statusColorClasses } from '../lib/callingStatuses';
+import { useCallOutcomes } from '../hooks/useCallOutcomes';
+import { useSharedCollection } from '../hooks/useSharedCollection';
+import { useVolunteers } from '../hooks/useVolunteers';
 import { Card } from '../components/ui/Card';
+
+const BATCH_SPEC = [{ key: 'batches', source: 'batches', build: () => collection(db, 'batches') }];
 
 function AdminDashboardInner() {
   const { permissions, assignedAreas, assignedMandals } = useAuth();
-  const [individuals, setIndividuals] = useState([]);
-  const [volunteers, setVolunteers] = useState([]);
-  const [batches, setBatches] = useState([]);
+  const { colorClasses: statusColorClasses } = useCallOutcomes();
   const [householdIds, setHouseholdIds] = useState([]);
-  const [loading, setLoading] = useState(true);
 
   const unscoped = permissions.includes('view_all_contacts');
+  const areasKey = (assignedAreas || []).join(',');
 
-  useEffect(() => {
-    // Area-scoped volunteers only load their area's individuals; admins load all
-    let indQ;
+  // Area-scoped volunteers only load their area's individuals; admins load all.
+  // No areas assigned yet → no spec at all, which shows empty stats without
+  // spending a read to discover that.
+  const indSpecs = useMemo(() => {
+    const col = collection(db, 'individuals');
     if (unscoped) {
-      indQ = collection(db, 'individuals');
-    } else if (assignedAreas?.length > 0) {
-      indQ = query(collection(db, 'individuals'), where('area', 'in', assignedAreas.slice(0, 30)));
-    } else {
-      // No areas assigned yet — show empty stats
-      setIndividuals([]);
-      setLoading(false);
-      return;
+      return [{ key: 'individuals|all', source: 'individuals', build: () => query(col, orderBy('name')) }];
     }
+    const areas = (assignedAreas || []).slice(0, 30);
+    if (!areas.length) return [];
+    return [{
+      key: `individuals|area|${areas.join(',')}`,
+      source: 'individuals (area)',
+      build: () => query(col, where('area', 'in', areas)),
+    }];
+  }, [unscoped, areasKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const unsubs = [
-      onSnapshot(indQ, (snap) => { setIndividuals(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); setLoading(false); }),
-      onSnapshot(collection(db, 'volunteers'), (snap) => setVolunteers(snap.docs.map((d) => ({ id: d.id, ...d.data() })))),
-      onSnapshot(collection(db, 'batches'), (snap) => setBatches(snap.docs.map((d) => ({ id: d.id, ...d.data() })))),
-    ];
-    return () => unsubs.forEach((u) => u());
-  }, [unscoped, assignedAreas?.join(',')]);
+  const { rows: individuals, loading } = useSharedCollection(indSpecs);
+  const { volunteers } = useVolunteers();
+  const { rows: batches } = useSharedCollection(BATCH_SPEC);
 
   useEffect(() => {
     if (unscoped) { setHouseholdIds([]); return; }
     getHouseholdIdsForAreas(assignedAreas || []).then(setHouseholdIds);
-  }, [unscoped, assignedAreas?.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [unscoped, areasKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scope = useMemo(() => ({ unscoped, mandals: assignedMandals || [], householdIds, areas: assignedAreas || [] }), [unscoped, assignedMandals, householdIds, assignedAreas]);
   const overview = useMemo(() => computeOverviewStats(individuals, scope), [individuals, scope]);
@@ -58,9 +66,9 @@ function AdminDashboardInner() {
   if (loading) return <div className="p-6 text-sm text-slate-400">Loading stats…</div>;
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8 space-y-8">
+    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8 space-y-6 sm:space-y-8">
       <div>
-        <h1 className="text-xl font-semibold text-slate-900 tracking-tight">{unscoped ? 'Admin Dashboard' : 'Area Dashboard'}</h1>
+        <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">{unscoped ? 'Admin Dashboard' : 'Area Dashboard'}</h1>
         <p className="text-sm text-slate-400">
           {unscoped
             ? 'Live overview across all areas and Mandals'
@@ -70,7 +78,7 @@ function AdminDashboardInner() {
         </p>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 gap-2.5 sm:gap-4">
         <SummaryCard label="Total" value={overview.total} color="text-slate-900" />
         <SummaryCard label="Called" value={overview.called} color="text-orange-600" />
         <SummaryCard label="Interested" value={interested} color="text-emerald-600" />
@@ -87,8 +95,8 @@ function AdminDashboardInner() {
           {statusRows.length === 0 ? <p className="text-sm text-slate-400">No data yet.</p> : statusRows.map(([status, n]) => {
             const bp = overview.total ? Math.round((n / overview.total) * 100) : 0;
             return (
-              <div key={status} className="flex items-center gap-3">
-                <span className={`min-w-[140px] rounded-full border px-2.5 py-1 text-center text-xs font-medium ${statusColorClasses(status)}`}>{status}</span>
+              <div key={status} className="flex items-center gap-2 sm:gap-3">
+                <span className={`min-w-[104px] rounded-full border px-2 py-1 text-center text-[11px] font-medium sm:min-w-[140px] sm:px-2.5 sm:text-xs ${statusColorClasses(status)}`}>{status}</span>
                 <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-orange-400 transition-all" style={{ width: `${bp}%` }} /></div>
                 <span className="w-8 text-right text-sm font-semibold text-slate-700">{n}</span>
               </div>
@@ -144,9 +152,9 @@ function AdminDashboardInner() {
 
 function SummaryCard({ label, value, color }) {
   return (
-    <Card className="p-5 text-center">
-      <p className={`text-3xl font-bold ${color}`}>{value}</p>
-      <p className="mt-1 text-xs uppercase tracking-wide text-slate-400">{label}</p>
+    <Card className="p-3 text-center sm:p-5">
+      <p className={`text-2xl font-bold sm:text-3xl ${color}`}>{value}</p>
+      <p className="mt-1 text-[10px] uppercase tracking-wide text-slate-400 sm:text-xs">{label}</p>
     </Card>
   );
 }

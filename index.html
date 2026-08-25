@@ -3,6 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Cream, matching bg-cream-100 in tailwind.config.js. Set here as well as in
+         index.css so the first paint and the mobile browser chrome are already the
+         right colour — without it, Android Chrome tints its address bar white and a
+         slow stylesheet shows a white flash before the canvas arrives. -->
+    <meta name="theme-color" content="#F6F2EA" />
+    <style>html, body { background-color: #F6F2EA; }</style>
     <title>BAPS Jaipur MDS</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

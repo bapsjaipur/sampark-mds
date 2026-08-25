@@ -1,19 +1,30 @@
 /**
  * functions/index.js
  * ─────────────────────────────────────────────────────────────────
- * Phase 5, unchanged in logic from the original — copied in as the
- * Cloud Functions entry point. See MERGE-NOTES.md for what was reconciled
- * elsewhere; this file needed no changes.
+ * Cloud Functions entry point: volunteer account management, the
+ * backup/restore pair, and the Phase 20 email jobs.
+ *
+ * The Google Sheets mirror (runSync / syncFirestoreToGAS /
+ * scheduledFirestoreToGASSync, plus the GAS_WEBAPP_URL env var and the
+ * node-fetch dependency) was removed — backup/restore covers the same need
+ * without a second copy of the data living outside Firestore.
+ *
+ * DELETING THE SOURCE IS NOT ENOUGH. A deployed function keeps running until it
+ * is torn down in the project, so `scheduledFirestoreToGASSync` carries on
+ * firing its Cloud Scheduler job at 03:00 IST every night, failing against a URL
+ * that no longer exists. Tear it down explicitly — a plain
+ * `firebase deploy --only functions` prompts before deleting and is easy to skip:
+ *   firebase functions:delete scheduledFirestoreToGASSync syncFirestoreToGAS runSync --region us-central1 --force
+ * Functions that were never deployed are reported as not found, which is fine.
  * ─────────────────────────────────────────────────────────────────
  */
 
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
-const { onSchedule } = require('firebase-functions/v2/scheduler');
 const admin = require('firebase-admin');
-const fetch = require('node-fetch');
 const archiver = require('archiver');
 const unzipper = require('unzipper');
 const { Readable } = require('stream');
+const { permissionsForVolunteer } = require('./lib/callerAccess');
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -28,100 +39,39 @@ function createZipArchive(options) {
   }
 }
 
-const GAS_WEBAPP_URL = process.env.GAS_WEBAPP_URL;
-const CHUNK_SIZE = 200;
-
-async function runSync() {
-  if (!GAS_WEBAPP_URL) throw new Error('GAS_WEBAPP_URL is not configured.');
-
-  const [householdsSnap, individualsSnap] = await Promise.all([
-    db.collection('households').get(),
-    db.collection('individuals').get(),
-  ]);
-
-  const householdsById = {};
-  householdsSnap.forEach(doc => { householdsById[doc.id] = doc.data(); });
-
-  const rowsByMandal = {};
-
-  individualsSnap.forEach(doc => {
-    const ind = doc.data();
-    const hh = householdsById[ind.householdId] || {};
-    const mandal = ind.mandal || 'Unassigned';
-    if (!rowsByMandal[mandal]) rowsByMandal[mandal] = [];
-    rowsByMandal[mandal].push({
-      Name: ind.name || '',
-      Phone: ind.mobile || '',
-      Area: hh.area || '',
-      Mandal: mandal,
-      DOB: ind.dob || '',
-      Complete_Address: hh.address || '',
-      Note: hh.remark || '',
-    });
-  });
-
-  const summary = { totalMandals: 0, totalRows: 0, inserted: 0, skipped: 0, errors: [] };
-
-  for (const [mandal, rows] of Object.entries(rowsByMandal)) {
-    summary.totalMandals++;
-    summary.totalRows += rows.length;
-
-    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
-      const chunk = rows.slice(i, i + CHUNK_SIZE);
-      try {
-        const res = await fetch(GAS_WEBAPP_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'importContacts', mandal, rows: chunk }),
-        });
-        const json = await res.json();
-        if (json.error) {
-          summary.errors.push(`${mandal} (chunk ${i / CHUNK_SIZE + 1}): ${json.error}`);
-          continue;
-        }
-        summary.inserted += json.inserted || 0;
-        summary.skipped += json.skipped || 0;
-        if (json.errors && json.errors.length) summary.errors.push(...json.errors.map(e => `${mandal}: ${e}`));
-      } catch (err) {
-        summary.errors.push(`${mandal} (chunk ${i / CHUNK_SIZE + 1}): ${err.message}`);
-      }
-    }
-  }
-
-  await db.collection('syncLogs').add({ ranAt: admin.firestore.FieldValue.serverTimestamp(), ...summary });
-  return summary;
-}
-
-exports.syncFirestoreToGAS = onCall({ region: 'us-central1' }, async (request) => {
-  if (!request.auth) throw new HttpsError('unauthenticated', 'Must be logged in.');
-  const volDoc = await db.collection('volunteers').doc(request.auth.uid).get();
-  if (!volDoc.exists) throw new HttpsError('permission-denied', 'Volunteer record not found.');
-  const roleId = volDoc.data().roleRef;
-  // Same guard as createVolunteerAccount.js: doc(undefined) throws a raw
-  // (non-HttpsError) error when the caller has no roleRef, which Functions
-  // then reports to the client as an opaque "internal" error.
-  const roleDoc = roleId ? await db.collection('roles').doc(roleId).get() : null;
-  const permissions = (roleDoc?.exists && roleDoc.data().permissions) || [];
-  if (!permissions.includes('run_gas_sync')) {
-    throw new HttpsError('permission-denied', 'Missing run_gas_sync permission.');
-  }
-  return runSync();
-});
-
-exports.scheduledFirestoreToGASSync = onSchedule('0 3 * * *', async () => {
-  await runSync();
-});
-
 exports.createVolunteerAccount = require('./createVolunteerAccount').createVolunteerAccount;
 exports.updateVolunteerAccount = require('./updateVolunteerAccount').updateVolunteerAccount;
+exports.deleteVolunteerAccount = require('./deleteVolunteerAccount').deleteVolunteerAccount;
+// PHASE 22 — two callables, one file. resetVolunteerPassword is admin-only and is
+// the ONLY thing that can change a password; requestPasswordReset is the
+// unauthenticated "I'm locked out" endpoint and changes nothing. The old
+// self-service reset-to-your-own-phone-number behaviour is gone — see the header
+// of resetVolunteerPassword.js for why it was an account-takeover hole.
 exports.resetVolunteerPassword = require('./resetVolunteerPassword').resetVolunteerPassword;
+exports.requestPasswordReset = require('./resetVolunteerPassword').requestPasswordReset;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 20 — email automation, ported from Sevak Call's Apps Script triggers.
+// Three scheduled reports plus two callables for the admin screen. Mail is
+// delivered by the Firebase "Trigger Email from Firestore" extension, which
+// must be installed and pointed at the `mail` collection — see
+// functions/lib/mailer.js. Until it is, sends are recorded in emailLogs and
+// nothing leaves the building.
+// ─────────────────────────────────────────────────────────────────────────────
+const emailJobs = require('./emailJobs');
+exports.scheduledDailyReport = emailJobs.scheduledDailyReport;
+exports.scheduledPostSabhaReports = emailJobs.scheduledPostSabhaReports;
+exports.scheduledBirthdaySummary = emailJobs.scheduledBirthdaySummary;
+exports.sendManualEmail = emailJobs.sendManualEmail;
+exports.previewEmailRecipients = emailJobs.previewEmailRecipients;
 
 exports.backupDatabase = onCall({ region: 'us-central1', maxInstances: 1, timeoutSeconds: 540 }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Must be logged in.');
   const volDoc = await db.collection('volunteers').doc(request.auth.uid).get();
   if (!volDoc.exists) throw new HttpsError('permission-denied', 'Volunteer record not found.');
-  const roleDoc = volDoc.data().roleRef ? await db.collection('roles').doc(volDoc.data().roleRef).get() : null;
-  const permissions = (roleDoc?.exists && roleDoc.data().permissions) || [];
+  // PHASE 21 — union across every role the caller holds (roleRefs[]), not just
+  // the legacy single roleRef. See lib/callerAccess.js.
+  const permissions = await permissionsForVolunteer(db, volDoc.data());
   if (!permissions.includes('manage_users')) {
     throw new HttpsError('permission-denied', 'Missing manage_users permission.');
   }
@@ -185,8 +135,9 @@ exports.restoreDatabase = onCall({ region: 'us-central1', maxInstances: 1, timeo
   if (!request.auth) throw new HttpsError('unauthenticated', 'Must be logged in.');
   const volDoc = await db.collection('volunteers').doc(request.auth.uid).get();
   if (!volDoc.exists) throw new HttpsError('permission-denied', 'Volunteer record not found.');
-  const roleDoc = volDoc.data().roleRef ? await db.collection('roles').doc(volDoc.data().roleRef).get() : null;
-  const permissions = (roleDoc?.exists && roleDoc.data().permissions) || [];
+  // PHASE 21 — union across every role the caller holds (roleRefs[]), not just
+  // the legacy single roleRef. See lib/callerAccess.js.
+  const permissions = await permissionsForVolunteer(db, volDoc.data());
   if (!permissions.includes('manage_users')) {
     throw new HttpsError('permission-denied', 'Missing manage_users permission.');
   }

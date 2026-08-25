@@ -9,6 +9,14 @@
       { "fieldPath": "anniversaryMonthDay", "order": "ASCENDING" }
     ]},
     { "collectionGroup": "individuals", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "area", "order": "ASCENDING" },
+      { "fieldPath": "dobMonthDay", "order": "ASCENDING" }
+    ]},
+    { "collectionGroup": "individuals", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "area", "order": "ASCENDING" },
+      { "fieldPath": "anniversaryMonthDay", "order": "ASCENDING" }
+    ]},
+    { "collectionGroup": "individuals", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "householdId", "order": "ASCENDING" },
       { "fieldPath": "dobMonthDay", "order": "ASCENDING" }
     ]},

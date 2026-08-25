@@ -1,10 +1,59 @@
-// src/services/batchService.js — unchanged logic from Phase 4.
-// `batches` is a new collection introduced in Phase 4 — added to the Phase 1
-// schema doc at merge time. Shape: batches/{id}: name, area, individualIds[],
-// assignedVolunteerId, createdBy, createdAt.
-import { addDoc, collection, serverTimestamp, query, where, getDocs } from 'firebase/firestore';
+// src/services/batchService.js
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 20 — the full batch engine, ported from Sevak Call's Code.gs.
+//
+// Phase 4 shipped only the two primitives at the bottom of the original file:
+// getIndividualsByArea() and createBatch(). Everything an admin actually did
+// day-to-day in the legacy app lived in Code.gs and had no equivalent here:
+//   generateBatches / assignBatch / unassignBatch / clearAllBatches /
+//   reassignContacts / getBatchStats
+// which meant the only way to give a volunteer work was to hand-tick every
+// contact in a checkbox list — feasible for 20 contacts, not for 1240.
+//
+// One DELIBERATE DEVIATION from the legacy behaviour, called out because it is a
+// silent data-loss bug there rather than a feature: Sevak Call's assignBatch()
+// blanked the Status and Reference columns for every contact in the batch on
+// each assignment. Reassigning a batch to cover for an absent volunteer
+// therefore destroyed the call history of everyone in it, with no warning and no
+// undo. Here that is an explicit opt-in (`resetStatuses`), defaulted to false,
+// and the UI states what it will erase.
+//
+// Batch document shape:
+//   batches/{id} = {
+//     name, area, mandal, batchNumber, individualIds[], contactCount,
+//     assignedVolunteerId | null, assignedAt | null,
+//     createdBy, createdAt,
+//     eventId | null, eventDate | null    ← PHASE 27: which sabha this was calling for
+//   }
+//
+// PHASE 21 — `mandal` is new and is what makes scoped batches possible. A batch
+// cut for "Yuvak Mandal in Vaishali Nagar" carries area='Vaishali Nagar' AND
+// mandal='Yuvak Mandal', so both an Area Moderator and a Mandal Super Moderator
+// can find their own work without reading every contact inside every batch.
+// Pre-Phase-21 batches have no `mandal` field at all; treat missing as "mixed",
+// never as null-the-value, or every legacy batch disappears from a mandal view.
+// ─────────────────────────────────────────────────────────────────────────────
+import {
+  collection, doc, documentId, limit, onSnapshot, orderBy, query, serverTimestamp, where,
+} from 'firebase/firestore';
+// PHASE 24 — metered drop-ins (src/lib/fsMetered.js): same signatures, they count.
+// This is the most expensive file in the app: assembling a batch reads whole
+// collections and writes one document per contact, so it is exactly the place
+// where a quota disappears without anyone noticing. onSnapshot stays on the real
+// module — a listener is metered where it is opened, not here.
+import {
+  addDoc, deleteDoc, getDoc, getDocs, updateDoc, writeBatch,
+} from '../lib/fsMetered';
 import { db } from '../lib/firebase';
 import { chunk } from '../lib/firestoreHelpers';
+import { SCOPE_KINDS, matchesScope } from '../lib/scope';
+
+// Firestore caps a WriteBatch at 500 operations. Every helper below that writes
+// in bulk splits on this, otherwise a 700-contact area fails the whole commit.
+const WRITE_BATCH_LIMIT = 450;
+
+// `in` filters are capped at 30 values by Firestore.
+const IN_LIMIT = 30;
 
 /**
  * Individuals don't carry `area` directly (only households do), so this
@@ -16,15 +65,708 @@ export async function getIndividualsByArea(area) {
   if (!householdIds.length) return [];
 
   const all = [];
-  for (const c of chunk(householdIds, 30)) {
+  for (const c of chunk(householdIds, IN_LIMIT)) {
     const iSnap = await getDocs(query(collection(db, 'individuals'), where('householdId', 'in', c)));
     iSnap.forEach((d) => all.push({ id: d.id, ...d.data() }));
   }
   return all;
 }
 
-export async function createBatch({ name, area, individualIds, assignedVolunteerId, createdBy }) {
+async function areasForHouseholdIds(householdIds) {
+  const map = {};
+  for (const c of chunk(householdIds.filter(Boolean), IN_LIMIT)) {
+    const snap = await getDocs(query(collection(db, 'households'), where(documentId(), 'in', c)));
+    snap.forEach((d) => { map[d.id] = d.data().area || null; });
+  }
+  return map;
+}
+
+/**
+ * getIndividualsForTarget({ areas, mandals })
+ *
+ * The Phase 21 candidate query. Returns individuals with an extra `_area`
+ * carrying the RESOLVED area (their own field for standalone contacts, otherwise
+ * their household's) so the caller can group by area × mandal without a second
+ * round of lookups.
+ *
+ * Query strategy depends on which axis is narrower, because area lives on the
+ * household and mandal on the individual:
+ *   • areas given  → households by area, then their individuals, then filter by
+ *     mandal in memory. Cheaper than the reverse: households are far fewer than
+ *     individuals, and the mandal filter costs nothing once the rows are here.
+ *   • mandals only → individuals by mandal directly, then resolve their areas
+ *     for naming.
+ *   • neither      → refuses, unless allowFullScan is passed.
+ *
+ * That refusal is deliberate. "Neither" means reading the whole `individuals`
+ * collection — 3,000+ documents against a 50k/day free-tier budget, from a screen
+ * where an empty selection is far more likely to be a mis-click than an intent to
+ * batch the entire city. Every UI path already requires a target, so nothing
+ * legitimate is blocked; a future caller that really does want everything has to
+ * say so in one word.
+ */
+export async function getIndividualsForTarget({ areas = [], mandals = [], allowFullScan = false } = {}) {
+  const areaList = (areas || []).filter(Boolean);
+  const mandalList = (mandals || []).filter(Boolean);
+
+  const byId = new Map();
+  const add = (row, area) => {
+    if (byId.has(row.id)) return;
+    byId.set(row.id, { ...row, _area: area || row.area || null });
+  };
+
+  if (areaList.length) {
+    const areaByHousehold = {};
+    for (const c of chunk(areaList, IN_LIMIT)) {
+      const hSnap = await getDocs(query(collection(db, 'households'), where('area', 'in', c)));
+      hSnap.forEach((d) => { areaByHousehold[d.id] = d.data().area || null; });
+    }
+
+    for (const c of chunk(Object.keys(areaByHousehold), IN_LIMIT)) {
+      const iSnap = await getDocs(query(collection(db, 'individuals'), where('householdId', 'in', c)));
+      iSnap.forEach((d) => {
+        const row = { id: d.id, ...d.data() };
+        add(row, areaByHousehold[row.householdId]);
+      });
+    }
+
+    // Standalone contacts (Phase 13/16) have householdId === null and carry
+    // `area` themselves. Without this second pass they are invisible to batch
+    // generation — which is how a contact ends up never being called.
+    for (const c of chunk(areaList, IN_LIMIT)) {
+      const iSnap = await getDocs(query(collection(db, 'individuals'), where('area', 'in', c)));
+      iSnap.forEach((d) => {
+        const row = { id: d.id, ...d.data() };
+        add(row, row.area);
+      });
+    }
+
+    const rows = [...byId.values()];
+    return mandalList.length ? rows.filter((r) => mandalList.includes(r.mandal)) : rows;
+  }
+
+  if (mandalList.length) {
+    for (const c of chunk(mandalList, IN_LIMIT)) {
+      const iSnap = await getDocs(query(collection(db, 'individuals'), where('mandal', 'in', c)));
+      iSnap.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+    }
+    const rows = [...byId.values()];
+    const hIds = [...new Set(rows.map((r) => r.householdId).filter(Boolean))];
+    const areaByHousehold = await areasForHouseholdIds(hIds);
+    return rows.map((r) => ({ ...r, _area: r.area || areaByHousehold[r.householdId] || null }));
+  }
+
+  if (!allowFullScan) {
+    throw new Error('Pick at least one area or one mandal — batching every contact at once is not allowed.');
+  }
+  const iSnap = await getDocs(collection(db, 'individuals'));
+  const rows = iSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const hIds = [...new Set(rows.map((r) => r.householdId).filter(Boolean))];
+  const areaByHousehold = await areasForHouseholdIds(hIds);
+  return rows.map((r) => ({ ...r, _area: r.area || areaByHousehold[r.householdId] || null }));
+}
+
+export async function createBatch({
+  name, area, mandal, individualIds, assignedVolunteerId, createdBy,
+  eventId = null, eventDate = null,
+}) {
   return addDoc(collection(db, 'batches'), {
-    name, area, individualIds, assignedVolunteerId, createdBy, createdAt: serverTimestamp(),
+    name,
+    area: area || null,
+    mandal: mandal || null,
+    individualIds,
+    contactCount: individualIds.length,
+    assignedVolunteerId: assignedVolunteerId || null,
+    assignedAt: assignedVolunteerId ? serverTimestamp() : null,
+    createdBy: createdBy || null,
+    createdAt: serverTimestamp(),
+    // PHASE 27 — which sabha this round is calling for. See generateBatches.
+    eventId: eventId || null,
+    eventDate: eventDate || null,
   });
+}
+
+export function subscribeToBatches(cb, onError) {
+  // orderBy createdAt would exclude the Phase 4 documents, which predate the
+  // field. Sorting happens client-side instead so nothing is ever hidden.
+  return onSnapshot(
+    collection(db, 'batches'),
+    (snap) => {
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      rows.sort((a, b) => (b.batchNumber || 0) - (a.batchNumber || 0)
+        || (a.name || '').localeCompare(b.name || ''));
+      cb(rows);
+    },
+    (err) => onError && onError(err),
+  );
+}
+
+/**
+ * The next batch number, read as ONE document instead of the whole collection.
+ *
+ * A pre-Phase-21 batch carries no `batchNumber` at all and so is missing from
+ * this index — which is correct here, because those documents contribute nothing
+ * to the maximum. If every batch is numberless the query comes back empty and
+ * numbering starts at 1, exactly as the old full scan did.
+ */
+async function nextBatchNumber() {
+  const snap = await getDocs(query(
+    collection(db, 'batches'), orderBy('batchNumber', 'desc'), limit(1),
+  ));
+  const top = snap.docs[0] ? Number(snap.docs[0].data().batchNumber) : 0;
+  return (Number.isFinite(top) ? top : 0) + 1;
+}
+
+/** How the eligible contacts are cut up. */
+export const GROUP_BY = {
+  PAIR: 'pair',     // one set of batches per (area × mandal) — the Phase 21 default
+  AREA: 'area',     // one set per area, mandals mixed together (legacy behaviour)
+  MANDAL: 'mandal', // one set per mandal, areas mixed together
+};
+
+const NO_AREA = 'No area';
+const NO_MANDAL = 'No mandal';
+
+function groupsFor(rows, groupBy) {
+  const map = new Map();
+  for (const r of rows) {
+    const area = r._area || null;
+    const mandal = r.mandal || null;
+    let key;
+    let label;
+    if (groupBy === GROUP_BY.AREA) {
+      key = `a:${area || NO_AREA}`;
+      label = area || NO_AREA;
+    } else if (groupBy === GROUP_BY.MANDAL) {
+      key = `m:${mandal || NO_MANDAL}`;
+      label = mandal || NO_MANDAL;
+    } else {
+      key = `p:${area || NO_AREA}|${mandal || NO_MANDAL}`;
+      label = `${area || NO_AREA} · ${mandal || NO_MANDAL}`;
+    }
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        label,
+        // The stored area/mandal is only set when this group really is confined
+        // to one value. Writing 'No area' into the field would make it look like
+        // a real area everywhere else in the app.
+        area: groupBy === GROUP_BY.MANDAL ? null : area,
+        mandal: groupBy === GROUP_BY.AREA ? null : mandal,
+        rows: [],
+      });
+    }
+    map.get(key).rows.push(r);
+  }
+  // Alphabetical so the generated batch numbers run in a predictable order —
+  // an admin reading "Batch 12" should be able to guess roughly where it is.
+  return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/**
+ * The gate that decides who a batch can contain.
+ *
+ * PHASE 26 — `onlyCallingPool` is the follow-up-list filter, and it is the reason
+ * this app can do what the legacy Sevak Call sheet did by hand: cut this week's
+ * batches from the ~400 who are actually rung, and once a year cut them from all
+ * 1000+ instead. It is deliberately an IN-MEMORY predicate:
+ *
+ *   • `where('callingPool', '!=', false)` would drop every contact that has no
+ *     such field, which today is all of them. A Firestore inequality only matches
+ *     documents where the field exists.
+ *   • These rows are already in hand and already being post-filtered, so the test
+ *     costs nothing and needs no composite index.
+ *
+ * ABSENT MEANS ON — see services/callingPoolService.js for why that is the only
+ * migration-free reading of the field.
+ */
+function filterEligible(rows, {
+  onlyUncalled, skipAlreadyBatched, requirePhone, alreadyBatched, onlyCallingPool = true,
+}) {
+  const skipped = { noPhone: 0, alreadyBatched: 0, alreadyCalled: 0, notInPool: 0 };
+  const eligible = rows.filter((c) => {
+    if (requirePhone && String(c.mobile || '').replace(/\D/g, '').length < 10) { skipped.noPhone++; return false; }
+    if (onlyCallingPool && c.callingPool === false) { skipped.notInPool++; return false; }
+    if (skipAlreadyBatched && alreadyBatched.has(c.id)) { skipped.alreadyBatched++; return false; }
+    if (onlyUncalled && String(c.status || '').trim()) { skipped.alreadyCalled++; return false; }
+    return true;
+  });
+  return { eligible, skipped };
+}
+
+/**
+ * Every individualId that already sits in some batch.
+ *
+ * `batchRows` lets the caller hand over the list it is already subscribed to —
+ * BatchesPage keeps a live onSnapshot on `batches` for the Batches tab, so
+ * re-reading the collection here charged a second time for rows already in
+ * memory. Only when nothing is supplied does this fall back to a read.
+ */
+async function loadAlreadyBatchedIds(batchRows) {
+  const set = new Set();
+  if (Array.isArray(batchRows)) {
+    batchRows.forEach((b) => (b?.individualIds || []).forEach((id) => set.add(id)));
+    return set;
+  }
+  const bSnap = await getDocs(collection(db, 'batches'));
+  bSnap.forEach((d) => (d.data().individualIds || []).forEach((id) => set.add(id)));
+  return set;
+}
+
+/**
+ * previewBatchGeneration({ areas, mandals, groupBy, ... })
+ *
+ * Exactly the same selection and grouping generateBatches() will perform, minus
+ * the writes. The generator calls into the same two helpers, so the preview
+ * cannot drift from the result — which is the whole point: the previous version
+ * deliberately ignored skipAlreadyBatched and therefore over-promised.
+ */
+export async function previewBatchGeneration({
+  areas = [],
+  mandals = [],
+  groupBy = GROUP_BY.PAIR,
+  batchSize = 40,
+  onlyUncalled = true,
+  skipAlreadyBatched = true,
+  requirePhone = true,
+  // PHASE 26 — true = this week's follow-up list only, false = the whole roster
+  // (the once-a-year sweep). Defaults to the follow-up list, because that is what
+  // "generate batches" means every week bar one.
+  onlyCallingPool = true,
+  batchRows = null,
+} = {}) {
+  // Same guard as generateBatches. The preview ran without one, so an empty
+  // selection here used to scan every contact in the database to tell the admin
+  // what an operation they cannot perform would have produced.
+  if (!(areas || []).filter(Boolean).length && !(mandals || []).filter(Boolean).length) {
+    throw new Error('Pick at least one area or one mandal to preview batches.');
+  }
+  const size = Math.max(1, Math.min(500, Number(batchSize) || 40));
+  const candidates = await getIndividualsForTarget({ areas, mandals });
+  const alreadyBatched = skipAlreadyBatched ? await loadAlreadyBatchedIds(batchRows) : new Set();
+  const { eligible, skipped } = filterEligible(candidates, {
+    onlyUncalled, skipAlreadyBatched, requirePhone, alreadyBatched, onlyCallingPool,
+  });
+
+  const groups = groupsFor(eligible, groupBy).map((g) => ({
+    key: g.key,
+    label: g.label,
+    area: g.area,
+    mandal: g.mandal,
+    contacts: g.rows.length,
+    batches: Math.ceil(g.rows.length / size),
+    remainder: g.rows.length % size,
+  }));
+
+  return {
+    candidates: candidates.length,
+    eligible: eligible.length,
+    skipped,
+    groups,
+    totalBatches: groups.reduce((n, g) => n + g.batches, 0),
+    // How many of the candidates are off the follow-up list, regardless of which
+    // mode is selected. The generator shows this next to the mode switch so the
+    // "Everyone" option can say what it would actually add.
+    offCallList: candidates.filter((c) => c.callingPool === false).length,
+    // PHASE 26 — the ids of in-scope contacts still carrying an outcome from a
+    // previous round. Returned as ids rather than a count so "Start a new round"
+    // clears exactly the people this preview measured; re-deriving the set at
+    // click time from filters that may have moved is how a reset ends up wiping
+    // somebody it never showed.
+    //
+    // NOT the same number as skipped.alreadyCalled: that counter is
+    // filter-ordered, so a contact with an outcome AND no mobile lands in
+    // `noPhone` and never reaches the status test — yet their outcome still has
+    // to be cleared, or it lingers for good. This list is derived straight from
+    // the candidates, so nothing hides behind an earlier filter.
+    resettableIds: candidates
+      .filter((c) => String(c.status || '').trim())
+      // Tracks the "Who to call" choice: a weekly reset has no business
+      // rewriting the 557 people this week's round is not calling anyway.
+      .filter((c) => !onlyCallingPool || c.callingPool !== false)
+      .map((c) => c.id),
+  };
+}
+
+/**
+ * generateBatches({ areas, mandals, groupBy, batchSize, ... })
+ *
+ * Splits the selected contacts into fixed-size unassigned batches, ready to hand
+ * out. Ported from Code.gs generateBatches(), with three additions the legacy
+ * version lacked:
+ *   • skipAlreadyBatched — the sheet version happily put the same person into
+ *     two batches, so two volunteers called them on the same evening.
+ *   • requirePhone — a contact with no usable mobile is unworkable in the
+ *     calling queue; batching them just pads the volunteer's count.
+ *   • area × mandal grouping (Phase 21) — a batch mixing Yuvak and Mahila
+ *     members cannot be handed to a mandal karyakarta at all, which is why
+ *     PAIR is the default. `area` is still accepted as a single string so older
+ *     call sites keep working.
+ *   • onlyCallingPool (Phase 26) — cut from the follow-up list, or from the whole
+ *     roster. The weekly cut is the follow-up list; once a year it is everyone.
+ *   • eventId / eventDate (Phase 27) — the sabha these calls are inviting people
+ *     to. Stamped on every batch in the run so that after the sabha the app can
+ *     cross "who I called" against "who turned up"; without it that join is not
+ *     expressible at all. Optional, and null on batches cut before this shipped
+ *     — roundService.resolveRoundEvent() falls back to the most recent past event
+ *     in the batch's mandal for those.
+ *
+ * @returns {{created: number, batches: Array, groups: Array, skipped: object, eligible: number}}
+ */
+export async function generateBatches({
+  area = null,          // legacy single-area form, still honoured
+  areas = null,
+  mandals = null,
+  groupBy = GROUP_BY.PAIR,
+  batchSize = 40,
+  onlyUncalled = true,
+  skipAlreadyBatched = true,
+  requirePhone = true,
+  onlyCallingPool = true,
+  namePrefix = '',
+  createdBy = null,
+  batchRows = null,
+  eventId = null,
+  eventDate = null,
+}) {
+  const areaList = Array.isArray(areas) ? areas.filter(Boolean) : (area ? [area] : []);
+  const mandalList = Array.isArray(mandals) ? mandals.filter(Boolean) : [];
+
+  if (!areaList.length && !mandalList.length) {
+    throw new Error('Pick at least one area or one mandal to generate batches.');
+  }
+  const size = Math.max(1, Math.min(500, Number(batchSize) || 40));
+
+  const candidates = await getIndividualsForTarget({ areas: areaList, mandals: mandalList });
+  const alreadyBatched = skipAlreadyBatched ? await loadAlreadyBatchedIds(batchRows) : new Set();
+  const { eligible, skipped } = filterEligible(candidates, {
+    onlyUncalled, skipAlreadyBatched, requirePhone, alreadyBatched, onlyCallingPool,
+  });
+
+  if (eligible.length === 0) {
+    return { created: 0, batches: [], groups: [], skipped, remainder: 0, eligible: 0 };
+  }
+
+  const groups = groupsFor(eligible, groupBy);
+  let numbering = await nextBatchNumber();
+  const created = [];
+
+  // One flat list of (group, ids) pairs so the write-batching below stays a
+  // simple chunk() over documents rather than nested loops that could each
+  // exceed the 500-op cap on their own.
+  const planned = [];
+  for (const g of groups) {
+    for (const ids of chunk(g.rows.map((r) => r.id), size)) {
+      planned.push({ group: g, ids });
+    }
+  }
+
+  for (const slice of chunk(planned, WRITE_BATCH_LIMIT)) {
+    const wb = writeBatch(db);
+    for (const { group, ids } of slice) {
+      const ref = doc(collection(db, 'batches'));
+      const payload = {
+        name: `${namePrefix || group.label} — Batch ${numbering}`,
+        area: group.area || null,
+        mandal: group.mandal || null,
+        batchNumber: numbering,
+        individualIds: ids,
+        contactCount: ids.length,
+        assignedVolunteerId: null,
+        assignedAt: null,
+        createdBy,
+        createdAt: serverTimestamp(),
+        // The sabha this round is inviting to. Denormalised date alongside the id
+        // so the calling screen can label the round without reading the event.
+        eventId: eventId || null,
+        eventDate: eventDate || null,
+      };
+      wb.set(ref, payload);
+      created.push({ id: ref.id, ...payload });
+      numbering++;
+    }
+    await wb.commit();
+  }
+
+  return {
+    created: created.length,
+    batches: created,
+    groups: groups.map((g) => ({
+      key: g.key, label: g.label, area: g.area, mandal: g.mandal, contacts: g.rows.length,
+    })),
+    skipped,
+    eligible: eligible.length,
+    // Size of the final, partially-filled batch — worth showing so an admin
+    // knows one volunteer will get 7 contacts instead of 40.
+    remainder: eligible.length % size,
+  };
+}
+
+/**
+ * assignBatch({ batchId, volunteerId, resetStatuses })
+ *
+ * resetStatuses replicates the legacy blank-the-columns behaviour. Off by
+ * default; see the header note. When on, it clears status + reference on every
+ * contact in the batch and writes one activity row per contact so the wipe is
+ * at least auditable — the sheet version left no trace at all.
+ */
+export async function assignBatch({ batchId, volunteerId, assignedBy = null, resetStatuses = false }) {
+  if (!batchId) throw new Error('batchId is required.');
+  if (!volunteerId) throw new Error('Pick a volunteer to assign this batch to.');
+
+  await updateDoc(doc(db, 'batches', batchId), {
+    assignedVolunteerId: volunteerId,
+    assignedAt: serverTimestamp(),
+  });
+
+  if (!resetStatuses) return { reset: 0 };
+
+  const bSnap = await getDoc(doc(db, 'batches', batchId));
+  const ids = bSnap.exists() ? (bSnap.data().individualIds || []) : [];
+
+  let reset = 0;
+  // Two writes per contact (the individual + its activity row), so halve the cap.
+  for (const slice of chunk(ids, Math.floor(WRITE_BATCH_LIMIT / 2))) {
+    const wb = writeBatch(db);
+    for (const id of slice) {
+      wb.update(doc(db, 'individuals', id), { status: '', reference: '', updatedAt: serverTimestamp() });
+      wb.set(doc(collection(db, 'activity')), {
+        timestamp: serverTimestamp(),
+        volunteerId: assignedBy,
+        individualId: id,
+        action: 'status_reset',
+        details: `Cleared on reassignment of batch ${batchId} to ${volunteerId}`,
+      });
+      reset++;
+    }
+    await wb.commit();
+  }
+  return { reset };
+}
+
+/**
+ * resetCallStatuses({ individualIds, resetBy, note, onProgress })
+ *
+ * PHASE 26 — "start a new calling round".
+ *
+ * `status` is a single string on the contact with no round or date attached, so
+ * once somebody is marked "Not reachable" they stay marked for good, and the
+ * generator's "only contacts with no status yet" filter keeps skipping them week
+ * after week. Before this there were exactly two ways out: untick that filter
+ * (which re-batches them still wearing last week's outcome), or reassign the
+ * batch they happen to still be in with `assignBatch({ resetStatuses: true })`.
+ * Neither is a weekly reset, which is what a weekly round needs.
+ *
+ * Clears status + reference and writes one audit row per contact, deliberately
+ * identical in shape to the reset inside assignBatch — the same wipe should look
+ * the same in the trail however it was triggered. Call history in `activity` and
+ * every attendance record are untouched: this clears the working column, not the
+ * record of the work.
+ *
+ * Takes explicit ids rather than a filter, so the caller can only ever clear the
+ * people it showed the admin.
+ */
+export async function resetCallStatuses({
+  individualIds = [], resetBy = null, note = '', onProgress,
+} = {}) {
+  const ids = [...new Set((individualIds || []).filter(Boolean))];
+  if (!ids.length) return { reset: 0 };
+
+  let reset = 0;
+  // Two writes per contact (the individual + its activity row), so halve the cap.
+  for (const slice of chunk(ids, Math.floor(WRITE_BATCH_LIMIT / 2))) {
+    const wb = writeBatch(db);
+    for (const id of slice) {
+      wb.update(doc(db, 'individuals', id), { status: '', reference: '', updatedAt: serverTimestamp() });
+      wb.set(doc(collection(db, 'activity')), {
+        timestamp: serverTimestamp(),
+        volunteerId: resetBy,
+        individualId: id,
+        action: 'status_reset',
+        details: note || 'Cleared for a new calling round',
+      });
+      reset += 1;
+    }
+    await wb.commit();
+    // After the commit, not before: a batch that threw must not be reported as done.
+    onProgress?.({ done: reset, total: ids.length });
+  }
+  return { reset };
+}
+
+export async function unassignBatch({ batchId }) {
+  if (!batchId) throw new Error('batchId is required.');
+  await updateDoc(doc(db, 'batches', batchId), { assignedVolunteerId: null, assignedAt: null });
+}
+export async function renameBatch({ batchId, name }) {
+  await updateDoc(doc(db, 'batches', batchId), { name: String(name || '').trim() || 'Untitled batch' });
+}
+
+/**
+ * deleteBatch — removes the batch only. Contact statuses are left untouched:
+ * a batch is a work assignment, not the record of the work.
+ */
+export async function deleteBatch(batchId) {
+  await deleteDoc(doc(db, 'batches', batchId));
+}
+
+/**
+ * clearAllBatches() — the legacy "Clear All Batches" admin button.
+ * Destructive and irreversible; the UI must confirm by typed phrase, not a
+ * window.confirm, before calling this.
+ */
+export async function clearAllBatches() {
+  const snap = await getDocs(collection(db, 'batches'));
+  const refs = snap.docs.map((d) => d.ref);
+  for (const slice of chunk(refs, WRITE_BATCH_LIMIT)) {
+    const wb = writeBatch(db);
+    slice.forEach((ref) => wb.delete(ref));
+    await wb.commit();
+  }
+  return { deleted: refs.length };
+}
+
+/**
+ * reassignContacts({ fromVolunteerId, toVolunteerId })
+ *
+ * Ported from Code.gs reassignContacts(). Moves every batch owned by one
+ * volunteer to another — the "Rakesh is travelling this week" operation. Passing
+ * toVolunteerId = null unassigns them instead, which the legacy version could
+ * not do (it required a target name and silently no-oped on a blank).
+ */
+export async function reassignContacts({ fromVolunteerId, toVolunteerId = null }) {
+  if (!fromVolunteerId) throw new Error('fromVolunteerId is required.');
+  if (fromVolunteerId === toVolunteerId) throw new Error('Source and destination volunteer are the same.');
+
+  const snap = await getDocs(query(collection(db, 'batches'), where('assignedVolunteerId', '==', fromVolunteerId)));
+  if (snap.empty) return { moved: 0, contacts: 0 };
+
+  let contacts = 0;
+  for (const slice of chunk(snap.docs, WRITE_BATCH_LIMIT)) {
+    const wb = writeBatch(db);
+    for (const d of slice) {
+      contacts += (d.data().individualIds || []).length;
+      wb.update(d.ref, {
+        assignedVolunteerId: toVolunteerId || null,
+        assignedAt: toVolunteerId ? serverTimestamp() : null,
+      });
+    }
+    await wb.commit();
+  }
+  return { moved: snap.docs.length, contacts };
+}
+
+/**
+ * filterBatchesByScope(batches, scope, viewerId)
+ *
+ * "Could this batch contain a contact I'm allowed to see?" — deliberately the
+ * COULD question, not the DOES question. Answering DOES would mean reading every
+ * individual in every batch on every render.
+ *
+ * A missing area (or mandal) on the batch means "spans all of them", not
+ * "belongs to none": batches cut before Phase 21 have no mandal at all, and
+ * reading a missing field as a mismatch would hide every one of them from every
+ * moderator the day this ships.
+ *
+ * The viewer's own assigned batch is ALWAYS visible. Their scope governs which
+ * territory they oversee; a batch already handed to them is their work, and
+ * hiding it would leave them staring at an empty calling queue with no
+ * explanation.
+ */
+export function filterBatchesByScope(batches, scope, viewerId = null) {
+  if (!scope || scope.unrestricted) return batches || [];
+
+  return (batches || []).filter((b) => {
+    if (viewerId && b.assignedVolunteerId === viewerId) return true;
+    if (scope.kind === SCOPE_KINDS.NONE) return false;
+
+    const areaOk = !b.area || scope.areas.includes(b.area);
+    const mandalOk = !b.mandal || scope.mandals.includes(b.mandal);
+
+    switch (scope.kind) {
+      case SCOPE_KINDS.AREA: return areaOk;
+      case SCOPE_KINDS.MANDAL: return mandalOk;
+      case SCOPE_KINDS.INTERSECT: return areaOk && mandalOk;
+      case SCOPE_KINDS.UNION:
+      default: return areaOk || mandalOk;
+    }
+  });
+}
+
+/**
+ * canEditBatch(batch, scope)
+ *
+ * "Will the SERVER let me write this batch?" — deliberately a different question
+ * from filterBatchesByScope's "may I see it".
+ *
+ * The two disagree on purpose, and the disagreement is the bug this exists to
+ * close. A batch with no area (or no mandal) SPANS everything, so it is shown to
+ * everyone — hiding every pre-Phase-21 batch from every moderator would be worse.
+ * But firestore.rules reads that same missing field as BROADER than a scoped
+ * volunteer's territory and refuses the write, which is the conservative and
+ * correct call: reassigning a city-wide batch is an admin act.
+ *
+ * Net effect before this: a moderator saw Assign / Rename / Delete on a legacy
+ * batch, pressed one, and got "Missing or insufficient permissions" with nothing
+ * to explain it. The buttons are now disabled with a reason instead.
+ *
+ * Mirrors batchScopeOk() + scopeAllows() in firestore.rules via matchesScope,
+ * which is the same predicate the rules encode.
+ */
+export function canEditBatch(batch, scope) {
+  if (!scope || scope.unrestricted) return true;
+  if (scope.kind === SCOPE_KINDS.NONE) return false;
+  return matchesScope(scope, { area: batch?.area || null, mandal: batch?.mandal || null });
+}
+
+/**
+ * computeBatchStats(batches, individualsById)
+ *
+ * Pure function — the caller supplies the individuals it already has loaded
+ * rather than this re-reading 1240 documents per render. Mirrors the shape of
+ * the legacy getBatchStats() output so the UI reads the same way.
+ *
+ * `missing` counts individualIds whose document is absent from the supplied map.
+ * That is either a deleted contact still referenced by a batch (real data drift,
+ * worth surfacing) or simply not loaded yet — the UI labels it "unknown", not
+ * "pending", so it can't be mistaken for outstanding work.
+ */
+export function computeBatchStats(batches, individualsById = {}) {
+  const perBatch = (batches || []).map((b) => {
+    const ids = b.individualIds || [];
+    let called = 0, pending = 0, missing = 0;
+    const statusCounts = {};
+    for (const id of ids) {
+      const ind = individualsById[id];
+      if (!ind) { missing++; continue; }
+      const s = String(ind.status || '').trim();
+      if (s) { called++; statusCounts[s] = (statusCounts[s] || 0) + 1; }
+      else pending++;
+    }
+    const known = called + pending;
+    return {
+      ...b,
+      total: ids.length,
+      called,
+      pending,
+      missing,
+      statusCounts,
+      progressPct: known ? Math.round((called / known) * 100) : 0,
+    };
+  });
+
+  const totals = perBatch.reduce((acc, b) => ({
+    batches: acc.batches + 1,
+    assigned: acc.assigned + (b.assignedVolunteerId ? 1 : 0),
+    contacts: acc.contacts + b.total,
+    called: acc.called + b.called,
+    pending: acc.pending + b.pending,
+  }), { batches: 0, assigned: 0, contacts: 0, called: 0, pending: 0 });
+
+  totals.unassigned = totals.batches - totals.assigned;
+  totals.progressPct = totals.called + totals.pending
+    ? Math.round((totals.called / (totals.called + totals.pending)) * 100)
+    : 0;
+
+  return { perBatch, totals };
 }

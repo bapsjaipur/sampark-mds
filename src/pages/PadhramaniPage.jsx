@@ -573,7 +573,7 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
 
       {step === 1 ? (
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-600">Event name (optional)</label>
               <Input
@@ -595,7 +595,7 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-600">
                 Date <span className="text-rose-500">*</span>
@@ -634,7 +634,7 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <VolunteerDropdown
               label="Santo 1"
               value={form.secondVolunteerId}
@@ -1153,21 +1153,25 @@ export default function PadhramaniPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
+    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       {/* Header */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900 tracking-tight">Padhramani</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">Padhramani</h1>
           <p className="text-sm text-slate-400">
             {filteredEvents.length} event{filteredEvents.length !== 1 ? "s" : ""} ·{" "}
             {totalHouseholds} households · {totalVisited} visited
           </p>
         </div>
-        <div className="flex gap-2">
+        {/* flex-wrap, and short labels below sm. Unwrapped, these five controls
+            were 821px wide on a 375px phone — the whole page scrolled sideways
+            and "Schedule Padhramani" sat off-screen, which is the one button
+            this screen exists for. */}
+        <div className="flex flex-wrap items-center gap-2">
           <select
             value={selectedCampaign}
             onChange={(e) => setSelectedCampaign(e.target.value)}
-            className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
+            className="h-9 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300 sm:w-auto"
           >
             {campaignOptions.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
@@ -1175,14 +1179,14 @@ export default function PadhramaniPage() {
             <FileText className="h-3.5 w-3.5" /> Blank form
           </Button>
           <Button variant="secondary" onClick={exportCSV}>
-            <Download className="h-3.5 w-3.5" /> Export CSV
+            <Download className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Export&nbsp;</span>CSV
           </Button>
           <Button variant="secondary" onClick={handleExportPDF}>
-            <FileText className="h-3.5 w-3.5" /> Campaign Report PDF
+            <FileText className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Campaign Report&nbsp;</span>PDF
           </Button>
           <RequirePermission permission="edit_contacts">
             <Button variant="accent" onClick={() => setScheduleOpen(true)}>
-              <Plus className="h-3.5 w-3.5" /> Schedule Padhramani
+              <Plus className="h-3.5 w-3.5" /> Schedule<span className="hidden sm:inline">&nbsp;Padhramani</span>
             </Button>
           </RequirePermission>
         </div>

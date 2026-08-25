@@ -3,7 +3,9 @@ import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search } from "lucide-react";
 import { useGlobalSearch } from "../../hooks/useGlobalSearch";
+import { useVolunteerIdentity } from "../../hooks/useVolunteerIdentity";
 import { Avatar } from "../ui/Avatar";
+import { VolunteerBadge, VolunteerRing } from "../ui/VolunteerBadge";
 
 export default function GlobalSearchBar({ households }) {
   const [term, setTerm] = useState("");
@@ -11,6 +13,7 @@ export default function GlobalSearchBar({ households }) {
   const wrapRef = useRef(null);
   const navigate = useNavigate();
   const { individuals, households: matchedHouseholds, isSearching } = useGlobalSearch(term, households);
+  const { identify } = useVolunteerIdentity();
 
   useEffect(() => {
     const onClickOutside = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
@@ -42,15 +45,23 @@ export default function GlobalSearchBar({ households }) {
           {individuals.length > 0 && (
             <div>
               <p className="px-3 pt-2.5 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">People</p>
-              {individuals.slice(0, 8).map((i) => (
-                <button key={i.id} onClick={() => goToHousehold(i.householdId)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-slate-50">
-                  <Avatar name={i.name} size="sm" />
-                  <span>
-                    <span className="block text-sm font-medium text-slate-800">{i.name}</span>
-                    <span className="block text-xs text-slate-400">{i.mobile || "No mobile"} · {i.mandal || "No mandal"} · {i.household?.area || "Unknown area"}</span>
-                  </span>
-                </button>
-              ))}
+              {individuals.slice(0, 8).map((i) => {
+                const sevak = identify(i);
+                return (
+                  <button key={i.id} onClick={() => goToHousehold(i.householdId)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-slate-50">
+                    <VolunteerRing active={Boolean(sevak)}>
+                      <Avatar src={i.profilePhotoURL} name={i.name} size="sm" />
+                    </VolunteerRing>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate text-sm font-medium text-slate-800">{i.name}</span>
+                        <VolunteerBadge volunteer={sevak} />
+                      </span>
+                      <span className="block truncate text-xs text-slate-400">{i.mobile || "No mobile"} · {i.mandal || "No mandal"} · {i.household?.area || "Unknown area"}</span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
 

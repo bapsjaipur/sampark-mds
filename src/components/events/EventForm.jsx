@@ -44,15 +44,15 @@ export default function EventForm({ event, areas = [], onSubmit, onCancel }) {
         <Input value={form.title} onChange={update('title')} error={errors.title} placeholder="e.g. Weekly Yuvak Sabha" />
         <FieldError>{errors.title}</FieldError>
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <div><Label required>Date</Label><Input type="date" value={form.date} onChange={update('date')} error={errors.date} /><FieldError>{errors.date}</FieldError></div>
         <div><Label required>Time</Label><Input type="time" value={form.time} onChange={update('time')} error={errors.time} /><FieldError>{errors.time}</FieldError></div>
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <div><Label>Duration (minutes)</Label><Input type="number" min="15" step="15" value={form.durationMinutes} onChange={update('durationMinutes')} /></div>
         <div><Label>Speaker</Label><Input value={form.speaker} onChange={update('speaker')} placeholder="Optional" /></div>
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <div><Label>Mandal (leave blank for all)</Label><MandalSelect value={form.mandal} onChange={update('mandal')} className={selectClass} allowBlank /></div>
         <div><Label>Area (leave blank for all)</Label><AreaSelect value={form.area} onChange={update('area')} className={selectClass} allowBlank /></div>
       </div>

@@ -1,7 +1,19 @@
 // src/components/admin-tools/DataIntegrityTab.jsx — Attio redesign.
+//
+// PHASE 24 — READS. Finding duplicate phone numbers means comparing every contact
+// against every other one, so this screen genuinely needs the whole collection —
+// ~3,100 documents, against a daily allowance of 50,000. That was fine as a
+// deliberate audit and ruinous as a side effect, and it was the latter: Data
+// Integrity is the DEFAULT Admin Tools tab, so merely opening Admin Tools to change
+// an email template spent 6% of the day's reads on a scan nobody asked for.
+//
+// The scan is now behind a button. The listener lives in the inner component, so
+// until someone presses it no query exists at all. Pressing it is free if the
+// Contacts page is already open in this session — both use the same shared
+// listener (see useAllContacts).
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { PartyPopper, MapPin } from 'lucide-react';
+import { PartyPopper, MapPin, ScanSearch } from 'lucide-react';
 import { useAllContacts } from '../../hooks/useAllContacts';
 import { useToast } from '../../contexts/ToastContext';
 import { findDuplicatePhones, findMissingInfo, findMissingAreaInHousehold } from '../../services/integrityService';
@@ -31,8 +43,36 @@ function DuplicateGroup({ phone, group, onDelete }) {
   );
 }
 
+/**
+ * The gate. Renders no query — mounting this component is free, which is what
+ * makes it safe to leave as the default Admin Tools tab.
+ */
 export default function DataIntegrityTab() {
-  const { contacts, deleteContact } = useAllContacts();
+  const [scanning, setScanning] = useState(false);
+
+  if (!scanning) {
+    return (
+      <Card className="flex flex-col items-center gap-3 border-dashed p-10 text-center">
+        <ScanSearch className="h-6 w-6 text-slate-300" />
+        <div>
+          <p className="text-sm font-medium text-slate-800">Data integrity scan</p>
+          <p className="mx-auto mt-1 max-w-md text-xs text-slate-500">
+            Finds duplicate phone numbers, contacts missing a number or Mandal, and household
+            members with no Area. It has to compare every contact against every other one, so it
+            loads the whole contact list — a few thousand reads out of the day's free 50,000.
+            It doesn&apos;t run until you ask, and it&apos;s free if you already have Contacts open.
+          </p>
+        </div>
+        <Button variant="accent" size="sm" onClick={() => setScanning(true)}>Run scan</Button>
+      </Card>
+    );
+  }
+
+  return <IntegrityReport onClose={() => setScanning(false)} />;
+}
+
+function IntegrityReport({ onClose }) {
+  const { contacts, loading, deleteContact } = useAllContacts();
   const { showToast } = useToast();
   const [tab, setTab] = useState('duplicates');
   const [backfilling, setBackfilling] = useState(false);
@@ -63,10 +103,14 @@ export default function DataIntegrityTab() {
 
   return (
     <div>
-      <div className="mb-4 flex gap-2">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <button onClick={() => setTab('duplicates')} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${tab === 'duplicates' ? 'bg-orange-50 text-orange-700' : 'text-slate-500 hover:bg-slate-50'}`}>Duplicate phones ({duplicates.length})</button>
         <button onClick={() => setTab('missing')} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${tab === 'missing' ? 'bg-orange-50 text-orange-700' : 'text-slate-500 hover:bg-slate-50'}`}>Missing info ({missing.missingPhone.length + missing.missingMandal.length})</button>
         <button onClick={() => setTab('area')} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${tab === 'area' ? 'bg-orange-50 text-orange-700' : 'text-slate-500 hover:bg-slate-50'}`}>Missing area ({missingArea.length})</button>
+        <span className="ml-auto flex items-center gap-3 text-xs text-slate-400">
+          {loading ? 'Scanning…' : `${contacts.length} contacts scanned`}
+          <button onClick={onClose} className="font-medium text-slate-500 hover:text-slate-700">Close</button>
+        </span>
       </div>
 
       {tab === 'duplicates' && (

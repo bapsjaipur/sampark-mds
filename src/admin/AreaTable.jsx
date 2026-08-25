@@ -1,4 +1,11 @@
 // src/admin/AreaTable.jsx
+//
+// Presentation only. Every write that has to reach records outside areas/{id} —
+// a rename, a sub-area rename, a delete — is handed up to the parent
+// (AreasMandalsManager), which owns the cascade. See taxonomyService for why a
+// rename cannot just be an updateDoc here: households store the area NAME, not a
+// reference, so renaming the option without rewriting the records splits the
+// data across two strings and silently cuts off every karyakarta assigned to it.
 import { useState } from 'react';
 import { collection, addDoc, doc, updateDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -17,7 +24,14 @@ function suggestCode(name) {
   return words.slice(0, 3).map((w) => w[0]).join('').toUpperCase();
 }
 
-export function AreaTable({ areas, onUpdateName, onDelete }) {
+export function AreaTable({
+  areas,
+  onRename,          // (area, { name, code }) → Promise — cascades to records
+  onUpdateCode,      // (area, code) → Promise — codes are not stored on records
+  onDelete,          // (area) → Promise
+  onRenameSubArea,   // (area, oldSub, { name, code }) → Promise — cascades
+  onDeleteSubArea,   // (area, sub) → Promise
+}) {
   // Always expand areas that have sub-areas, plus any the user manually clicked.
   const [manualExpanded, setManualExpanded] = useState(new Set());
   const [newName, setNewName] = useState('');
@@ -91,39 +105,82 @@ export function AreaTable({ areas, onUpdateName, onDelete }) {
     }
   }
 
+  // A brand-new sub-area is on no record yet, so this one stays local.
   async function addSubArea(area, name, code) {
     if (!name.trim() || !code.trim()) return;
     const current = area.subAreas || [];
+    if (current.some((s) => (s.name || '').toLowerCase() === name.trim().toLowerCase())) {
+      setError(`"${area.name}" already has a sub-area called "${name.trim()}".`);
+      return;
+    }
+    setError(null);
     await updateDoc(doc(db, 'areas', area.id), {
       subAreas: [...current, { name: name.trim(), code: code.trim().toUpperCase() }]
     });
   }
 
-  async function removeSubArea(area, subArea) {
-    if (!window.confirm(`Delete sub-area ${subArea.name}?`)) return;
-    const current = area.subAreas || [];
-    await updateDoc(doc(db, 'areas', area.id), {
-      subAreas: current.filter(s => s.name !== subArea.name || s.code !== subArea.code)
-    });
+  // Renaming an area is not a local edit — households and contacts store the
+  // name as text. Hand it to the parent, which counts the affected records,
+  // confirms, and rewrites them together with the areas/{id} document.
+  //
+  // `el` rather than just the string: if the rename is refused or cancelled the
+  // box has to go back to the stored name. Leaving the typed text on screen next
+  // to unchanged data reads exactly like a successful save.
+  async function handleNameBlur(area, el) {
+    const name = el.value.trim();
+    if (!name || name === area.name) return;
+    if (areas.some((a) => a.id !== area.id && (a.name || '').toLowerCase() === name.toLowerCase())) {
+      setError(`"${name}" is already an area. Use “Merge areas” below to combine the two.`);
+      el.value = area.name;
+      return;
+    }
+    setError(null);
+    try {
+      if (await onRename(area, { name, code: area.code }) === false) el.value = area.name;
+    } catch (err) {
+      el.value = area.name;
+      setError(err.message || 'Could not rename that area.');
+    }
   }
 
-  async function updateSubArea(area, oldSa, newName, newCode) {
-    if (!newName.trim() || !newCode.trim()) return;
-    // Don't update if exactly the same
-    if (newName.trim() === oldSa.name && newCode.trim().toUpperCase() === oldSa.code) return;
+  // Codes are only used by this screen and the import wizard's column matching —
+  // no record stores one, so this needs no cascade.
+  async function handleCodeBlur(area, el) {
+    const code = el.value.trim().toUpperCase();
+    if (!code || code === area.code) return;
+    if (areas.some((a) => a.id !== area.id && (a.code || '').toUpperCase() === code)) {
+      setError(`Code "${code}" is already used by another area.`);
+      el.value = area.code || '';
+      return;
+    }
+    setError(null);
+    try {
+      await onUpdateCode(area, code);
+    } catch (err) {
+      el.value = area.code || '';
+      setError(err.message || 'Could not update that code.');
+    }
+  }
 
-    const current = area.subAreas || [];
-    const newArr = current.map(s => {
-      // Find the specific item updating and swap its values in-place to preserve order
-      if (s.name === oldSa.name && s.code === oldSa.code) {
-        return { name: newName.trim(), code: newCode.trim().toUpperCase() };
-      }
-      return s;
-    });
-
-    await updateDoc(doc(db, 'areas', area.id), {
-      subAreas: newArr
-    });
+  async function handleSubAreaBlur(area, oldSub, el, next) {
+    const name = (next.name || '').trim();
+    const code = (next.code || '').trim().toUpperCase();
+    const restore = () => { el.value = next.fromCode ? (oldSub.code || '') : oldSub.name; };
+    if (!name || !code) { restore(); return; }
+    if (name === oldSub.name && code === oldSub.code) return;
+    if (name !== oldSub.name
+      && (area.subAreas || []).some((s) => s !== oldSub && (s.name || '').toLowerCase() === name.toLowerCase())) {
+      setError(`"${area.name}" already has a sub-area called "${name}".`);
+      restore();
+      return;
+    }
+    setError(null);
+    try {
+      if (await onRenameSubArea(area, oldSub, { name, code }) === false) restore();
+    } catch (err) {
+      restore();
+      setError(err.message || 'Could not rename that sub-area.');
+    }
   }
 
   return (
@@ -170,8 +227,21 @@ export function AreaTable({ areas, onUpdateName, onDelete }) {
           {areas.map((r) => (
             <div key={r.id}>
               <div className="flex items-center gap-2 py-2">
-                <input defaultValue={r.name} onBlur={(e) => onUpdateName(r, e.target.value)} className="flex-1 rounded border border-transparent px-1.5 py-1 text-sm hover:border-slate-200 focus:border-slate-300 focus:outline-none" />
-                <input defaultValue={r.code} onBlur={(e) => onUpdateName(r, r.name, e.target.value.toUpperCase())} className="w-16 rounded border border-transparent px-1.5 py-1 text-sm uppercase hover:border-slate-200" />
+                {/* Keyed on the stored values so a refused or cascaded rename
+                    re-syncs the box from Firestore instead of leaving the typed
+                    text sitting on screen as though it had saved. */}
+                <input
+                  key={`n-${r.name}`}
+                  defaultValue={r.name}
+                  onBlur={(e) => handleNameBlur(r, e.target)}
+                  className="min-w-0 flex-1 rounded border border-transparent px-1.5 py-1 text-sm hover:border-slate-200 focus:border-slate-300 focus:outline-none"
+                />
+                <input
+                  key={`c-${r.code}`}
+                  defaultValue={r.code}
+                  onBlur={(e) => handleCodeBlur(r, e.target)}
+                  className="w-16 shrink-0 rounded border border-transparent px-1.5 py-1 text-sm uppercase hover:border-slate-200"
+                />
                 <Button variant="ghost" size="sm" onClick={() => toggleExpand(r)}>
                   {isExpanded(r) ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                 </Button>
@@ -181,10 +251,10 @@ export function AreaTable({ areas, onUpdateName, onDelete }) {
                 <div className="pl-6 pb-2 space-y-1">
                   <p className="text-xs font-semibold text-slate-500">Sub-areas</p>
                   {(r.subAreas || []).map((sa, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm text-slate-600">
-                      <input defaultValue={sa.name} onBlur={(e) => updateSubArea(r, sa, e.target.value, sa.code)} className="rounded border border-transparent px-1 py-0.5 text-xs hover:border-slate-200" />
-                      <input defaultValue={sa.code} onBlur={(e) => updateSubArea(r, sa, sa.name, e.target.value.toUpperCase())} className="w-12 rounded border border-transparent px-1 py-0.5 text-xs uppercase hover:border-slate-200" />
-                      <button onClick={() => removeSubArea(r, sa)} className="text-rose-400 hover:text-rose-600"><Trash2 className="h-3 w-3" /></button>
+                    <div key={`${sa.name}-${sa.code}-${i}`} className="flex items-center gap-2 text-sm text-slate-600">
+                      <input defaultValue={sa.name} onBlur={(e) => handleSubAreaBlur(r, sa, e.target, { name: e.target.value, code: sa.code })} className="min-w-0 flex-1 rounded border border-transparent px-1 py-0.5 text-xs hover:border-slate-200" />
+                      <input defaultValue={sa.code} onBlur={(e) => handleSubAreaBlur(r, sa, e.target, { name: sa.name, code: e.target.value, fromCode: true })} className="w-12 shrink-0 rounded border border-transparent px-1 py-0.5 text-xs uppercase hover:border-slate-200" />
+                      <button onClick={() => onDeleteSubArea(r, sa)} className="shrink-0 text-rose-400 hover:text-rose-600"><Trash2 className="h-3 w-3" /></button>
                     </div>
                   ))}
                   <div className="flex gap-1">

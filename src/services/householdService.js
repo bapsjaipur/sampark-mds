@@ -7,7 +7,11 @@
 //   2. deleteHouseholdCascade — deleting a household also deletes every
 //      individual still in it, so you never end up with orphaned
 //      individual docs pointing at a household that no longer exists.
-import { collection, doc, getDocs, query, where, writeBatch, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, query, where, serverTimestamp } from 'firebase/firestore';
+// PHASE 24 — metered drop-ins (src/lib/fsMetered.js): same signatures, they count.
+// A cascade delete is one write per member, so this is where a "delete household"
+// can quietly cost fifteen.
+import { getDocs, writeBatch, updateDoc } from '../lib/fsMetered';
 import { db } from '../lib/firebase';
 
 export async function moveIndividualToHousehold({ individualId, fromHouseholdId, toHouseholdId, relation = 'member', makeMember = true }) {

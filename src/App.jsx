@@ -4,6 +4,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./hooks/usePermissions";
 import { ToastProvider } from "./contexts/ToastContext";
+import { getRoleView } from "./lib/roleView";
 import LoginPage from "./pages/LoginPage";
 import AppLayout, { RequireAuth } from "./components/AppLayout";
 import HouseholdsPage from "./pages/HouseholdsPage";
@@ -24,21 +25,17 @@ import SantoSchedulePage from "./pages/SantoSchedulePage";
 import MyContactsPage from "./pages/MyContactsPage";
 import ProfilePage from "./pages/ProfilePage";
 
-// 4.1 — redirect to first route the volunteer actually has permission to see
+// Phase 20 — landing page now comes from lib/roleView.js rather than a ladder
+// of if-statements here. The old ladder sent anyone with view_assigned_contacts
+// to /contacts, which meant a volunteer whose entire job is the calling queue
+// landed on a list they can barely filter. getRoleView() also guarantees the
+// destination is one this role can actually reach, so login can no longer bounce
+// straight into a permission-denied screen.
 function DefaultRedirect() {
   const { permissions, loading } = useAuth();
   if (loading) return null;
-  // Santo role: lands on their personal schedule
-  if (permissions.includes("view_padhramani") && !permissions.includes("view_all_contacts") && !permissions.includes("edit_contacts")) {
-    return <Navigate to="/santo-schedule" replace />;
-  }
-  if (permissions.includes("view_all_contacts") || permissions.includes("view_assigned_contacts")) {
-    return <Navigate to="/contacts" replace />;
-  }
-  if (permissions.includes("assign_batches")) return <Navigate to="/admin/batches" replace />;
-  if (permissions.includes("manage_events")) return <Navigate to="/events" replace />;
-  // Fallback: households (visible to all authenticated users with no specific gate)
-  return <Navigate to="/households" replace />;
+  const { homePath } = getRoleView(permissions);
+  return <Navigate to={homePath} replace />;
 }
 
 export default function App() {

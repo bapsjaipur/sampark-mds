@@ -4,9 +4,14 @@
 // collection instead of the legacy's per-event Sheet column).
 
 import {
-  collection, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs,
-  query, where, orderBy, onSnapshot, serverTimestamp,
+  collection, doc, query, where, orderBy, onSnapshot, serverTimestamp,
 } from 'firebase/firestore';
+// PHASE 24 — metered drop-ins (src/lib/fsMetered.js): same signatures, they count.
+// Marking a sabha's attendance is one write per person present, which is the
+// single biggest write burst in normal daily use.
+import {
+  addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs,
+} from '../lib/fsMetered';
 import { db } from '../lib/firebase';
 
 export async function createEvent({ title, date, time, durationMinutes, speaker, mandal, area, createdBy }) {
@@ -23,7 +28,14 @@ export async function createEvent({ title, date, time, durationMinutes, speaker,
 }
 
 export async function updateEvent(eventId, data) {
-  return updateDoc(doc(db, 'events', eventId), { ...data, updatedAt: serverTimestamp() });
+  const patch = { ...data, updatedAt: serverTimestamp() };
+  // createEvent stores a blank mandal/area as null, but EventForm submits ''
+  // for "all Mandals". Left as-is, an edited event no longer matches the
+  // `mandal == null` scoping the post-sabha report uses. Normalise here so both
+  // paths write the same shape.
+  if ('mandal' in patch) patch.mandal = patch.mandal || null;
+  if ('area' in patch) patch.area = patch.area || null;
+  return updateDoc(doc(db, 'events', eventId), patch);
 }
 
 export async function deleteEvent(eventId) {
@@ -84,9 +96,78 @@ export function subscribeToAttendance(eventId, callback) {
   return onSnapshot(q, (snap) => callback(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
 }
 
-/** One-time fetch of an individual's full attendance history (used on their profile). */
+/**
+ * Live present-count for EVERY event, as `{ [eventId]: count }`.
+ *
+ * One unfiltered listener on `attendance`, grouped client-side. The two
+ * alternatives were both worse:
+ *   • a denormalised `presentCount` on events/{id} — attendance writes need
+ *     edit_contacts while event writes need manage_events, so the karyekar
+ *     marking someone present cannot legally bump the counter, and
+ *     `attendance` update is `if false` so a trigger-free client can't fix it;
+ *   • getCountFromServer per event — a fresh round-trip per card on every
+ *     render, and no live updates while a sabha is being marked.
+ *
+ * The collection holds one small doc per (event, person) pair, so it stays in
+ * the low thousands for years of weekly sabhas.
+ */
+export function subscribeToAttendanceCounts(callback) {
+  return onSnapshot(collection(db, 'attendance'), (snap) => {
+    const counts = {};
+    snap.docs.forEach((d) => {
+      const eventId = d.data().eventId;
+      if (eventId) counts[eventId] = (counts[eventId] || 0) + 1;
+    });
+    callback(counts);
+  });
+}
+
+/**
+ * The same single listener as above, but handing back the rows as well as the
+ * counts: `{ counts: {eventId: n}, byEvent: {eventId: [row]} }`.
+ *
+ * The events screen needs both — a present-count on every card in the list AND
+ * the actual rows for whichever event is selected (to mark, export and chart).
+ * Running subscribeToAttendanceCounts alongside subscribeToAttendance(eventId)
+ * would mean two listeners over the same collection and two chances for the
+ * badge and the list to disagree mid-update.
+ */
+export function subscribeToAllAttendance(callback) {
+  return onSnapshot(collection(db, 'attendance'), (snap) => {
+    const counts = {};
+    const byEvent = {};
+    snap.docs.forEach((d) => {
+      const row = { id: d.id, ...d.data() };
+      if (!row.eventId) return;
+      counts[row.eventId] = (counts[row.eventId] || 0) + 1;
+      (byEvent[row.eventId] ||= []).push(row);
+    });
+    callback({ counts, byEvent });
+  });
+}
+
+/**
+ * One-time fetch of an individual's attendance rows.
+ *
+ * Ordered by markedAt only as a tiebreaker — callers should re-sort by the
+ * joined event's own date. Every row imported during the Sevak Call migration
+ * carries the same markedAt (the migration run's timestamp), so markedAt order
+ * says nothing useful about which sabha came first. See useAttendanceHistory.
+ */
 export async function getAttendanceHistoryForIndividual(individualId) {
   const q = query(collection(db, 'attendance'), where('individualId', '==', individualId), orderBy('markedAt', 'desc'));
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
+
+/** Live version of the above — used by the profile panel so a mark made on the
+ *  events screen shows up without a reload. */
+export function subscribeToAttendanceForIndividual(individualId, callback, onError) {
+  const q = query(collection(db, 'attendance'), where('individualId', '==', individualId));
+  return onSnapshot(
+    q,
+    (snap) => callback(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    onError,
+  );
+}
+

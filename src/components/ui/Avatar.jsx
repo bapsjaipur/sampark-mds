@@ -2,7 +2,16 @@
 import { User } from 'lucide-react';
 import { cn } from '../../lib/cn';
 
-const SIZE_CLASSES = { sm: 'h-6 w-6 text-[10px]', md: 'h-9 w-9 text-xs', lg: 'h-12 w-12 text-sm' };
+// `xl` exists because HouseholdDetailPage asks for it; without the key it fell
+// through to `md` and silently rendered a 36px avatar where a 64px one was laid
+// out for.
+const SIZE_CLASSES = {
+  xs: 'h-5 w-5 text-[9px]',
+  sm: 'h-6 w-6 text-[10px]',
+  md: 'h-9 w-9 text-xs',
+  lg: 'h-12 w-12 text-sm',
+  xl: 'h-16 w-16 text-base',
+};
 
 function initials(name) {
   if (!name) return '';

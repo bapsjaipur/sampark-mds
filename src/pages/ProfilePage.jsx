@@ -98,8 +98,8 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="mx-auto max-w-xl px-6 py-12 space-y-6">
-      <h1 className="mb-8 text-2xl font-semibold text-slate-900 tracking-tight">My Profile</h1>
+    <div className="mx-auto max-w-xl px-4 py-8 space-y-6 sm:px-6 sm:py-12">
+      <h1 className="mb-8 text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">My Profile</h1>
 
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
         {/* Photo Uploader Header */}
@@ -139,9 +139,9 @@ export default function ProfilePage() {
             <p className="mt-1.5 text-xs text-amber-600">If you change this number, you must use the new number next time you log in.</p>
           </div>
 
-          <div className="pt-4 border-t border-slate-100 flex justify-between items-center">
-            <Button type="button" variant="ghost" className="text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => signOut(auth)}>
-               <LogOut className="h-4 w-4 mr-2" /> Sign Out
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4">
+            <Button type="button" variant="ghost" className="text-red-500 hover:bg-red-50 hover:text-red-700" onClick={() => signOut(auth)}>
+               <LogOut className="mr-2 h-4 w-4" /> Sign Out
             </Button>
             <Button type="submit" variant="accent" disabled={saving}>
               {saving ? 'Saving...' : 'Save Profile'}

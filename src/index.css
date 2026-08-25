@@ -8,6 +8,47 @@
     -webkit-font-smoothing: antialiased;
   }
   body {
-    @apply bg-slate-50/50 text-slate-900 antialiased tracking-tight;
+    /* Cream canvas, white cards. Set at full opacity rather than the old
+       bg-slate-50/50: a half-transparent tint over the browser's white default
+       washed the warmth back out, and on iOS Safari the area behind the rubber-band
+       overscroll stayed white. See tailwind.config.js for the palette. */
+    @apply bg-cream-100 text-slate-900 antialiased tracking-tight;
+  }
+}
+
+@layer components {
+  /* ───────────────────────────────────────────────────────────────────────────
+     The Jaipur mandir line art behind the login screen.
+
+     The source file (public/lineart-jaipur.svg, a CorelDRAW export) draws all 100
+     of its paths in one near-black fill, #373435. Used as a plain background-image
+     that reads as a heavy charcoal drawing, and knocking it back with opacity only
+     turns it grey — on cream, grey line art looks like a printing fault.
+
+     So it is used as a MASK instead: the SVG supplies the shape, `background-color`
+     supplies the colour. That keeps the tint here in CSS where it can be retuned in
+     one line, rather than baked into a 417 KB file that would have to be re-exported
+     to change. --lineart-tint is the only value worth touching.
+
+     If a browser does not support masking the band simply does not paint, leaving
+     the cream canvas — the right way for pure decoration to fail.
+     ─────────────────────────────────────────────────────────────────────────── */
+  .lineart-jaipur {
+    --lineart-tint: #DCCDB2;
+    background-color: var(--lineart-tint);
+    -webkit-mask-image: url('/lineart-jaipur.svg');
+    mask-image: url('/lineart-jaipur.svg');
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center bottom;
+    mask-position: center bottom;
+    /* `contain`, not `cover`. The drawing is 12800 × 6760 — very wide — and the
+       mandir's shikhars are the part that identifies it. Under `cover` a phone-width
+       band cropped the sides and kept only the plinth and the colonnade, which read
+       as a generic arcade. `contain` fits the whole complex, spires included, and
+       simply leaves cream where the drawing does not reach. The band it sits in is
+       given the same 12800/6760 aspect so there is normally nothing left over. */
+    -webkit-mask-size: contain;
+    mask-size: contain;
   }
 }
