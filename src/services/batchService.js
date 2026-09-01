@@ -24,6 +24,7 @@
 //     assignedVolunteerId | null, assignedAt | null,
 //     createdBy, createdAt,
 //     eventId | null, eventDate | null    ← PHASE 27: which sabha this was calling for
+//     updatedAt | null                    ← PHASE 28: last hand-edit of the roster
 //   }
 //
 // PHASE 21 — `mandal` is new and is what makes scoped batches possible. A batch
@@ -565,19 +566,33 @@ export async function assignBatch({ batchId, volunteerId, assignedBy = null, res
  *
  * Takes explicit ids rather than a filter, so the caller can only ever clear the
  * people it showed the admin.
+ *
+ * PHASE 29 — two options, both added for the dashboard's reset:
+ *   clearCallCount — also zero `callCount`. A "new round" that still shows "4
+ *                    calls" chips from last month is not a new round, and the
+ *                    logged calls themselves survive in `activity` regardless.
+ *   keepNotes      — leave `reference` alone. The remark from last week ("after
+ *                    his exams") is often the most useful thing to carry into
+ *                    this week's call, so the dashboard offers to keep it. Off by
+ *                    default, which is the behaviour every existing caller gets.
  */
 export async function resetCallStatuses({
-  individualIds = [], resetBy = null, note = '', onProgress,
+  individualIds = [], resetBy = null, note = '',
+  clearCallCount = false, keepNotes = false, onProgress,
 } = {}) {
   const ids = [...new Set((individualIds || []).filter(Boolean))];
   if (!ids.length) return { reset: 0 };
+
+  const patch = { status: '' };
+  if (!keepNotes) patch.reference = '';
+  if (clearCallCount) patch.callCount = 0;
 
   let reset = 0;
   // Two writes per contact (the individual + its activity row), so halve the cap.
   for (const slice of chunk(ids, Math.floor(WRITE_BATCH_LIMIT / 2))) {
     const wb = writeBatch(db);
     for (const id of slice) {
-      wb.update(doc(db, 'individuals', id), { status: '', reference: '', updatedAt: serverTimestamp() });
+      wb.update(doc(db, 'individuals', id), { ...patch, updatedAt: serverTimestamp() });
       wb.set(doc(collection(db, 'activity')), {
         timestamp: serverTimestamp(),
         volunteerId: resetBy,
@@ -600,6 +615,106 @@ export async function unassignBatch({ batchId }) {
 }
 export async function renameBatch({ batchId, name }) {
   await updateDoc(doc(db, 'batches', batchId), { name: String(name || '').trim() || 'Untitled batch' });
+}
+
+/**
+ * editBatchContacts({ batchId, add, remove, detachFrom, editedBy })
+ *
+ * PHASE 28 — hand-editing the roster of an existing batch.
+ *
+ * Generation cuts batches by area × mandal in fixed sizes, which is right for the
+ * weekly bulk cut and wrong for every exception after it: a karyakarta who asks
+ * for ten fewer, a contact who should be rung by their own cousin rather than a
+ * stranger, a new contact added on Sunday who belongs in this week's round. Until
+ * now the only tools for those were delete-and-regenerate (which loses the
+ * assignment and the numbering) or the Manual tab (which can only create).
+ *
+ * THE ONE INVARIANT WORTH PROTECTING is that a contact sits in at most one batch.
+ * Generation enforces it with skipAlreadyBatched, because two batches holding the
+ * same person means two volunteers ringing them the same evening — the specific
+ * embarrassment that filter exists to prevent. Hand-editing can breach it just as
+ * easily, so `detachFrom` names the batches to pull the added contacts OUT of,
+ * and the whole move is ONE commit: there is no instant at which the contact is
+ * in both batches, and none at which they are in neither.
+ *
+ * READS: one getDoc for the target plus one per detach source (usually zero, and
+ * capped). The target is re-read rather than trusted from the caller's listener
+ * for a reason — the caller's copy can be seconds stale, and writing a whole
+ * `individualIds` array from a stale copy silently reverts whatever another admin
+ * just did. Cheap insurance at one read per save.
+ *
+ * @param {object}   opts
+ * @param {string}   opts.batchId
+ * @param {string[]} [opts.add]         individualIds to put in
+ * @param {string[]} [opts.remove]      individualIds to take out
+ * @param {string[]} [opts.detachFrom]  other batch ids to pull the added contacts from
+ * @param {string}   [opts.editedBy]    volunteer id — must be the auth uid, the
+ *                                      `activity` create rule checks it
+ * @returns {{added:number, removed:number, detached:number, total:number}}
+ */
+const MAX_DETACH_SOURCES = 25;
+
+export async function editBatchContacts({
+  batchId, add = [], remove = [], detachFrom = [], editedBy = null,
+} = {}) {
+  if (!batchId) throw new Error('batchId is required.');
+
+  const addIds = [...new Set((add || []).filter(Boolean))];
+  const removeIds = new Set((remove || []).filter(Boolean));
+  if (!addIds.length && !removeIds.size) return { added: 0, removed: 0, detached: 0, total: null };
+
+  const ref = doc(db, 'batches', batchId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('That batch no longer exists — reload the page.');
+  const current = snap.data().individualIds || [];
+  const batchName = snap.data().name || 'batch';
+
+  // Removals first, then additions, so asking for the same id in both ends with
+  // it present. That is the reading a UI produces when somebody unticks and
+  // re-ticks the same person, and "present" is what they meant.
+  const kept = current.filter((id) => !removeIds.has(id));
+  const keptSet = new Set(kept);
+  const added = addIds.filter((id) => !keptSet.has(id));
+  const next = [...kept, ...added];
+  const removed = current.length - kept.length;
+
+  // Source batches are re-read for the same reason as the target, and because the
+  // count has to come out exact: an arrayRemove + increment(-n) pair would drift
+  // the moment n disagreed with what the document actually held.
+  const addedSet = new Set(added);
+  const sources = [];
+  if (addedSet.size) {
+    for (const srcId of [...new Set((detachFrom || []).filter((id) => id && id !== batchId))].slice(0, MAX_DETACH_SOURCES)) {
+      const sRef = doc(db, 'batches', srcId);
+      const sSnap = await getDoc(sRef);
+      if (!sSnap.exists()) continue;
+      const ids = sSnap.data().individualIds || [];
+      const left = ids.filter((id) => !addedSet.has(id));
+      if (left.length === ids.length) continue;
+      sources.push({ ref: sRef, ids: left, pulled: ids.length - left.length });
+    }
+  }
+
+  const wb = writeBatch(db);
+  wb.update(ref, { individualIds: next, contactCount: next.length, updatedAt: serverTimestamp() });
+  sources.forEach((s) => wb.update(s.ref, {
+    individualIds: s.ids, contactCount: s.ids.length, updatedAt: serverTimestamp(),
+  }));
+  // One row for the edit, not one per contact: this is a single deliberate act by
+  // one person, and 40 identical rows would bury the rest of the trail.
+  wb.set(doc(collection(db, 'activity')), {
+    timestamp: serverTimestamp(),
+    volunteerId: editedBy,
+    individualId: null,
+    action: 'batch_contacts_edited',
+    details: `${batchName}: ${added.length ? `+${added.length}` : ''}`
+      + `${added.length && removed ? ', ' : ''}${removed ? `−${removed}` : ''}`
+      + ` contact${added.length + removed === 1 ? '' : 's'} · now ${next.length}`
+      + `${sources.length ? ` · moved out of ${sources.length} other batch${sources.length === 1 ? '' : 'es'}` : ''}`,
+  });
+  await wb.commit();
+
+  return { added: added.length, removed, detached: sources.reduce((n, s) => n + s.pulled, 0), total: next.length };
 }
 
 /**

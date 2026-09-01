@@ -27,11 +27,25 @@
 // "said yes but didn't come" and "came anyway", and three of those become
 // walkable queues on the machinery the two follow-up chips already use. See
 // src/services/roundService.js for why the join needed two new fields.
+//
+// PHASE 29 — undoing a mis-tap. StatusChips already let you untick the outcome
+// you had selected, but nothing could write that untick back: handleSaveAndNext
+// refused an empty status, so once "Not Interested" was saved it was saved for
+// good — the contact stayed in the done count, in the dashboard's called total,
+// and out of the generator's reach. Two ways out now, deliberately different:
+//   • "Undo" on the last-status box clears the outcome and STAYS on the contact,
+//     because the volunteer who mis-tapped almost always wants to mark the right
+//     one immediately.
+//   • unticking the chips turns Save & Next into Clear & Next, which clears and
+//     moves on, for the volunteer who realises the whole entry was wrong.
+// The call count gets the same treatment: one stray tap on Call used to be
+// permanent. Both are two-tap, because a one-tap undo next to a real outcome on a
+// phone is just a second way to lose it.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Phone, MessageCircle, MapPin, FileText, Search, X, ChevronLeft,
   Repeat, PhoneOff, Home, History, Check, SkipForward, Pencil, ExternalLink,
-  CalendarCheck, Clock,
+  CalendarCheck, Clock, Undo2, RotateCcw,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useMyBatchQueue } from '../hooks/useMyBatchQueue';
@@ -76,11 +90,19 @@ export default function CallingFlowPage() {
   // status strings, the other a set of contact ids, and only one can be on.
   const [roundFilter, setRoundFilter] = useState(null);
   const [editOpen, setEditOpen] = useState(false);
+  // Two-tap arming for the two undo actions. Kept as separate flags rather than
+  // one "armed" string so arming the outcome undo can never fire the call-count
+  // one, and both are cleared the moment the contact changes.
+  const [armClear, setArmClear] = useState(false);
+  const [armCall, setArmCall] = useState(false);
+  const [undoing, setUndoing] = useState(false);
   const bodyRef = useRef(null);
 
   useEffect(() => {
     setStatus(current?.status || '');
     setReference(current?.reference || '');
+    setArmClear(false);
+    setArmCall(false);
     // Advancing to a new contact must reset the scroll position, otherwise the
     // volunteer lands mid-card on the note field of the previous person.
     if (bodyRef.current) bodyRef.current.scrollTop = 0;
@@ -89,6 +111,13 @@ export default function CallingFlowPage() {
   const total = contacts.length;
   const position = Math.min(currentIdx + 1, total);
   const progressPct = total ? Math.round((currentIdx / total) * 100) : 0;
+
+  // The outcome as Firestore currently holds it, versus what the chips show. When
+  // the second is empty and the first is not, the volunteer has unticked a saved
+  // outcome — which is a clear, not a no-op, and the footer says so.
+  const savedStatus = current?.status || '';
+  const isClearing = Boolean(savedStatus) && !status;
+  const canSubmit = Boolean(status) || isClearing;
 
   const followUpCounts = useMemo(() => ({
     callBack: contacts.filter((c) => followUpGroups.callBack.includes(c.status)).length,
@@ -209,13 +238,17 @@ export default function CallingFlowPage() {
   }
 
   async function handleSaveAndNext() {
-    if (!status) { showToast({ type: 'error', message: 'Please select a status first.' }); return; }
     if (!current) return;
+    // An empty selection is only meaningful when there IS a saved outcome to
+    // clear. With nothing saved it is just an unanswered question.
+    if (!status && !savedStatus) { showToast({ type: 'error', message: 'Please select a status first.' }); return; }
     setSaving(true);
     try {
       await updateContactField({
         individualId: current.id, field: 'status', value: status,
-        volunteerId: volunteer?.id, action: 'status_changed', details: `Status set to ${status}`,
+        volunteerId: volunteer?.id,
+        action: status ? 'status_changed' : 'status_reset',
+        details: status ? `Status set to ${status}` : `Cleared “${savedStatus}” — marked by mistake`,
       });
       if (reference.trim() !== (current.reference || '')) {
         await updateContactField({
@@ -223,7 +256,10 @@ export default function CallingFlowPage() {
           volunteerId: volunteer?.id, action: 'reference_updated', details: reference.trim(),
         });
       }
-      showToast({ type: 'success', message: `Saved: ${status}` });
+      showToast({
+        type: 'success',
+        message: status ? `Saved: ${status}` : 'Outcome cleared — this contact is open again.',
+      });
       goToNext();
     } catch (err) {
       showToast({ type: 'error', message: `Couldn't save — ${err.message}` });
@@ -233,6 +269,55 @@ export default function CallingFlowPage() {
       // the entry and moved on.
     } finally {
       setSaving(false);
+    }
+  }
+
+  /**
+   * PHASE 29 — clear the saved outcome and stay put.
+   *
+   * The note is left alone on purpose. Whoever taps this is fixing the wrong
+   * button, not retracting what they were told, and "said he'd come after exams"
+   * is worth more than the outcome that was mistyped over it.
+   */
+  async function handleUndoOutcome() {
+    if (!current || undoing) return;
+    if (!armClear) { setArmClear(true); return; }
+    setUndoing(true);
+    try {
+      await updateContactField({
+        individualId: current.id, field: 'status', value: '',
+        volunteerId: volunteer?.id, action: 'status_reset',
+        details: `Cleared “${savedStatus}” — marked by mistake`,
+      });
+      setStatus('');
+      showToast({ type: 'success', message: 'Outcome cleared. Mark the right one below.' });
+    } catch (err) {
+      showToast({ type: 'error', message: `Couldn’t clear it — ${err.message}` });
+    } finally {
+      setUndoing(false);
+      setArmClear(false);
+    }
+  }
+
+  /** One stray tap on Call used to be permanent. The logged call itself stays in
+   *  the audit trail; this only corrects the counter on the contact. */
+  async function handleUndoCall() {
+    if (!current || undoing) return;
+    if (!armCall) { setArmCall(true); return; }
+    const next = Math.max(0, (current.callCount || 0) - 1);
+    setUndoing(true);
+    try {
+      await updateContactField({
+        individualId: current.id, field: 'callCount', value: next,
+        volunteerId: volunteer?.id, action: 'call_count_corrected',
+        details: `Call count corrected from ${current.callCount || 0} to ${next}`,
+      });
+      showToast({ type: 'success', message: next ? `Call count is now ${next}.` : 'Call count cleared.' });
+    } catch (err) {
+      showToast({ type: 'error', message: `Couldn’t correct it — ${err.message}` });
+    } finally {
+      setUndoing(false);
+      setArmCall(false);
     }
   }
 
@@ -517,9 +602,23 @@ export default function CallingFlowPage() {
                 </span>
               )}
               {current.callCount > 0 && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500">
-                  <History className="h-3 w-3" /> {current.callCount} call{current.callCount === 1 ? '' : 's'}
-                </span>
+                // Tappable, because a stray tap on the big green Call button used
+                // to be permanent. Reads as a plain chip until it is armed.
+                <button
+                  onClick={handleUndoCall}
+                  disabled={undoing}
+                  title="Tapped Call by mistake? Tap twice to take one off the count."
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition',
+                    armCall
+                      ? 'bg-rose-600 text-white'
+                      : 'bg-slate-100 text-slate-500 hover:bg-slate-200',
+                  )}
+                >
+                  {armCall
+                    ? <><RotateCcw className="h-3 w-3" /> Tap again — make it {Math.max(0, current.callCount - 1)}</>
+                    : <><History className="h-3 w-3" /> {current.callCount} call{current.callCount === 1 ? '' : 's'}</>}
+                </button>
               )}
               {current.householdId && (
                 <Link
@@ -545,12 +644,36 @@ export default function CallingFlowPage() {
 
             {current.status && (
               <div className={cn('mt-3 rounded-lg border px-3 py-2 text-xs', statusColorClasses(current.status))}>
-                Last status: <strong>{emoji(current.status) ? `${emoji(current.status)} ` : ''}{current.status}</strong>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="min-w-0">
+                    Last status: <strong>{emoji(current.status) ? `${emoji(current.status)} ` : ''}{current.status}</strong>
+                  </span>
+                  {/* Marked the wrong one? This is the way back. Two taps, and it
+                      stays on this contact so the right outcome can go in now. */}
+                  <button
+                    onClick={handleUndoOutcome}
+                    disabled={undoing}
+                    className={cn(
+                      'flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition',
+                      armClear
+                        ? 'border-rose-300 bg-rose-600 text-white'
+                        : 'border-slate-200 bg-white/80 hover:bg-white',
+                    )}
+                  >
+                    <Undo2 className="h-3 w-3" />
+                    {undoing ? 'Clearing…' : armClear ? 'Tap again to clear' : 'Undo'}
+                  </button>
+                </div>
                 {current.reference && (
                   <div className="mt-1 flex items-start gap-1">
                     <FileText className="mt-0.5 h-3 w-3 shrink-0" />
                     <span>{current.reference}</span>
                   </div>
+                )}
+                {armClear && (
+                  <p className="mt-1.5 text-[11px] opacity-80">
+                    Clears the outcome only — your note stays, and the call is still in the trail.
+                  </p>
                 )}
               </div>
             )}
@@ -575,6 +698,16 @@ export default function CallingFlowPage() {
             <div className="mt-5">
               <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Outcome</p>
               <StatusChips value={status} onChange={setStatus} size="lg" outcomes={outcomes} />
+              {/* Said once, where the mistake happens. Without it, unticking looks
+                  like it did nothing — the footer changed, but that is 400px away
+                  on a phone. */}
+              {isClearing && (
+                <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-amber-50 px-2.5 py-2 text-[11px] leading-snug text-amber-800">
+                  <Undo2 className="mt-0.5 h-3 w-3 shrink-0" />
+                  Nothing selected — <strong>Clear &amp; Next</strong> will remove “{savedStatus}” and leave this
+                  contact open for a later call. Tap an outcome instead to change it.
+                </p>
+              )}
             </div>
 
             <div className="mt-4">
@@ -616,13 +749,21 @@ export default function CallingFlowPage() {
               </button>
               <button
                 onClick={handleSaveAndNext}
-                disabled={saving || !status}
+                disabled={saving || !canSubmit}
                 className={cn(
                   'flex h-12 flex-1 items-center justify-center gap-2 rounded-xl text-[15px] font-semibold text-white transition active:scale-[0.98]',
-                  !status || saving ? 'bg-slate-300' : 'bg-orange-600 hover:bg-orange-700',
+                  !canSubmit || saving
+                    ? 'bg-slate-300'
+                    : isClearing
+                      ? 'bg-amber-600 hover:bg-amber-700'
+                      : 'bg-orange-600 hover:bg-orange-700',
                 )}
               >
-                {saving ? 'Saving…' : <><Check className="h-5 w-5" /> Save &amp; Next</>}
+                {saving
+                  ? 'Saving…'
+                  : isClearing
+                    ? <><Undo2 className="h-5 w-5" /> Clear &amp; Next</>
+                    : <><Check className="h-5 w-5" /> Save &amp; Next</>}
               </button>
             </div>
           </footer>

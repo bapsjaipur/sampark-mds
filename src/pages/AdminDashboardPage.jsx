@@ -6,16 +6,24 @@
 // Contacts is billed nothing for the individuals sweep. The queries themselves are
 // unchanged — which documents arrive, and therefore every number on this page, is
 // exactly as before.
+//
+// PHASE 29 — the numbers can now be reset from here. Every figure on this page is
+// one field read back (`status` on the contact), and nothing on this screen could
+// clear it, so "Called 468" only ever went up. The reset lives behind the button
+// in the header; see components/sampark/ResetRoundModal.jsx for what it does and,
+// more importantly, what it refuses to touch.
 import { useEffect, useMemo, useState } from 'react';
 import { collection, query, where, orderBy } from 'firebase/firestore';
+import { RotateCcw } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { computeOverviewStats, computeVolunteerStats } from '../services/statsService';
+import { computeOverviewStats, computeVolunteerStats, filterInScope } from '../services/statsService';
 import { getHouseholdIdsForAreas } from '../services/reminderService';
 import { useAuth } from '../hooks/usePermissions';
 import RequirePermission from '../components/RequirePermission';
 import { useCallOutcomes } from '../hooks/useCallOutcomes';
 import { useSharedCollection } from '../hooks/useSharedCollection';
 import { useVolunteers } from '../hooks/useVolunteers';
+import ResetRoundModal from '../components/sampark/ResetRoundModal';
 import { Card } from '../components/ui/Card';
 
 const BATCH_SPEC = [{ key: 'batches', source: 'batches', build: () => collection(db, 'batches') }];
@@ -24,6 +32,7 @@ function AdminDashboardInner() {
   const { permissions, assignedAreas, assignedMandals } = useAuth();
   const { colorClasses: statusColorClasses } = useCallOutcomes();
   const [householdIds, setHouseholdIds] = useState([]);
+  const [resetOpen, setResetOpen] = useState(false);
 
   const unscoped = permissions.includes('view_all_contacts');
   const areasKey = (assignedAreas || []).join(',');
@@ -57,6 +66,10 @@ function AdminDashboardInner() {
   const scope = useMemo(() => ({ unscoped, mandals: assignedMandals || [], householdIds, areas: assignedAreas || [] }), [unscoped, assignedMandals, householdIds, assignedAreas]);
   const overview = useMemo(() => computeOverviewStats(individuals, scope), [individuals, scope]);
   const volunteerStats = useMemo(() => computeVolunteerStats(individuals, batches, volunteers, scope), [individuals, batches, volunteers, scope]);
+  // The exact contacts these numbers are about, and therefore the only ones the
+  // reset is allowed to clear. Same predicate computeOverviewStats uses, so the
+  // count in the modal can never disagree with the count on the card.
+  const scopedIndividuals = useMemo(() => filterInScope(individuals, scope), [individuals, scope]);
 
   const pct = overview.total ? Math.round((overview.called / overview.total) * 100) : 0;
   const interested = (overview.statusBreakdown['Interested'] || 0) + (overview.statusBreakdown['Already Volunteer'] || 0);
@@ -67,15 +80,28 @@ function AdminDashboardInner() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8 space-y-6 sm:space-y-8">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">{unscoped ? 'Admin Dashboard' : 'Area Dashboard'}</h1>
-        <p className="text-sm text-slate-400">
-          {unscoped
-            ? 'Live overview across all areas and Mandals'
-            : assignedAreas?.length
-              ? `Showing stats for: ${assignedAreas.join(', ')}`
-              : 'No areas assigned to your account yet'}
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">{unscoped ? 'Admin Dashboard' : 'Area Dashboard'}</h1>
+          <p className="text-sm text-slate-400">
+            {unscoped
+              ? 'Live overview across all areas and Mandals'
+              : assignedAreas?.length
+                ? `Showing stats for: ${assignedAreas.join(', ')}`
+                : 'No areas assigned to your account yet'}
+          </p>
+        </div>
+
+        {/* Where the stale number is, is where the reset has to be. Editing a
+            contact is the underlying write, so that is the gate. */}
+        <RequirePermission permission="edit_contacts">
+          <button
+            onClick={() => setResetOpen(true)}
+            className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-3 text-[13px] font-medium text-slate-600 hover:bg-slate-50"
+          >
+            <RotateCcw className="h-4 w-4 text-slate-400" /> Start a new round
+          </button>
+        </RequirePermission>
       </div>
 
       <div className="grid grid-cols-3 gap-2.5 sm:gap-4">
@@ -146,6 +172,13 @@ function AdminDashboardInner() {
           </div>
         )}
       </div>
+
+      <ResetRoundModal
+        open={resetOpen}
+        onClose={() => setResetOpen(false)}
+        individuals={scopedIndividuals}
+        scopeLabel={unscoped ? '' : [...(assignedAreas || []), ...(assignedMandals || [])].join(', ')}
+      />
     </div>
   );
 }

@@ -13,9 +13,19 @@
 // PHASE 25 — the `batches` listener moved UP to BatchesPage. This component used
 // to open its own, which meant every hop between the Batches and Generate tabs
 // re-read every batch document. `batches` now arrives as a prop.
+//
+// PHASE 28 — two additions, both aimed at a roster that is now 50–100 cards long:
+//   • a SEARCH box that matches the batch (name, number, area, mandal, volunteer)
+//     AND the people inside it, so "which batch is Rahul in?" is answerable. The
+//     second half is free: the documents were already fetched for the progress
+//     bars, so this stops throwing their names away.
+//   • EDIT CONTACTS — add or remove people in a batch that already exists. See
+//     BatchContactsEditor.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { collection, documentId, query, where } from 'firebase/firestore';
-import { RefreshCw, UserPlus, UserMinus, Trash2, Pencil, Check, X, AlertTriangle } from 'lucide-react';
+import {
+  RefreshCw, UserPlus, UserMinus, Trash2, Pencil, Check, X, AlertTriangle, Search, Users,
+} from 'lucide-react';
 import { db } from '../../lib/firebase';
 // Metered (src/lib/fsMetered.js): the status join below is a real read of up to
 // every contact in the roster, and the quota tile in Admin Tools has to see it.
@@ -28,6 +38,7 @@ import {
 import { useAuth } from '../../hooks/usePermissions';
 import { useToast } from '../../contexts/ToastContext';
 import { describeScope } from '../../lib/scope';
+import BatchContactsEditor from './BatchContactsEditor';
 import { Select } from '../ui/Input';
 import { Card } from '../ui/Card';
 import { cn } from '../../lib/cn';
@@ -78,9 +89,14 @@ export default function BatchList({ volunteers, batches = [], loading = false })
   const { volunteer, scope } = useAuth();
   const { showToast } = useToast();
 
-  const [statuses, setStatuses] = useState({});
+  // id → the slice of each contact this screen needs. Was `{ status }` only; the
+  // other fields come from the SAME documents and were being thrown away, so
+  // keeping them costs nothing and is what lets the search box match people and
+  // the editor show names without a second fetch.
+  const [members, setMembers] = useState({});
   const [statsLoading, setStatsLoading] = useState(false);
   const [filter, setFilter] = useState('all');
+  const [search, setSearch] = useState('');
   const [volunteerFilter, setVolunteerFilter] = useState('');
   const [areaFilter, setAreaFilter] = useState('');
   const [mandalFilter, setMandalFilter] = useState('');
@@ -88,6 +104,8 @@ export default function BatchList({ volunteers, batches = [], loading = false })
   const [renaming, setRenaming] = useState(null);
   const [renameValue, setRenameValue] = useState('');
   const [resetOnAssign, setResetOnAssign] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [showAll, setShowAll] = useState(false);
 
   // PHASE 21 — a moderator sees the batches for their own territory plus any
   // batch handed to them personally. Applied before the stats so the tiles at
@@ -103,17 +121,28 @@ export default function BatchList({ volunteers, batches = [], loading = false })
     return [...set];
   }, [scopedBatches]);
 
-  const loadStatuses = useCallback(async (ids) => {
-    if (ids.length === 0) { setStatuses({}); return; }
+  const loadMembers = useCallback(async (ids) => {
+    if (ids.length === 0) { setMembers({}); return; }
     setStatsLoading(true);
     try {
       const map = {};
       // documentId() `in` is capped at 30 like any other `in` query.
       for (const c of chunk(ids, 30)) {
         const snap = await getDocs(query(collection(db, 'individuals'), where(documentId(), 'in', c)));
-        snap.forEach((d) => { map[d.id] = { status: d.data().status || '' }; });
+        snap.forEach((d) => {
+          const v = d.data();
+          map[d.id] = {
+            id: d.id,
+            name: v.name || '',
+            mobile: v.mobile || '',
+            mandal: v.mandal || '',
+            profilePhotoURL: v.profilePhotoURL || '',
+            status: v.status || '',
+            callingPool: v.callingPool,
+          };
+        });
       }
-      setStatuses(map);
+      setMembers(map);
     } catch (err) {
       showToast({ type: 'error', message: `Couldn't load call progress — ${err.message}` });
     } finally {
@@ -122,15 +151,15 @@ export default function BatchList({ volunteers, batches = [], loading = false })
   }, [showToast]);
 
   // Fetch once when the id set first becomes available (and whenever batches are
-  // created/deleted, which changes the joined key).
-  useEffect(() => { loadStatuses(allIds); }, [allIds.join(','), loadStatuses]); // eslint-disable-line react-hooks/exhaustive-deps
+  // created/deleted or hand-edited, which changes the joined key).
+  useEffect(() => { loadMembers(allIds); }, [allIds.join(','), loadMembers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const volunteerName = useCallback(
     (id) => volunteers.find((v) => v.id === id)?.name || (id ? 'Unknown volunteer' : null),
     [volunteers],
   );
 
-  const { perBatch, totals } = useMemo(() => computeBatchStats(scopedBatches, statuses), [scopedBatches, statuses]);
+  const { perBatch, totals } = useMemo(() => computeBatchStats(scopedBatches, members), [scopedBatches, members]);
 
   // Only values actually present are offered, so the filters can never produce
   // an empty list for a value that doesn't exist in this person's batches.
@@ -143,14 +172,60 @@ export default function BatchList({ volunteers, batches = [], loading = false })
     [scopedBatches],
   );
 
+  /**
+   * PHASE 28 — one search box over two different things.
+   *
+   * A karyakarta looking for a batch knows one of two facts: something about the
+   * batch (its number, its area, who is calling it) or the name of somebody in it.
+   * The second is the one no filter could answer before, and it is the more common
+   * question once there are ninety cards — "who is ringing Rahul this week?".
+   *
+   * The member half is a plain Map lookup per id, so ~90 batches × 40 ids is a few
+   * thousand lookups per keystroke and needs no debounce. It only works for
+   * contacts already fetched for the progress bars; a batch whose members haven't
+   * loaded yet simply won't match by name, which is why the result labels WHY it
+   * matched rather than leaving the reader to guess.
+   */
+  const matches = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return null;
+    const dq = q.replace(/\D/g, '');
+    const found = new Map();
+    perBatch.forEach((b) => {
+      const meta = [b.name, b.area, b.mandal, `batch ${b.batchNumber || ''}`, volunteerName(b.assignedVolunteerId)]
+        .filter(Boolean).join(' ').toLowerCase();
+      if (meta.includes(q)) { found.set(b.id, null); return; }
+      for (const id of b.individualIds || []) {
+        const m = members[id];
+        if (!m) continue;
+        if ((m.name || '').toLowerCase().includes(q)
+          || (dq && (m.mobile || '').replace(/\D/g, '').includes(dq))) {
+          found.set(b.id, m.name || m.mobile || 'a contact');
+          return;
+        }
+      }
+    });
+    return found;
+  }, [search, perBatch, members, volunteerName]);
+
   const visible = useMemo(() => perBatch.filter((b) => {
     if (filter === 'unassigned' && b.assignedVolunteerId) return false;
     if (filter === 'assigned' && !b.assignedVolunteerId) return false;
     if (volunteerFilter && b.assignedVolunteerId !== volunteerFilter) return false;
     if (areaFilter && b.area !== areaFilter) return false;
     if (mandalFilter && b.mandal !== mandalFilter) return false;
+    if (matches && !matches.has(b.id)) return false;
     return true;
-  }), [perBatch, filter, volunteerFilter, areaFilter, mandalFilter]);
+  }), [perBatch, filter, volunteerFilter, areaFilter, mandalFilter, matches]);
+
+  // 100 cards, each with a progress bar and an assign dropdown, is a slow first
+  // paint for a list nobody scrolls to the bottom of. The cap is generous enough
+  // that a normal week never hits it, and says what it is hiding.
+  const CARD_CAP = 40;
+  const shown = showAll ? visible : visible.slice(0, CARD_CAP);
+  // Looked up in perBatch, not in `visible`: typing in the search box while the
+  // editor is open must not empty the modal it is filling.
+  const editing = useMemo(() => perBatch.find((b) => b.id === editingId) || null, [perBatch, editingId]);
 
   async function handleAssign(batch, volunteerId) {
     if (!volunteerId) return;
@@ -169,7 +244,7 @@ export default function BatchList({ volunteers, batches = [], loading = false })
           ? `Assigned to ${volunteerName(volunteerId)} · cleared ${res.reset} statuses.`
           : `Assigned to ${volunteerName(volunteerId)}.`,
       });
-      if (res.reset) loadStatuses(allIds);
+      if (res.reset) loadMembers(allIds);
     } catch (err) {
       showToast({ type: 'error', message: err.message });
     } finally {
@@ -254,6 +329,29 @@ export default function BatchList({ volunteers, batches = [], loading = false })
         <Tile label="Called" value={`${totals.progressPct}%`} tone="text-emerald-600" />
       </div>
 
+      {/* ── Search ───────────────────────────────────────────────────────────
+          Its own row rather than sharing the filter line: it is the primary tool
+          once the roster is long, and on a phone a fourth control on that line
+          left every dropdown reading just "Any". */}
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <input
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setShowAll(false); }}
+          placeholder="Search batches — name, number, area, mandal, volunteer, or a contact inside"
+          className="h-10 w-full rounded-lg border border-slate-200 bg-white pl-10 pr-9 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-300"
+        />
+        {search && (
+          <button
+            onClick={() => setSearch('')}
+            aria-label="Clear search"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+
       <div className="flex flex-wrap items-center gap-2">
         {/* Full width on a phone, then the selects get a two-up grid of their
             own below. Sharing one flex line, the segmented control took 200px
@@ -295,7 +393,7 @@ export default function BatchList({ volunteers, batches = [], loading = false })
         </div>
 
         <button
-          onClick={() => loadStatuses(allIds)}
+          onClick={() => loadMembers(allIds)}
           disabled={statsLoading}
           className="ml-auto flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 disabled:opacity-50"
         >
@@ -321,10 +419,24 @@ export default function BatchList({ volunteers, batches = [], loading = false })
         </span>
       </label>
 
+      {/* How much of the roster is on screen. Silent truncation on a filtered list
+          reads as "that's all there is", which is how a batch gets cut twice. */}
+      {(search || visible.length !== perBatch.length) && (
+        <p className="text-[11px] text-slate-400">
+          Showing <strong className="font-semibold text-slate-600">{shown.length}</strong>
+          {shown.length !== visible.length && ` of ${visible.length}`} matching batch{visible.length === 1 ? '' : 'es'}
+          {' '}· {perBatch.length} in total
+        </p>
+      )}
+
       <div className="space-y-2">
-        {visible.map((b) => {
+        {shown.map((b) => {
           const assignedName = volunteerName(b.assignedVolunteerId);
           const busy = busyId === b.id;
+          // Why this card survived the search, when it wasn't the batch itself
+          // that matched. Without it a card with no visible connection to the
+          // query looks like a broken filter.
+          const matchedContact = matches?.get(b.id) || null;
           // Shown but not writable: see canEditBatch. A batch that spans every
           // area or every mandal is broader than a scoped moderator's territory,
           // so firestore.rules refuses the write. Better a disabled button with
@@ -368,12 +480,25 @@ export default function BatchList({ volunteers, batches = [], loading = false })
                     <span>· {b.total} contact{b.total === 1 ? '' : 's'}</span>
                     {b.missing > 0 && <span>· {b.missing} unknown</span>}
                   </p>
+                  {matchedContact && (
+                    <p className="mt-1 inline-flex items-center gap-1 rounded bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-700">
+                      <Search className="h-3 w-3" /> contains {matchedContact}
+                    </p>
+                  )}
                 </div>
 
                 {editable && (
-                  <button onClick={() => handleDelete(b)} aria-label="Delete batch" className="shrink-0 rounded p-1.5 text-slate-300 hover:bg-rose-50 hover:text-rose-500">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      onClick={() => setEditingId(b.id)}
+                      className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      <Users className="h-3.5 w-3.5" /> Edit contacts
+                    </button>
+                    <button onClick={() => handleDelete(b)} aria-label="Delete batch" className="rounded p-1.5 text-slate-300 hover:bg-rose-50 hover:text-rose-500">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -446,10 +571,31 @@ export default function BatchList({ volunteers, batches = [], loading = false })
 
         {visible.length === 0 && (
           <p className="rounded-lg border border-slate-100 px-4 py-8 text-center text-sm text-slate-400">
-            No batches match these filters.
+            {search
+              ? <>No batch matches “{search}” — not by name, area, mandal, volunteer, or a contact inside it.</>
+              : 'No batches match these filters.'}
           </p>
         )}
+
+        {!showAll && visible.length > shown.length && (
+          <button
+            onClick={() => setShowAll(true)}
+            className="w-full rounded-lg border border-dashed border-slate-200 py-2.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
+          >
+            Show the remaining {visible.length - shown.length} batch{visible.length - shown.length === 1 ? '' : 'es'}
+          </button>
+        )}
       </div>
+
+      {/* One editor for the whole list, driven by which card asked for it — forty
+          mounted-but-closed modals is forty copies of its state. */}
+      <BatchContactsEditor
+        open={Boolean(editing)}
+        batch={editing}
+        members={members}
+        batches={batches}
+        onClose={() => setEditingId(null)}
+      />
     </div>
   );
 }

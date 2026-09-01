@@ -18,8 +18,20 @@ function individualInScope(ind, scope) {
   return false;
 }
 
+/**
+ * The exact set of people the dashboard's numbers are about.
+ *
+ * PHASE 29 — exported because "reset the dashboard" has to clear precisely the
+ * contacts the dashboard counted, no more. Keeping the predicate in one place is
+ * what guarantees the reset and the number above it can never disagree.
+ */
+export function filterInScope(individuals = [], scope) {
+  if (!scope || scope.unscoped) return individuals;
+  return individuals.filter((i) => individualInScope(i, scope));
+}
+
 export function computeOverviewStats(individuals, scope) {
-  const scoped = scope && !scope.unscoped ? individuals.filter((i) => individualInScope(i, scope)) : individuals;
+  const scoped = filterInScope(individuals, scope);
   const total = scoped.length;
   const statusBreakdown = {};
   let called = 0;

@@ -58,6 +58,10 @@ const ACTIONS = [
   { key: 'reference_updated',        label: 'Updated reference',   tone: 'slate' },
   { key: 'upload_photo',             label: 'Uploaded photo',      tone: 'violet' },
   { key: 'call_logged',              label: 'Logged a call',       tone: 'orange' },
+  // PHASE 29 — a volunteer taking a stray Call tap back off the counter. Its own
+  // action rather than another call_logged row, so "how many calls did we make"
+  // stays answerable and the correction is visible as a correction.
+  { key: 'call_count_corrected',     label: 'Corrected call count', tone: 'slate' },
   // Written by the Reminders board AND by My Contacts, so the label can't name
   // either one — which screen it came from is in the row's details text.
   { key: 'call_initiated',           label: 'Tapped call',         tone: 'orange' },
@@ -76,6 +80,10 @@ const ACTIONS = [
   // The details text carries what they said and whether they came, which is the
   // only place that pairing survives after `status` is cleared for next week.
   { key: 'round_closed',             label: 'Closed calling round', tone: 'violet' },
+  // PHASE 28 — one row per hand-edit of a batch's roster, not per contact: it is a
+  // single deliberate act, and forty identical rows would bury the rest of the
+  // trail. The details text carries the counts and the new size.
+  { key: 'batch_contacts_edited',    label: 'Edited batch contacts', tone: 'sky' },
 ];
 
 const ACTION_LABELS = Object.fromEntries(ACTIONS.map((a) => [a.key, a.label]));
