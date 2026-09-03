@@ -1,0 +1,1775 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Bal Mandal & Sishu Mandal User Manual</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 2cm;
+        }
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #0F172A;
+            border-bottom: 3px solid #38BDF8;
+            padding-bottom: 10px;
+            page-break-after: avoid;
+        }
+        h2 {
+            color: #1E293B;
+            border-bottom: 2px solid #22D3EE;
+            padding-bottom: 8px;
+            margin-top: 30px;
+            page-break-after: avoid;
+        }
+        h3 {
+            color: #334155;
+            margin-top: 25px;
+            page-break-after: avoid;
+        }
+        code {
+            background-color: #F1F5F9;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Consolas', monospace;
+            font-size: 0.9em;
+        }
+        pre {
+            background-color: #F1F5F9;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #38BDF8;
+            overflow-x: auto;
+            page-break-inside: avoid;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 20px 0;
+            page-break-inside: avoid;
+        }
+        th {
+            background-color: #0F172A;
+            color: white;
+            padding: 12px;
+            text-align: left;
+        }
+        td {
+            border: 1px solid #E2E8F0;
+            padding: 10px;
+        }
+        tr:nth-child(even) {
+            background-color: #F8FAFC;
+        }
+        .toc {
+            background-color: #F8FAFC;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        blockquote {
+            border-left: 4px solid #F97316;
+            padding-left: 20px;
+            margin-left: 0;
+            color: #64748B;
+            font-style: italic;
+        }
+        hr {
+            border: none;
+            border-top: 2px solid #E2E8F0;
+            margin: 30px 0;
+        }
+        @media print {
+            body {
+                margin: 0;
+            }
+            h1, h2, h3 {
+                page-break-after: avoid;
+            }
+            pre, table {
+                page-break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+<body>
+<h1 id="bal-mandal-sishu-mandal-user-manual">Bal Mandal &amp; Sishu Mandal User Manual</h1>
+<p><strong>BAPS Jaipur MDS - Children's Wing Management System</strong></p>
+<p>Version 1.0<br />
+Prepared for: Manish Kumawat<br />
+Date: September 2, 2026</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#1-introduction">Introduction</a></li>
+<li><a href="#2-system-overview">System Overview</a></li>
+<li><a href="#3-user-roles--permissions">User Roles &amp; Permissions</a></li>
+<li><a href="#4-getting-started">Getting Started</a></li>
+<li><a href="#5-managing-contacts">Managing Contacts</a></li>
+<li><a href="#6-bal-mandal-dashboard">Bal Mandal Dashboard</a></li>
+<li><a href="#7-events--attendance">Events &amp; Attendance</a></li>
+<li><a href="#8-batch-management">Batch Management</a></li>
+<li><a href="#9-standard-promotion-workflow">Standard Promotion Workflow</a></li>
+<li><a href="#10-reports--exports">Reports &amp; Exports</a></li>
+<li><a href="#11-admin-configuration">Admin Configuration</a></li>
+<li><a href="#12-troubleshooting">Troubleshooting</a></li>
+</ol>
+<hr />
+<h2 id="1-introduction">1. Introduction</h2>
+<h3 id="what-is-bal-mandal-sishu-mandal">What is Bal Mandal &amp; Sishu Mandal?</h3>
+<p>The Bal Mandal &amp; Sishu Mandal module is a comprehensive children's wing management system designed for BAPS Jaipur to track and manage:</p>
+<ul>
+<li><strong>Sishu Mandal</strong>: Younger children (LKG, UKG, 1st-4th standard)</li>
+<li><strong>Bal Mandal</strong>: Older children (5th-8th standard)</li>
+</ul>
+<h3 id="key-features">Key Features</h3>
+<p>✓ <strong>Automatic Grade Assignment</strong> - System auto-assigns children to correct mandal based on their standard<br />
+✓ <strong>Sampark Karyakarta (SK) Management</strong> - Round-robin assignment for balanced workload<br />
+✓ <strong>Event Attendance Tracking</strong> - Regular and observer attendance<br />
+✓ <strong>Hobby &amp; Skills Tracking</strong> - Monitor children's interests and talents<br />
+✓ <strong>Yearly Promotion</strong> - Bulk promote all students to next standard<br />
+✓ <strong>8th Standard Transfer</strong> - Automatic transfer to Yuvak Mandal after 8th<br />
+✓ <strong>Notes &amp; History</strong> - Collaborative notes with timestamps<br />
+✓ <strong>Dashboard Analytics</strong> - 10 key metrics at a glance<br />
+✓ <strong>VCF Export</strong> - Export contacts for phone with custom formatting  </p>
+<hr />
+<h2 id="2-system-overview">2. System Overview</h2>
+<h3 id="program-structure">Program Structure</h3>
+<pre><code>Bal Mandal Program
+├── Sishu Mandal (LKG, UKG, 1st-4th)
+│   ├── Sampark Karyakarta (SK)
+│   ├── Nirikshak (Observer)
+│   └── Children
+│
+└── Bal Mandal (5th-8th)
+    ├── Sanchalak (Coordinator)
+    ├── Sampark Karyakarta (SK)
+    ├── Nirikshak (Observer)
+    ├── Sant (Observer)
+    └── Children
+</code></pre>
+<h3 id="hierarchy-flow">Hierarchy Flow</h3>
+<ol>
+<li><strong>Nirdeshak</strong> (Director) - Overall program oversight</li>
+<li><strong>Sanchalak</strong> (Coordinator) - Day-to-day management</li>
+<li><strong>Nirikshak</strong> (Inspector) - Quality monitoring</li>
+<li><strong>Sampark Karyakarta (SK)</strong> - Direct contact with children/families</li>
+<li><strong>Sant</strong> (Saint) - Observer role at events</li>
+</ol>
+<hr />
+<h2 id="3-user-roles-permissions">3. User Roles &amp; Permissions</h2>
+<h3 id="admin">Admin</h3>
+<p><strong>Full system access</strong></p>
+<p><strong>Can do:</strong>
+- ✓ View and edit all data across all areas and mandals
+- ✓ Create/edit/delete volunteers, roles, areas, mandals
+- ✓ Generate and assign batches
+- ✓ Run standard promotion workflow
+- ✓ Access all reports and exports
+- ✓ Configure system settings
+- ✓ View Bal Mandal dashboard
+- ✓ Create and manage events</p>
+<p><strong>Cannot do:</strong>
+- ✗ None (full access)</p>
+<p><strong>Dashboard Access:</strong> All metrics, all areas</p>
+<hr />
+<h3 id="nirdeshak-director">Nirdeshak (Director)</h3>
+<p><strong>Program director with full Bal Mandal access</strong></p>
+<p><strong>Can do:</strong>
+- ✓ View all Bal Mandal and Sishu Mandal contacts in assigned areas
+- ✓ View Bal Mandal dashboard with metrics
+- ✓ Generate batches for SK assignment
+- ✓ Export VCF contacts
+- ✓ Run yearly standard promotion workflow (8th → Yuvak transfer)
+- ✓ Create and manage Bal Mandal events
+- ✓ Mark attendance (regular and observer)
+- ✓ Add/edit notes on contacts
+- ✓ View all attendance history</p>
+<p><strong>Cannot do:</strong>
+- ✗ Edit system configuration (areas, mandals, roles)
+- ✗ Manage volunteers (except viewing)
+- ✗ Access admin tools</p>
+<p><strong>Dashboard Access:</strong> Full dashboard with all 10 metrics</p>
+<hr />
+<h3 id="sanchalak-coordinator">Sanchalak (Coordinator)</h3>
+<p><strong>Day-to-day program management</strong></p>
+<p><strong>Can do:</strong>
+- ✓ View all Bal Mandal and Sishu Mandal contacts in assigned areas
+- ✓ View Bal Mandal dashboard
+- ✓ Add/edit/delete contacts
+- ✓ Create and manage events
+- ✓ Mark attendance
+- ✓ Add notes on contacts
+- ✓ Export VCF contacts
+- ✓ View batch assignments</p>
+<p><strong>Cannot do:</strong>
+- ✗ Generate new batches
+- ✗ Run standard promotion
+- ✗ Manage volunteers or system settings</p>
+<p><strong>Dashboard Access:</strong> Full dashboard, filtered to assigned areas</p>
+<hr />
+<h3 id="nirikshak-inspectorobserver">Nirikshak (Inspector/Observer)</h3>
+<p><strong>Quality monitoring and observation</strong></p>
+<p><strong>Can do:</strong>
+- ✓ View all Bal Mandal and Sishu Mandal contacts in assigned areas
+- ✓ View Bal Mandal dashboard
+- ✓ Mark own attendance as observer at events
+- ✓ Add notes on contacts
+- ✓ View attendance history</p>
+<p><strong>Cannot do:</strong>
+- ✗ Add/edit/delete contacts
+- ✗ Create events
+- ✗ Mark regular attendance for children
+- ✗ Generate batches
+- ✗ Export data</p>
+<p><strong>Dashboard Access:</strong> Read-only dashboard</p>
+<hr />
+<h3 id="sampark-karyakarta-sk">Sampark Karyakarta (SK)</h3>
+<p><strong>Direct contact management with assigned children</strong></p>
+<p><strong>Can do:</strong>
+- ✓ View assigned contacts only (children assigned to them)
+- ✓ View Bal Mandal dashboard (limited to own assignments)
+- ✓ Add notes on assigned contacts
+- ✓ Mark attendance for assigned children at events
+- ✓ View attendance history for assigned children
+- ✓ Update contact details (mobile, address, etc.)</p>
+<p><strong>Cannot do:</strong>
+- ✗ View contacts not assigned to them
+- ✗ Create/delete contacts
+- ✗ Create events
+- ✗ Generate batches
+- ✗ Export data beyond own assignments</p>
+<p><strong>Dashboard Access:</strong> Limited to own assigned contacts</p>
+<hr />
+<h3 id="sant-saintobserver">Sant (Saint/Observer)</h3>
+<p><strong>Observer role at events</strong></p>
+<p><strong>Can do:</strong>
+- ✓ View Bal Mandal event schedule
+- ✓ Mark own attendance as observer at events
+- ✓ View event details</p>
+<p><strong>Cannot do:</strong>
+- ✗ View contact details
+- ✗ Mark regular attendance
+- ✗ Access dashboard
+- ✗ Add notes
+- ✗ Manage any data</p>
+<p><strong>Dashboard Access:</strong> None (schedule view only)</p>
+<hr />
+<h2 id="4-getting-started">4. Getting Started</h2>
+<h3 id="first-time-setup-admin-only">First-Time Setup (Admin Only)</h3>
+<h4 id="step-1-create-sishu-mandal-document">Step 1: Create Sishu Mandal Document</h4>
+<p>Before using the system, you need to create the Sishu Mandal in Firestore.</p>
+<p><strong>Option A: Using Script (Recommended)</strong></p>
+<pre><code class="language-bash">node scripts/create-sishu-mandal.js
+</code></pre>
+<p><strong>Option B: Manual Creation</strong>
+1. Open Firebase Console → Firestore Database
+2. Go to <code>mandals</code> collection
+3. Add document with these fields:
+   - <code>name</code>: "Sishu Mandal"
+   - <code>code</code>: "SHM"
+   - <code>gender</code>: "Male"
+   - <code>fields</code>: (map with all fields set to <code>true</code>)</p>
+<h4 id="step-2-enable-fields-for-mandals">Step 2: Enable Fields for Mandals</h4>
+<ol>
+<li>Log in as <strong>Admin</strong></li>
+<li>Navigate to <strong>Admin → Areas &amp; Mandals</strong></li>
+<li>Scroll to <strong>Mandals</strong> section</li>
+<li>For <strong>Bal Mandal</strong>, enable these checkboxes:</li>
+<li>☑ Study</li>
+<li>☑ Skill</li>
+<li>☑ Standard (LKG/UKG/1st-8th)</li>
+<li>☑ Hobby</li>
+<li>
+<p>☑ Sampark Karyakarta</p>
+</li>
+<li>
+<p>Repeat for <strong>Sishu Mandal</strong></p>
+</li>
+</ol>
+<p><strong>Quick Method:</strong> Click <strong>"Ask everything"</strong> button for each mandal to enable all fields at once.</p>
+<h4 id="step-3-create-volunteer-roles">Step 3: Create Volunteer Roles</h4>
+<ol>
+<li>Go to <strong>Admin → Roles</strong></li>
+<li>Create these roles if they don't exist:</li>
+<li><strong>Nirdeshak</strong> (Program: Bal Mandal)</li>
+<li><strong>Sanchalak</strong> (Program: Bal Mandal)</li>
+<li><strong>Nirikshak</strong> (Program: Bal Mandal)</li>
+<li><strong>Sampark Karyakarta</strong> (Program: Bal Mandal)</li>
+<li>
+<p><strong>Sant</strong> (Program: Bal Mandal)</p>
+</li>
+<li>
+<p>For each role, assign appropriate permissions:</p>
+</li>
+</ol>
+<p><strong>Nirdeshak Permissions:</strong>
+- ✓ manage_events
+- ✓ view_all_contacts
+- ✓ edit_contacts
+- ✓ generate_batches
+- ✓ assign_batches</p>
+<p><strong>Sanchalak Permissions:</strong>
+- ✓ manage_events
+- ✓ view_all_contacts
+- ✓ edit_contacts</p>
+<p><strong>Nirikshak Permissions:</strong>
+- ✓ view_all_contacts
+- ✓ manage_events (for observer attendance)</p>
+<p><strong>Sampark Karyakarta Permissions:</strong>
+- ✓ view_assigned_contacts
+- ✓ edit_contacts</p>
+<p><strong>Sant Permissions:</strong>
+- ✓ view_padhramani (for schedule access)</p>
+<h4 id="step-4-create-volunteers">Step 4: Create Volunteers</h4>
+<ol>
+<li>Go to <strong>Admin → Volunteers</strong></li>
+<li>Click <strong>"Add Volunteer"</strong> button</li>
+<li>Fill in volunteer details:</li>
+<li>Name (required)</li>
+<li>Mobile number (required, 10 digits)</li>
+<li>Role (select from dropdown)</li>
+<li><strong>Program</strong>: Select "Bal Mandal"</li>
+<li>Assigned Areas (select one or more areas)</li>
+<li>Email (optional)</li>
+<li>
+<p>Status: Active</p>
+</li>
+<li>
+<p>Click <strong>Save</strong></p>
+</li>
+</ol>
+<p><strong>Important:</strong> The "Program" field distinguishes Bal Mandal volunteers from Yuvak volunteers. Make sure to select "Bal Mandal" for all children's wing staff.</p>
+<h4 id="step-5-create-areas-if-not-already-created">Step 5: Create Areas (if not already created)</h4>
+<ol>
+<li>Go to <strong>Admin → Areas &amp; Mandals</strong></li>
+<li>In <strong>Areas</strong> section, click <strong>"Add Area"</strong></li>
+<li>Enter:</li>
+<li>Area Name (e.g., "Mansarovar", "Vaishali Nagar")</li>
+<li>Area Code (e.g., "MS", "VN")</li>
+<li>Click <strong>Save</strong></li>
+</ol>
+<h4 id="step-6-create-sub-areas-optional">Step 6: Create Sub-Areas (Optional)</h4>
+<p>Sub-areas help divide large areas into smaller zones.</p>
+<ol>
+<li>In <strong>Areas</strong> section, find the parent area</li>
+<li>Click <strong>"Add Sub-Area"</strong></li>
+<li>Enter sub-area name</li>
+<li>Click <strong>Save</strong></li>
+</ol>
+<hr />
+<h2 id="5-managing-contacts">5. Managing Contacts</h2>
+<h3 id="adding-a-new-child">Adding a New Child</h3>
+<ol>
+<li>Navigate to <strong>Contacts</strong> page</li>
+<li>Click <strong>"Add Contact"</strong> button</li>
+<li>Fill in the form:</li>
+</ol>
+<p><strong>Required Fields:</strong>
+- <strong>Mandal</strong>: Select "Bal Mandal" or "Sishu Mandal" (will auto-change based on standard)
+- <strong>Full Name</strong>: Child's name (e.g., "Ravi Patel")
+- <strong>Mobile Number</strong>: 10-digit number (parent/guardian number)</p>
+<p><strong>Optional Fields (if enabled for mandal):</strong>
+- <strong>Address</strong>: Full address
+- <strong>Date of Birth</strong>: Child's birth date
+- <strong>Area</strong>: Select area (e.g., Mansarovar)
+- <strong>Sub-Area</strong>: Select sub-area if applicable
+- <strong>Study</strong>: Current school/education details
+- <strong>Skill</strong>: Special skills (e.g., "Singing, tabla")</p>
+<p><strong>Bal Mandal Specific Fields:</strong>
+- <strong>Standard</strong>: Select from dropdown (LKG, UKG, 1st-8th)
+  - <em>Auto-assignment</em>: LKG/UKG/1st-4th → Sishu Mandal
+  - <em>Auto-assignment</em>: 5th-8th → Bal Mandal
+- <strong>Hobby</strong>: Multi-select dropdown (hold Ctrl/Cmd to select multiple)
+  - Sports, Music, Dance, Drawing, Reading, Cricket, Football, Singing, Cooking, Technology, Photography, Yoga, Storytelling, Arts &amp; Crafts, Gaming
+  - Select "Other" and type custom hobby in text field
+- <strong>Sampark Karyakarta</strong>: 
+  - Type name to search volunteers
+  - Select from autocomplete list (mobile auto-fills)
+  - Or type name manually</p>
+<p><strong>Photo Upload:</strong>
+- Click "Upload Photo" button
+- Select image file
+- Or check "Add photo later" to mark as pending</p>
+<p><strong>Follow-up Calling:</strong>
+- ☑ On the follow-up calling list (default: checked)
+- Uncheck to exclude from weekly batch generation</p>
+<ol>
+<li>Click <strong>"Add Member"</strong> button</li>
+</ol>
+<p><strong>Result:</strong> Contact is saved and appears in contacts list. Mandal is automatically set based on selected standard.</p>
+<hr />
+<h3 id="editing-an-existing-child">Editing an Existing Child</h3>
+<ol>
+<li>Go to <strong>Contacts</strong> page or <strong>Individual Detail Page</strong></li>
+<li>Click <strong>Edit</strong> button (pencil icon)</li>
+<li>Modify fields as needed</li>
+<li>Click <strong>"Save Changes"</strong></li>
+</ol>
+<p><strong>Note:</strong> If you change the standard, the mandal will auto-update:
+- Change from 4th to 5th → Moves from Sishu to Bal Mandal
+- Change from 5th to 4th → Moves from Bal to Sishu Mandal</p>
+<hr />
+<h3 id="adding-notes-to-a-contact">Adding Notes to a Contact</h3>
+<p>Notes help track observations, incidents, or important information about a child.</p>
+<ol>
+<li>Open <strong>Individual Detail Page</strong> (click on contact name)</li>
+<li>Scroll to <strong>Notes</strong> panel (below Attendance History)</li>
+<li>Type your note in the text box</li>
+<li>Click <strong>"Add Note"</strong></li>
+</ol>
+<p><strong>Result:</strong> Note is prepended with timestamp and your volunteer name:</p>
+<pre><code>[02/09/2026, 10:30 AM - Rajesh Kumar]
+Child showed excellent participation in today's sabha.
+
+[01/09/2026, 06:15 PM - Priya Sharma]
+Spoke with parents about upcoming event.
+</code></pre>
+<p><strong>Who Can Add Notes:</strong>
+- Nirdeshak, Sanchalak, Nirikshak, SK (on assigned contacts), Admin</p>
+<hr />
+<h3 id="searching-filtering-contacts">Searching &amp; Filtering Contacts</h3>
+<p><strong>Search Bar:</strong>
+1. Type child's name or mobile number in search box at top
+2. Results appear instantly</p>
+<p><strong>Filter by Mandal:</strong>
+1. Click <strong>Mandal</strong> dropdown
+2. Select "Bal Mandal" or "Sishu Mandal"
+3. List filters to show only selected mandal</p>
+<p><strong>Filter by Standard:</strong>
+1. Click <strong>Standard</strong> dropdown
+2. Select standard (LKG, UKG, 1st-8th)
+3. List filters to show only that standard</p>
+<p><strong>Filter by Area:</strong>
+1. Click <strong>Area</strong> dropdown
+2. Select area
+3. List filters to assigned area contacts</p>
+<p><strong>Combined Filters:</strong>
+You can combine multiple filters (e.g., Area: Mansarovar + Standard: 5th)</p>
+<hr />
+<h2 id="6-bal-mandal-dashboard">6. Bal Mandal Dashboard</h2>
+<h3 id="accessing-the-dashboard">Accessing the Dashboard</h3>
+<ol>
+<li>Click <strong>"Bal Mandal"</strong> in sidebar navigation</li>
+<li>Dashboard loads with 10 key metrics</li>
+</ol>
+<p><strong>Who Can Access:</strong>
+- Admin (all areas)
+- Nirdeshak (assigned areas)
+- Sanchalak (assigned areas)
+- Nirikshak (assigned areas, read-only)
+- SK (own assigned contacts only)</p>
+<hr />
+<h3 id="dashboard-metrics-explained">Dashboard Metrics Explained</h3>
+<h4 id="1-total-contacts">1. Total Contacts</h4>
+<p><strong>What it shows:</strong> Total number of children in Bal + Sishu Mandal<br />
+<strong>Split:</strong> Shows breakdown (e.g., "156 total (92 Bal / 64 Sishu)")<br />
+<strong>Use case:</strong> Monitor program growth month-over-month</p>
+<h4 id="2-standard-breakdown">2. Standard Breakdown</h4>
+<p><strong>What it shows:</strong> Grid showing count per standard (LKG-8th)<br />
+<strong>Example:</strong></p>
+<pre><code>LKG: 12    UKG: 15
+1st: 18    2nd: 20    3rd: 14    4th: 16
+5th: 22    6th: 20    7th: 18    8th: 12
+</code></pre>
+<p><strong>Use case:</strong> Identify which standards need more attention or resources</p>
+<h4 id="3-unassigned-standard">3. Unassigned Standard</h4>
+<p><strong>What it shows:</strong> Number of contacts without a standard selected<br />
+<strong>Alert:</strong> Shows in orange if count &gt; 0<br />
+<strong>Action:</strong> Edit contacts to assign proper standard</p>
+<h4 id="4-sk-coverage">4. SK Coverage</h4>
+<p><strong>What it shows:</strong> Percentage of children assigned to a Sampark Karyakarta<br />
+<strong>Example:</strong> "85% (133/156 assigned)"<br />
+<strong>Target:</strong> Aim for 100% coverage<br />
+<strong>Action:</strong> Use batch generator to auto-assign remaining contacts</p>
+<h4 id="5-promotion-ready">5. Promotion Ready</h4>
+<p><strong>What it shows:</strong> Number of 8th standard students ready for Yuvak transfer<br />
+<strong>Use case:</strong> Plan yearly promotion event<br />
+<strong>Action:</strong> Go to Standard Promotion page to execute bulk transfer</p>
+<h4 id="6-average-attendance">6. Average Attendance</h4>
+<p><strong>What it shows:</strong> Average attendance rate across recent events<br />
+<strong>Calculation:</strong> (Total present / Total events) × 100<br />
+<strong>Example:</strong> "78% average"<br />
+<strong>Use case:</strong> Track engagement trends</p>
+<h4 id="7-mobile-coverage">7. Mobile Coverage</h4>
+<p><strong>What it shows:</strong> Percentage of contacts with mobile number on file<br />
+<strong>Example:</strong> "95% have mobile"<br />
+<strong>Use case:</strong> Ensure you can reach all families</p>
+<h4 id="8-notes-activity">8. Notes Activity</h4>
+<p><strong>What it shows:</strong> Number of contacts with notes added in last 30 days<br />
+<strong>Example:</strong> "42 contacts with recent notes"<br />
+<strong>Use case:</strong> Monitor SK engagement with families</p>
+<h4 id="9-upcoming-events">9. Upcoming Events</h4>
+<p><strong>What it shows:</strong> Next 3 scheduled Bal Mandal events<br />
+<strong>Details:</strong> Date, time, location<br />
+<strong>Action:</strong> Click event to view details or mark attendance</p>
+<h4 id="10-recent-attendance">10. Recent Attendance</h4>
+<p><strong>What it shows:</strong> Last 5 events with attendance counts<br />
+<strong>Example:</strong> "Sabha - 02/09/2026 - 45/60 present (75%)"<br />
+<strong>Use case:</strong> Spot attendance drop trends</p>
+<hr />
+<h3 id="area-filter">Area Filter</h3>
+<p><strong>Location:</strong> Top-right dropdown on dashboard<br />
+<strong>Options:</strong> "All Areas" or specific area (e.g., "Mansarovar")<br />
+<strong>Effect:</strong> All 10 metrics update to show only selected area data</p>
+<hr />
+<h3 id="export-functions">Export Functions</h3>
+<h4 id="vcf-export-phone-contacts">VCF Export (Phone Contacts)</h4>
+<ol>
+<li>Click <strong>"Export VCF"</strong> button on dashboard</li>
+<li>Modal opens with options:</li>
+<li><strong>Prefix</strong>: Add before name (None/Area/Sub-Area/Mandal)</li>
+<li><strong>Suffix</strong>: Add after name (None/Area/Sub-Area/Mandal)</li>
+<li>Click <strong>"Generate VCF"</strong></li>
+<li>File downloads: <code>bal-mandal-contacts.vcf</code></li>
+<li>Import to phone contacts app</li>
+</ol>
+<p><strong>Example Output:</strong></p>
+<pre><code>Prefix: Area, Suffix: Mandal
+Result: &quot;Mansarovar Ravi Patel Bal Mandal&quot;
+</code></pre>
+<p><strong>Use case:</strong> SK volunteers can import assigned contacts to phone for easy calling</p>
+<hr />
+<h4 id="batch-generator">Batch Generator</h4>
+<p>Generate sampark batches with automatic SK assignment.</p>
+<ol>
+<li>Click <strong>"Generate Batches"</strong> button on dashboard</li>
+<li>Select <strong>Area</strong></li>
+<li>Click <strong>"Preview"</strong></li>
+<li>System shows:</li>
+<li>Number of batches to be created</li>
+<li>Unassigned contacts count</li>
+<li>SK assignment distribution (round-robin)5. Click <strong>"Generate"</strong></li>
+<li>System creates batches and assigns contacts to SKs using round-robin</li>
+</ol>
+<p><strong>Round-Robin Logic:</strong>
+- System counts current assigned contacts per SK
+- Assigns new batch to SK with lowest contact count
+- Ensures balanced workload distribution</p>
+<p><strong>Result:</strong> Batches created, contacts assigned, SKs can see their assignments in "My Contacts"</p>
+<hr />
+<h2 id="7-events-attendance">7. Events &amp; Attendance</h2>
+<h3 id="creating-a-bal-mandal-event">Creating a Bal Mandal Event</h3>
+<ol>
+<li>Navigate to <strong>Events</strong> page</li>
+<li>Click <strong>"Create Event"</strong> button</li>
+<li>Fill in event details:</li>
+</ol>
+<p><strong>Required Fields:</strong>
+- <strong>Event Name</strong>: (e.g., "Sunday Sabha", "Bal Din Celebration")
+- <strong>Event Type</strong>: Select "Sabha", "Festival", "Training", "Meeting", or "Other"
+- <strong>Mandal</strong>: Select "Bal Mandal" or "Sishu Mandal"
+- <strong>Date</strong>: Event date
+- <strong>Time</strong>: Start time
+- <strong>Area</strong>: Select area (filters which children can attend)</p>
+<p><strong>Optional Fields:</strong>
+- <strong>Location</strong>: Venue address
+- <strong>Description</strong>: Event details
+- <strong>Speaker</strong>: Type name (autocomplete from past speakers) - for Yuvak Sabha only
+- <strong>Duration</strong>: Free number input in minutes (for Yuvak Sabha only)</p>
+<ol>
+<li>Click <strong>"Create Event"</strong></li>
+</ol>
+<p><strong>Result:</strong> Event appears in Events list and on Bal Mandal dashboard</p>
+<hr />
+<h3 id="marking-attendance">Marking Attendance</h3>
+<h4 id="regular-attendance-children">Regular Attendance (Children)</h4>
+<ol>
+<li>Open event detail page</li>
+<li><strong>Attendance Panel</strong> shows list of children from selected area/mandal</li>
+<li>Two methods to mark attendance:</li>
+</ol>
+<p><strong>Method A: Click Individual Names</strong>
+- Click on child's name or card
+- Checkmark appears when marked present
+- Click again to unmark</p>
+<p><strong>Method B: Search &amp; Mark</strong>
+- Use search box at top of attendance panel
+- Type child's name
+- Click to mark present</p>
+<ol>
+<li>Attendance saves automatically</li>
+</ol>
+<p><strong>Who Can Mark:</strong> Nirdeshak, Sanchalak, SK (for assigned contacts)</p>
+<hr />
+<h4 id="observer-attendance">Observer Attendance</h4>
+<p>Observer attendance tracks Nirikshak and Sant volunteers who attend events.</p>
+<ol>
+<li>Scroll to <strong>Observer Attendance Panel</strong> (below regular attendance)</li>
+<li>Panel shows:</li>
+<li>All Nirikshak volunteers (Program: Bal Mandal)</li>
+<li>All Sant volunteers (Program: Bal Mandal)</li>
+<li>Click volunteer name to mark present</li>
+<li>Green checkmark appears when marked</li>
+</ol>
+<p><strong>Storage:</strong> Observer attendance stored in subcollection <code>events/{eventId}/observerAttendance/{volunteerId}</code></p>
+<p><strong>Who Can Mark:</strong> Nirdeshak, Sanchalak, Admin</p>
+<p><strong>Use Case:</strong> Track which observers monitored the event for quality assurance</p>
+<hr />
+<h3 id="viewing-attendance-history">Viewing Attendance History</h3>
+<p><strong>For a Specific Child:</strong>
+1. Open <strong>Individual Detail Page</strong>
+2. Scroll to <strong>Attendance History</strong> panel
+3. View list of events attended with dates
+4. See attendance percentage</p>
+<p><strong>For an Event:</strong>
+1. Open <strong>Event Detail Page</strong>
+2. View attendance count (e.g., "45/60 present - 75%")
+3. See list of present/absent children</p>
+<hr />
+<h2 id="8-batch-management">8. Batch Management</h2>
+<h3 id="understanding-batches">Understanding Batches</h3>
+<p><strong>What is a Batch?</strong>
+A batch is a group of contacts assigned to a Sampark Karyakarta (SK) for follow-up calling.</p>
+<p><strong>Batch Components:</strong>
+- Area (e.g., Mansarovar)
+- Mandal (Bal Mandal or Sishu Mandal)
+- Assigned SK name and mobile
+- List of contact IDs
+- Creation timestamp</p>
+<hr />
+<h3 id="generating-batches">Generating Batches</h3>
+<p><strong>Automatic SK Assignment:</strong></p>
+<ol>
+<li>Go to <strong>Bal Mandal Dashboard</strong></li>
+<li>Click <strong>"Generate Batches"</strong> button</li>
+<li>Select <strong>Area</strong> from dropdown</li>
+<li>Click <strong>"Preview"</strong></li>
+</ol>
+<p><strong>Preview Shows:</strong>
+- Total contacts in selected area
+- Number of batches to create
+- SK assignment distribution
+- Unassigned contacts count</p>
+<ol>
+<li>Review preview</li>
+<li>Click <strong>"Generate Batches"</strong></li>
+</ol>
+<p><strong>System Process:</strong>
+1. Loads all active SK volunteers in selected area (Program: Bal Mandal, roleKey: 'sk')
+2. Counts existing assigned contacts per SK
+3. Creates batches and assigns to SK with lowest contact count (round-robin)
+4. Updates <code>samparkKaryakartaName</code> and <code>samparkKaryakartaNumber</code> on contacts
+5. Creates batch documents in Firestore</p>
+<p><strong>Batch Size:</strong> System automatically determines optimal batch size (typically 15-20 contacts per batch)</p>
+<p><strong>Result:</strong> SKs can now see their assigned contacts in "My Contacts" page</p>
+<hr />
+<h3 id="viewing-assigned-batches">Viewing Assigned Batches</h3>
+<p><strong>For SK:</strong>
+1. Click <strong>"My Contacts"</strong> in sidebar
+2. View list of assigned children
+3. Click contact to see details, add notes, view history</p>
+<p><strong>For Admin/Nirdeshak/Sanchalak:</strong>
+1. Go to <strong>Admin → Batches</strong> (if permission enabled)
+2. View all batches with filters:
+   - Area
+   - Mandal
+   - Assigned SK
+   - Date range</p>
+<hr />
+<h3 id="editing-batch-assignments">Editing Batch Assignments</h3>
+<p><strong>Reassign a Contact to Different SK:</strong></p>
+<ol>
+<li>Open <strong>Individual Detail Page</strong></li>
+<li>Click <strong>Edit</strong> button</li>
+<li>Change <strong>Sampark Karyakarta</strong> field:</li>
+<li>Search for new SK name</li>
+<li>Select from dropdown</li>
+<li>Click <strong>"Save Changes"</strong></li>
+</ol>
+<p><strong>Result:</strong> Contact moves from old SK to new SK's "My Contacts" list</p>
+<hr />
+<h2 id="9-standard-promotion-workflow">9. Standard Promotion Workflow</h2>
+<h3 id="overview">Overview</h3>
+<p>Once per year (typically at academic year end), all children are promoted to the next standard. 8th standard students are transferred to Yuvak Mandal.</p>
+<p><strong>Access:</strong> Nirdeshak and Admin only</p>
+<p><strong>Path:</strong> Bal Mandal → Standard Promotion</p>
+<hr />
+<h3 id="running-standard-promotion">Running Standard Promotion</h3>
+<p><strong>IMPORTANT: This is a bulk operation. BACKUP your Firestore database before proceeding.</strong></p>
+<ol>
+<li>Navigate to <strong>Bal Mandal → Standard Promotion</strong></li>
+<li>Page shows preview of all promotions grouped by current standard:</li>
+</ol>
+<p><strong>Preview Table:</strong></p>
+<pre><code>Current Standard | Count | Next Standard | Action
+─────────────────────────────────────────────────
+LKG              | 12    | UKG          | Promote
+UKG              | 15    | 1st          | Promote
+1st              | 18    | 2nd          | Promote
+2nd              | 20    | 3rd          | Promote
+3rd              | 14    | 4th          | Promote
+4th              | 16    | 5th          | Promote (→ Bal Mandal)
+5th              | 22    | 6th          | Promote
+6th              | 20    | 7th          | Promote
+7th              | 18    | 8th          | Promote
+8th              | 12    | 9th          | Transfer to Yuvak Mandal
+</code></pre>
+<ol>
+<li>Click <strong>"Preview Transfer Report"</strong> to download CSV with:</li>
+<li>Student name</li>
+<li>Current standard</li>
+<li>Next standard</li>
+<li>Mandal change (if any)</li>
+<li>
+<p>Transfer status (for 8th std)</p>
+</li>
+<li>
+<p>Review CSV file carefully</p>
+</li>
+<li>
+<p>Click <strong>"Execute Standard Promotion"</strong> button</p>
+</li>
+</ol>
+<p><strong>Confirmation Dialog:</strong></p>
+<pre><code>⚠️ This will promote ALL students to next standard and 
+transfer 8th standard students to Yuvak Mandal.
+
+This action creates a new commit in the database.
+You should have a backup before proceeding.
+
+Are you sure you want to continue?
+</code></pre>
+<ol>
+<li>Click <strong>"Yes, Execute Promotion"</strong></li>
+</ol>
+<p><strong>System Process:</strong>
+- Uses <code>writeBatch</code> for atomic updates
+- Respects <code>WRITE_BATCH_LIMIT = 450</code> (commits in chunks if needed)
+- For LKG-7th: Updates <code>standard</code> field to next value
+- For 8th standard students:
+  - Updates <code>standard</code> to "9th"
+  - Changes <code>mandal</code> from "Bal Mandal" to "Yuvak Mandal"
+  - Adds <code>transferredFromBalMandal: true</code>
+  - Adds <code>transferredAt: serverTimestamp()</code>
+  - Copies <code>notes</code> to <code>balMandalHistory</code> field for preservation
+- Commits all changes in batches</p>
+<ol>
+<li>Success message appears</li>
+<li>Page refreshes to show updated counts</li>
+</ol>
+<p><strong>Result:</strong> All children promoted. 8th standard students now appear in Yuvak Mandal contacts.</p>
+<hr />
+<h3 id="post-promotion-tasks">Post-Promotion Tasks</h3>
+<ol>
+<li><strong>Verify Transfer:</strong></li>
+<li>Go to Contacts page</li>
+<li>Filter by "Yuvak Mandal"</li>
+<li>
+<p>Confirm 8th standard students appear with new standard "9th"</p>
+</li>
+<li>
+<p><strong>Re-assign SKs if needed:</strong></p>
+</li>
+<li>New 5th standard students (promoted from Sishu) now in Bal Mandal</li>
+<li>
+<p>May need to generate new batches for balanced assignment</p>
+</li>
+<li>
+<p><strong>Update Event Targeting:</strong></p>
+</li>
+<li>Future events should target correct standards</li>
+<li>9th standard (ex-8th) no longer appear in Bal Mandal event attendance</li>
+</ol>
+<hr />
+<h2 id="10-reports-exports">10. Reports &amp; Exports</h2>
+<h3 id="vcf-export-detailed">VCF Export (Detailed)</h3>
+<p><strong>Purpose:</strong> Export contacts as vCard format for importing to phone contacts app.</p>
+<p><strong>Access:</strong> Bal Mandal Dashboard → "Export VCF" button</p>
+<p><strong>Options:</strong></p>
+<ol>
+<li><strong>Prefix Dropdown:</strong></li>
+<li>None (default)</li>
+<li>Area name (e.g., "Mansarovar Ravi Patel")</li>
+<li>Sub-Area name (e.g., "Zone A Ravi Patel")</li>
+<li>
+<p>Mandal name (e.g., "Bal Mandal Ravi Patel")</p>
+</li>
+<li>
+<p><strong>Suffix Dropdown:</strong></p>
+</li>
+<li>None (default)</li>
+<li>Area name (e.g., "Ravi Patel Mansarovar")</li>
+<li>Sub-Area name (e.g., "Ravi Patel Zone A")</li>
+<li>Mandal name (e.g., "Ravi Patel Bal Mandal")</li>
+</ol>
+<p><strong>Example Combinations:</strong></p>
+<pre><code>Prefix: Area, Suffix: Mandal
+Result: &quot;Mansarovar Ravi Patel Bal Mandal&quot;
+
+Prefix: None, Suffix: Area
+Result: &quot;Ravi Patel Mansarovar&quot;
+
+Prefix: Mandal, Suffix: None
+Result: &quot;Bal Mandal Ravi Patel&quot;
+</code></pre>
+<p><strong>Generated vCard Format:</strong></p>
+<pre><code>BEGIN:VCARD
+VERSION:3.0
+FN:Mansarovar Ravi Patel Bal Mandal
+N:Ravi Patel;;;;
+TEL;TYPE=CELL:9876543210
+ADR:;;123 BAPS Street, Mansarovar;;;;
+ORG:Bal Mandal
+END:VCARD
+</code></pre>
+<p><strong>File Output:</strong> <code>bal-mandal-contacts.vcf</code></p>
+<p><strong>Import to Phone:</strong>
+- iPhone: Open file → Import to Contacts
+- Android: Contacts app → Import → Select VCF file</p>
+<hr />
+<h3 id="csv-exports">CSV Exports</h3>
+<p><strong>Standard Breakdown Report:</strong>
+1. Go to Bal Mandal Dashboard
+2. View Standard Breakdown grid
+3. Click <strong>"Export CSV"</strong> (if available)
+4. Downloads spreadsheet with:
+   - Standard
+   - Count
+   - Percentage
+   - Assigned SK count
+   - Unassigned count</p>
+<p><strong>Attendance Report:</strong>
+1. Go to Events page
+2. Select event
+3. Click <strong>"Export Attendance"</strong>
+4. Downloads CSV with:
+   - Child name
+   - Mobile
+   - Area
+   - Standard
+   - Attendance status (Present/Absent)
+   - SK assigned</p>
+<hr />
+<h3 id="dashboard-snapshot">Dashboard Snapshot</h3>
+<p><strong>Print/Save Dashboard:</strong>
+1. Open Bal Mandal Dashboard
+2. Select area filter (or "All Areas")
+3. Use browser Print function (Ctrl+P / Cmd+P)
+4. Select "Save as PDF"
+5. PDF includes all 10 metrics with current values</p>
+<p><strong>Use Case:</strong> Monthly reports for Nirdeshak review</p>
+<hr />
+<h2 id="11-admin-configuration">11. Admin Configuration</h2>
+<h3 id="creating-a-new-role">Creating a New Role</h3>
+<ol>
+<li>Go to <strong>Admin → Roles</strong></li>
+<li>Click <strong>"Add Role"</strong> button</li>
+<li>Fill in role details:<strong>Required Fields:</strong></li>
+<li><strong>Role Name</strong>: (e.g., "Bal Mandal Coordinator")</li>
+<li><strong>Role Key</strong>: Unique identifier (e.g., "bal_coordinator")</li>
+<li><strong>Program</strong>: Select "Bal Mandal"</li>
+</ol>
+<p><strong>Permissions (check boxes):</strong></p>
+<p>Core Permissions:
+- ☑ view_all_contacts - See all contacts in assigned areas
+- ☑ view_assigned_contacts - See only assigned contacts
+- ☑ edit_contacts - Add/edit/delete contacts
+- ☑ view_households - View household groupings
+- ☑ manage_events - Create/edit events
+- ☑ generate_batches - Create new sampark batches
+- ☑ assign_batches - Assign batches to volunteers
+- ☑ manage_users - Create/edit volunteers
+- ☑ manage_roles - Create/edit roles
+- ☑ view_padhramani - View padhramani schedule (for Sant role)</p>
+<p><strong>Example Role Configurations:</strong></p>
+<p><strong>Bal Mandal Nirdeshak:</strong></p>
+<pre><code>Name: Bal Mandal Director
+Role Key: bal_nirdeshak
+Program: Bal Mandal
+Permissions:
+  ✓ view_all_contacts
+  ✓ edit_contacts
+  ✓ manage_events
+  ✓ generate_batches
+  ✓ assign_batches
+</code></pre>
+<p><strong>Bal Mandal SK:</strong></p>
+<pre><code>Name: Bal Mandal Sampark Karyakarta
+Role Key: bal_sk
+Program: Bal Mandal
+Permissions:
+  ✓ view_assigned_contacts
+  ✓ edit_contacts
+  ✓ manage_events (for attendance marking)
+</code></pre>
+<ol>
+<li>Click <strong>"Save Role"</strong></li>
+</ol>
+<p><strong>Result:</strong> Role appears in dropdown when creating volunteers</p>
+<hr />
+<h3 id="creating-a-new-area">Creating a New Area</h3>
+<ol>
+<li>Go to <strong>Admin → Areas &amp; Mandals</strong></li>
+<li>In <strong>Areas</strong> section, click <strong>"Add Area"</strong></li>
+<li>Enter area details:</li>
+</ol>
+<p><strong>Required Fields:</strong>
+- <strong>Area Name</strong>: Full name (e.g., "Mansarovar")
+- <strong>Area Code</strong>: 2-3 letter code (e.g., "MS")</p>
+<p><strong>Optional Fields:</strong>
+- <strong>Description</strong>: Additional details</p>
+<ol>
+<li>Click <strong>"Save"</strong></li>
+</ol>
+<p><strong>Result:</strong> Area appears in dropdowns throughout the system</p>
+<hr />
+<h3 id="creating-sub-areas">Creating Sub-Areas</h3>
+<p>Sub-areas help divide large geographic areas into smaller zones.</p>
+<ol>
+<li>In <strong>Areas</strong> section, find parent area row</li>
+<li>Click <strong>"Add Sub-Area"</strong> button in that row</li>
+<li>Enter sub-area name (e.g., "Sector 1", "Zone A")</li>
+<li>Click <strong>"Save"</strong></li>
+</ol>
+<p><strong>Example Structure:</strong></p>
+<pre><code>Mansarovar (Area)
+├── Sector 1 (Sub-Area)
+├── Sector 2 (Sub-Area)
+└── Sector 3 (Sub-Area)
+
+Vaishali Nagar (Area)
+├── East Zone (Sub-Area)
+└── West Zone (Sub-Area)
+</code></pre>
+<p><strong>Result:</strong> Sub-areas appear in contact form when parent area is selected</p>
+<hr />
+<h3 id="configuring-mandal-fields">Configuring Mandal Fields</h3>
+<p>Control which fields appear in the contact form for each mandal.</p>
+<ol>
+<li>Go to <strong>Admin → Areas &amp; Mandals</strong></li>
+<li>Scroll to <strong>Mandals</strong> section</li>
+<li>Find mandal row (e.g., "Bal Mandal")</li>
+<li><strong>Field Checkboxes</strong> show available fields:</li>
+</ol>
+<p><strong>Available Fields:</strong>
+- ☑ Photo - Photo upload
+- ☑ DOB - Date of birth
+- ☑ Anniversary - Marriage anniversary
+- ☑ Relation - Relationship to household head
+- ☑ Is Primary - Primary contact in household
+- ☑ Area - Area/sub-area selection
+- ☑ Study - Education details
+- ☑ Profession - Occupation (for adults)
+- ☑ Skill - Special skills
+- ☑ Sampark Karyakarta - SK assignment
+- ☑ Standard - LKG-8th (for children)
+- ☑ Hobby - Interests/hobbies</p>
+<ol>
+<li>Check/uncheck boxes to enable/disable fields</li>
+<li>Changes save automatically</li>
+</ol>
+<p><strong>Quick Enable All:</strong>
+- Click <strong>"Ask everything"</strong> button to enable all fields at once</p>
+<p><strong>Result:</strong> When adding a contact under this mandal, only enabled fields appear in the form</p>
+<hr />
+<h3 id="managing-volunteers">Managing Volunteers</h3>
+<h4 id="creating-a-volunteer">Creating a Volunteer</h4>
+<ol>
+<li>Go to <strong>Admin → Volunteers</strong></li>
+<li>Click <strong>"Add Volunteer"</strong> button</li>
+<li>Fill in volunteer form:</li>
+</ol>
+<p><strong>Required Fields:</strong>
+- <strong>Full Name</strong>: (e.g., "Rajesh Kumar")
+- <strong>Mobile Number</strong>: 10-digit number (e.g., 9876543210)
+- <strong>Role</strong>: Select from dropdown (e.g., "Sampark Karyakarta")
+- <strong>Program</strong>: Select "Bal Mandal" or "Yuvak"
+- <strong>Assigned Areas</strong>: Select one or more areas (hold Ctrl/Cmd for multiple)</p>
+<p><strong>Optional Fields:</strong>
+- <strong>Email</strong>: Email address
+- <strong>Address</strong>: Full address
+- <strong>Photo</strong>: Upload volunteer photo
+- <strong>Notes</strong>: Internal notes about volunteer</p>
+<p><strong>Status:</strong>
+- ☑ Active (check to mark volunteer as active)
+- Inactive volunteers don't appear in assignment dropdowns</p>
+<ol>
+<li>Click <strong>"Save Volunteer"</strong></li>
+</ol>
+<p><strong>Result:</strong> Volunteer can now log in and access system based on role permissions</p>
+<hr />
+<h4 id="editing-a-volunteer">Editing a Volunteer</h4>
+<ol>
+<li>Go to <strong>Admin → Volunteers</strong></li>
+<li>Find volunteer in list (use search box)</li>
+<li>Click <strong>Edit</strong> button (pencil icon)</li>
+<li>Modify fields as needed</li>
+<li>Click <strong>"Save Changes"</strong></li>
+</ol>
+<p><strong>Common Edits:</strong>
+- Change assigned areas (when volunteer moves to different zone)
+- Update mobile number
+- Change role (promote SK to Sanchalak)
+- Mark as inactive (when volunteer leaves)</p>
+<hr />
+<h4 id="deactivating-a-volunteer">Deactivating a Volunteer</h4>
+<p><strong>When to Deactivate:</strong>
+- Volunteer is no longer serving
+- Volunteer moved to different program
+- Temporary leave of absence</p>
+<p><strong>How to Deactivate:</strong>
+1. Edit volunteer
+2. Uncheck <strong>"Active"</strong> checkbox
+3. Save</p>
+<p><strong>Effect:</strong>
+- Volunteer cannot log in
+- Doesn't appear in SK assignment dropdowns
+- Existing assignments remain intact
+- Can be reactivated later without losing data</p>
+<hr />
+<h3 id="creating-city-sabha-event-special-event-type">Creating City Sabha Event (Special Event Type)</h3>
+<p>City Sabha is a large-scale event involving multiple areas and mandals.</p>
+<ol>
+<li>Go to <strong>Events</strong> page</li>
+<li>Click <strong>"Create Event"</strong> button</li>
+<li>Fill in event form:</li>
+</ol>
+<p><strong>Required Fields:</strong>
+- <strong>Event Name</strong>: "City Sabha" or custom name
+- <strong>Event Type</strong>: Select "Sabha"
+- <strong>Mandal</strong>: Select "Bal Mandal" or "Sishu Mandal"
+- <strong>Date</strong>: Event date
+- <strong>Time</strong>: Start time</p>
+<p><strong>For City Sabha:</strong>
+- <strong>Area</strong>: Select "All Areas" or multiple areas
+- <strong>Location</strong>: Central venue address
+- <strong>Description</strong>: Event details, special instructions</p>
+<p><strong>Optional Fields:</strong>
+- <strong>Speaker</strong>: Name of speaker (autocomplete)
+- <strong>Duration</strong>: Duration in minutes
+- <strong>Max Attendance</strong>: Expected headcount</p>
+<ol>
+<li>Click <strong>"Create Event"</strong></li>
+</ol>
+<p><strong>Attendance Tracking:</strong>
+- When area is "All Areas", attendance panel shows children from all areas
+- Use search to quickly find and mark attendance
+- Export attendance report after event</p>
+<hr />
+<h2 id="12-troubleshooting">12. Troubleshooting</h2>
+<h3 id="issue-study-and-skill-fields-not-showing">Issue: Study and Skill Fields Not Showing</h3>
+<p><strong>Symptom:</strong> When adding a contact under Bal Mandal, Study and Skill dropdowns are missing.</p>
+<p><strong>Cause:</strong> Mandal fields are not enabled in configuration.</p>
+<p><strong>Solution:</strong>
+1. Log in as Admin
+2. Go to Admin → Areas &amp; Mandals
+3. Scroll to Mandals section
+4. Find "Bal Mandal" row
+5. Check boxes for: Study, Skill, Standard, Hobby
+6. Or click "Ask everything" button
+7. Repeat for "Sishu Mandal"</p>
+<p><strong>Verification:</strong>
+- Go to Contacts → Add contact
+- Select "Bal Mandal"
+- Verify all fields now appear</p>
+<hr />
+<h3 id="issue-sishu-mandal-not-in-dropdown">Issue: Sishu Mandal Not in Dropdown</h3>
+<p><strong>Symptom:</strong> When creating a contact, only "Bal Mandal" appears in Mandal dropdown, not "Sishu Mandal".</p>
+<p><strong>Cause:</strong> Sishu Mandal document doesn't exist in Firestore.</p>
+<p><strong>Solution:</strong>
+1. Run script: <code>node scripts/create-sishu-mandal.js</code>
+2. Script creates Sishu Mandal with all fields enabled
+3. Refresh browser
+4. Verify "Sishu Mandal" now appears in dropdown</p>
+<p><strong>Alternative Manual Creation:</strong>
+1. Firebase Console → Firestore Database
+2. Go to <code>mandals</code> collection
+3. Add document:
+   - <code>name</code>: "Sishu Mandal"
+   - <code>code</code>: "SHM"
+   - <code>gender</code>: "Male"
+   - <code>fields</code>: (map with all fields set to <code>true</code>)</p>
+<hr />
+<h3 id="issue-standard-not-auto-assigning-mandal">Issue: Standard Not Auto-Assigning Mandal</h3>
+<p><strong>Symptom:</strong> When selecting "3rd" standard, mandal doesn't change to "Sishu Mandal".</p>
+<p><strong>Cause:</strong> Auto-assignment logic only triggers when standard changes, not on initial selection.</p>
+<p><strong>Expected Behavior:</strong>
+- <strong>Create new contact:</strong> Select standard first, then mandal auto-sets when you tab out
+- <strong>Edit existing contact:</strong> Change standard from 5th to 3rd → mandal auto-changes to Sishu</p>
+<p><strong>Workaround:</strong>
+- Select standard dropdown
+- Choose standard (e.g., "3rd")
+- Click outside dropdown or press Tab
+- Mandal field updates automatically</p>
+<hr />
+<h3 id="issue-sk-cannot-see-assigned-contacts">Issue: SK Cannot See Assigned Contacts</h3>
+<p><strong>Symptom:</strong> SK logs in but "My Contacts" page is empty, even though batches were generated.</p>
+<p><strong>Cause:</strong> One of these:
+1. SK volunteer doesn't have <code>view_assigned_contacts</code> permission
+2. SK's areas don't match contact areas
+3. Contact's <code>samparkKaryakartaName</code> doesn't match SK's name exactly</p>
+<p><strong>Solution:</strong></p>
+<p><strong>Check Permissions:</strong>
+1. Admin → Roles
+2. Find SK role
+3. Verify ☑ <code>view_assigned_contacts</code> is checked
+4. Save if modified</p>
+<p><strong>Check Areas:</strong>
+1. Admin → Volunteers
+2. Find SK volunteer
+3. Verify assigned areas match contact areas
+4. Add missing areas if needed</p>
+<p><strong>Check Name Matching:</strong>
+1. Admin → Volunteers → Edit SK
+2. Note exact name spelling (e.g., "Rajesh Kumar")
+3. Contacts → Find assigned contact
+4. Edit contact → Sampark Karyakarta field
+5. Verify exact name match (case-sensitive)</p>
+<hr />
+<h3 id="issue-bal-mandal-dashboard-not-visible">Issue: Bal Mandal Dashboard Not Visible</h3>
+<p><strong>Symptom:</strong> "Bal Mandal" link doesn't appear in sidebar navigation.</p>
+<p><strong>Cause:</strong> Volunteer doesn't have <code>manage_events</code> permission.</p>
+<p><strong>Solution:</strong>
+1. Admin → Roles
+2. Find volunteer's role
+3. Check box for ☑ <code>manage_events</code>
+4. Save role
+5. Have volunteer log out and log back in
+6. "Bal Mandal" link now appears in sidebar</p>
+<hr />
+<h3 id="issue-observer-attendance-panel-missing">Issue: Observer Attendance Panel Missing</h3>
+<p><strong>Symptom:</strong> When viewing event, only regular attendance panel shows, no observer panel.</p>
+<p><strong>Cause:</strong> One of these:
+1. Event mandal is not "Bal Mandal" or "Sishu Mandal"
+2. No volunteers with program "Bal Mandal" and role "Nirikshak" or "Sant" exist</p>
+<p><strong>Solution:</strong></p>
+<p><strong>Check Event Mandal:</strong>
+1. Edit event
+2. Verify Mandal is "Bal Mandal" or "Sishu Mandal"
+3. Save</p>
+<p><strong>Create Observer Volunteers:</strong>
+1. Admin → Volunteers
+2. Create volunteer with:
+   - Role: "Nirikshak" or "Sant"
+   - Program: "Bal Mandal"
+   - Status: Active
+3. Refresh event page
+4. Observer panel now appears</p>
+<hr />
+<h3 id="issue-hobby-other-text-field-not-appearing">Issue: Hobby "Other" Text Field Not Appearing</h3>
+<p><strong>Symptom:</strong> Selected "Other" from Hobby dropdown but text field doesn't show.</p>
+<p><strong>Cause:</strong> Browser didn't detect the change event.</p>
+<p><strong>Solution:</strong>
+- Click outside the dropdown after selecting "Other"
+- Or press Tab key
+- Text field should appear below dropdown
+- If still not working, refresh page and try again</p>
+<hr />
+<h3 id="issue-standard-promotion-not-working">Issue: Standard Promotion Not Working</h3>
+<p><strong>Symptom:</strong> Clicked "Execute Standard Promotion" but nothing happened or error occurred.</p>
+<p><strong>Possible Causes:</strong>
+1. Insufficient Firestore permissions
+2. Too many contacts (exceeds batch limit)
+3. Network timeout</p>
+<p><strong>Solution:</strong></p>
+<p><strong>Check Permissions:</strong>
+- User must be Admin or have Nirdeshak role
+- Check Firebase Console → Firestore → Rules
+- Verify update rules allow bulk writes</p>
+<p><strong>Check Contact Count:</strong>
+- Standard Promotion page shows preview count
+- If &gt; 5000 contacts, promotion may timeout
+- Contact system administrator for manual migration</p>
+<p><strong>Try Again:</strong>
+1. Refresh page
+2. Click "Execute Standard Promotion" again
+3. Wait for success message (may take 30-60 seconds for large datasets)</p>
+<p><strong>Manual Promotion (if automated fails):</strong>
+1. Export contacts to CSV
+2. Use spreadsheet to update standard column (LKG→UKG, 1st→2nd, etc.)
+3. Use import feature to re-import updated CSV</p>
+<hr />
+<h3 id="issue-vcf-export-file-not-opening">Issue: VCF Export File Not Opening</h3>
+<p><strong>Symptom:</strong> Downloaded .vcf file but phone won't import it.</p>
+<p><strong>Cause:</strong> VCF format incompatibility with some phone models.</p>
+<p><strong>Solution:</strong></p>
+<p><strong>iPhone:</strong>
+- Email the .vcf file to yourself
+- Open email on iPhone
+- Tap attachment
+- Choose "Add All Contacts"</p>
+<p><strong>Android:</strong>
+- Copy .vcf file to phone storage
+- Open Contacts app
+- Menu → Import → From storage
+- Select .vcf file</p>
+<p><strong>Alternative:</strong>
+- Open .vcf file in text editor
+- Copy contact details manually
+- Or use Google Contacts web interface to import</p>
+<hr />
+<h3 id="issue-dashboard-metrics-not-updating">Issue: Dashboard Metrics Not Updating</h3>
+<p><strong>Symptom:</strong> Added new contacts but dashboard still shows old count.</p>
+<p><strong>Cause:</strong> Browser cache or query hasn't refreshed.</p>
+<p><strong>Solution:</strong>
+1. Click area filter dropdown at top-right
+2. Select different area, then select back to original
+3. Metrics refresh with new data
+4. Or hard refresh browser (Ctrl+Shift+R / Cmd+Shift+R)</p>
+<hr />
+<h3 id="issue-cannot-delete-contact">Issue: Cannot Delete Contact</h3>
+<p><strong>Symptom:</strong> Clicked delete but contact still appears.</p>
+<p><strong>Cause:</strong> Contact is linked to a household or has attendance records.</p>
+<p><strong>Solution:</strong></p>
+<p><strong>Remove from Household First:</strong>
+1. Go to Households page
+2. Find household containing contact
+3. Remove contact from household
+4. Return to Contacts page
+5. Delete contact</p>
+<p><strong>Attendance Records:</strong>
+- Contacts with attendance history cannot be deleted (data integrity)
+- Mark contact as inactive instead
+- Or edit contact and add note explaining why inactive</p>
+<hr />
+<h2 id="appendix-a-quick-reference-tables">Appendix A: Quick Reference Tables</h2>
+<h3 id="standard-to-mandal-mapping">Standard to Mandal Mapping</h3>
+<table>
+<thead>
+<tr>
+<th>Standard</th>
+<th>Auto-Assigned Mandal</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LKG</td>
+<td>Sishu Mandal</td>
+</tr>
+<tr>
+<td>UKG</td>
+<td>Sishu Mandal</td>
+</tr>
+<tr>
+<td>1st</td>
+<td>Sishu Mandal</td>
+</tr>
+<tr>
+<td>2nd</td>
+<td>Sishu Mandal</td>
+</tr>
+<tr>
+<td>3rd</td>
+<td>Sishu Mandal</td>
+</tr>
+<tr>
+<td>4th</td>
+<td>Sishu Mandal</td>
+</tr>
+<tr>
+<td>5th</td>
+<td>Bal Mandal</td>
+</tr>
+<tr>
+<td>6th</td>
+<td>Bal Mandal</td>
+</tr>
+<tr>
+<td>7th</td>
+<td>Bal Mandal</td>
+</tr>
+<tr>
+<td>8th</td>
+<td>Bal Mandal</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Note:</strong> 8th standard students transfer to Yuvak Mandal during yearly promotion.</p>
+<hr />
+<h3 id="hobby-options">Hobby Options</h3>
+<p>Available options in Hobby multi-select dropdown:</p>
+<ul>
+<li>Sports</li>
+<li>Music</li>
+<li>Dance</li>
+<li>Drawing</li>
+<li>Reading</li>
+<li>Cricket</li>
+<li>Football</li>
+<li>Singing</li>
+<li>Cooking</li>
+<li>Technology</li>
+<li>Photography</li>
+<li>Yoga</li>
+<li>Storytelling</li>
+<li>Arts &amp; Crafts</li>
+<li>Gaming</li>
+<li><strong>Other</strong> (opens free text field)</li>
+</ul>
+<hr />
+<h3 id="permission-matrix">Permission Matrix</h3>
+<table>
+<thead>
+<tr>
+<th>Permission</th>
+<th>Admin</th>
+<th>Nirdeshak</th>
+<th>Sanchalak</th>
+<th>Nirikshak</th>
+<th>SK</th>
+<th>Sant</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>view_all_contacts</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>✗</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>view_assigned_contacts</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>✗</td>
+<td>✓</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>edit_contacts</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>✗</td>
+<td>✓</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>manage_events</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>generate_batches</td>
+<td>✓</td>
+<td>✓</td>
+<td>✗</td>
+<td>✗</td>
+<td>✗</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>assign_batches</td>
+<td>✓</td>
+<td>✓</td>
+<td>✗</td>
+<td>✗</td>
+<td>✗</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>manage_users</td>
+<td>✓</td>
+<td>✗</td>
+<td>✗</td>
+<td>✗</td>
+<td>✗</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>manage_roles</td>
+<td>✓</td>
+<td>✗</td>
+<td>✗</td>
+<td>✗</td>
+<td>✗</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>view_padhramani</td>
+<td>✓</td>
+<td>✗</td>
+<td>✗</td>
+<td>✗</td>
+<td>✗</td>
+<td>✓</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="event-types">Event Types</h3>
+<table>
+<thead>
+<tr>
+<th>Event Type</th>
+<th>Description</th>
+<th>Common Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sabha</td>
+<td>Regular congregation</td>
+<td>Weekly Sunday sabha</td>
+</tr>
+<tr>
+<td>Festival</td>
+<td>Special celebration</td>
+<td>Bal Din, Diwali</td>
+</tr>
+<tr>
+<td>Training</td>
+<td>Skill development</td>
+<td>Leadership workshop</td>
+</tr>
+<tr>
+<td>Meeting</td>
+<td>Planning session</td>
+<td>SK coordination meeting</td>
+</tr>
+<tr>
+<td>Other</td>
+<td>Custom event</td>
+<td>Sports day, picnic</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="appendix-b-workflow-diagrams">Appendix B: Workflow Diagrams</h2>
+<h3 id="contact-creation-workflow">Contact Creation Workflow</h3>
+<pre><code>Start
+  ↓
+[Admin/Sanchalak clicks &quot;Add Contact&quot;]
+  ↓
+[Fill Name, Mobile, Area]
+  ↓
+[Select Standard from dropdown]
+  ↓
+[System auto-assigns Mandal]
+  ├─ LKG-4th → Sishu Mandal
+  └─ 5th-8th → Bal Mandal
+  ↓
+[Fill Hobby (multi-select)]
+  ├─ Select multiple from dropdown
+  └─ If &quot;Other&quot; → Enter custom text
+  ↓
+[Fill Study, Skill, SK]
+  ↓
+[Click &quot;Add Member&quot;]
+  ↓
+[Contact saved to Firestore]
+  ↓
+End
+</code></pre>
+<hr />
+<h3 id="batch-generation-workflow">Batch Generation Workflow</h3>
+<pre><code>Start
+  ↓
+[Nirdeshak opens Bal Mandal Dashboard]
+  ↓
+[Click &quot;Generate Batches&quot;]
+  ↓
+[Select Area]
+  ↓
+[Click &quot;Preview&quot;]
+  ↓
+[System queries:]
+  ├─ All contacts in area without SK
+  └─ All active SK volunteers in area
+  ↓
+[Count existing assignments per SK]
+  ↓
+[Sort SKs by contact count (ascending)]
+  ↓
+[For each unassigned contact:]
+  ├─ Assign to SK with lowest count
+  └─ Increment that SK's count
+  ↓
+[Show preview with distribution]
+  ↓
+[User reviews → Click &quot;Generate&quot;]
+  ↓
+[System creates batches using writeBatch]
+  ↓
+[Updates contact documents with SK info]
+  ↓
+[Commits batches to Firestore]
+  ↓
+[Success message shown]
+  ↓
+End
+</code></pre>
+<hr />
+<h3 id="standard-promotion-workflow">Standard Promotion Workflow</h3>
+<pre><code>Start (Once per year)
+  ↓
+[Nirdeshak opens Standard Promotion page]
+  ↓
+[System loads all Bal/Sishu contacts]
+  ↓
+[Groups by current standard]
+  ↓
+[Shows preview table with counts]
+  ↓
+[User downloads CSV report]
+  ↓
+[User reviews report]
+  ↓
+[User clicks &quot;Execute Promotion&quot;]
+  ↓
+[Confirmation dialog → User confirms]
+  ↓
+[System creates writeBatch]
+  ↓
+[For each contact:]
+  ├─ LKG → UKG
+  ├─ UKG → 1st
+  ├─ 1st → 2nd
+  ├─ 2nd → 3rd
+  ├─ 3rd → 4th
+  ├─ 4th → 5th (Sishu → Bal Mandal)
+  ├─ 5th → 6th
+  ├─ 6th → 7th
+  ├─ 7th → 8th
+  └─ 8th → 9th + Transfer to Yuvak Mandal
+       ├─ mandal = &quot;Yuvak Mandal&quot;
+       ├─ transferredFromBalMandal = true
+       ├─ transferredAt = timestamp
+       └─ balMandalHistory = notes field
+  ↓
+[Commit batches (respects 450 limit)]
+  ↓
+[Success message]
+  ↓
+[Dashboard updates with new counts]
+  ↓
+End
+</code></pre>
+<hr />
+<h2 id="appendix-c-firestore-data-structure">Appendix C: Firestore Data Structure</h2>
+<h3 id="individuals-collection">individuals Collection</h3>
+<pre><code class="language-javascript">{
+  id: &quot;abc123&quot;,
+  name: &quot;Ravi Patel&quot;,
+  mobile: &quot;9876543210&quot;,
+  mandal: &quot;Bal Mandal&quot;,
+  area: &quot;Mansarovar&quot;,
+  subArea: &quot;Sector 1&quot;,
+  standard: &quot;5th&quot;,
+  hobby: [&quot;Sports&quot;, &quot;Music&quot;, &quot;Other&quot;],
+  hobbyOther: &quot;Chess&quot;,
+  study: &quot;Shanti Asiatic School&quot;,
+  skill: &quot;Drawing, tabla&quot;,
+  samparkKaryakartaName: &quot;Rajesh Kumar&quot;,
+  samparkKaryakartaNumber: &quot;9123456789&quot;,
+  notes: &quot;[02/09/2026, 10:30 AM - Rajesh Kumar]\nExcellent participation.\n\n[01/09/2026 - Priya]\nParent meeting scheduled.&quot;,
+  dob: Timestamp,
+  address: &quot;123 BAPS Street&quot;,
+  photo: &quot;https://storage.../photo.jpg&quot;,
+  isActive: true,
+  onFollowUpList: true,
+  createdAt: Timestamp,
+  updatedAt: Timestamp,
+
+  // Transfer fields (after 8th promotion)
+  transferredFromBalMandal: true,
+  transferredAt: Timestamp,
+  balMandalHistory: &quot;Full notes history from Bal Mandal&quot;,
+}
+</code></pre>
+<hr />
+<h3 id="batches-collection">batches Collection</h3>
+<pre><code class="language-javascript">{
+  id: &quot;batch123&quot;,
+  area: &quot;Mansarovar&quot;,
+  mandal: &quot;Bal Mandal&quot;,
+  assignedTo: &quot;Rajesh Kumar&quot;,
+  assignedToMobile: &quot;9123456789&quot;,
+  contactIds: [&quot;abc123&quot;, &quot;def456&quot;, &quot;ghi789&quot;],
+  createdAt: Timestamp,
+  program: &quot;Bal Mandal&quot;,
+}
+</code></pre>
+<hr />
+<h3 id="events-collection">events Collection</h3>
+<pre><code class="language-javascript">{
+  id: &quot;event123&quot;,
+  name: &quot;Sunday Sabha&quot;,
+  type: &quot;Sabha&quot;,
+  mandal: &quot;Bal Mandal&quot;,
+  area: &quot;Mansarovar&quot;,
+  date: Timestamp,
+  time: &quot;10:00 AM&quot;,
+  location: &quot;BAPS Mandir, Mansarovar&quot;,
+  description: &quot;Regular weekly sabha&quot;,
+  createdBy: &quot;volunteer_id&quot;,
+  createdAt: Timestamp,
+}
+</code></pre>
+<hr />
+<h3 id="eventseventidobserverattendance-subcollection">events/{eventId}/observerAttendance Subcollection</h3>
+<pre><code class="language-javascript">{
+  id: &quot;volunteer_id&quot;,
+  volunteerId: &quot;volunteer_id&quot;,
+  markedAt: Timestamp,
+  markedBy: &quot;admin_volunteer_id&quot;,
+}
+</code></pre>
+<hr />
+<h3 id="volunteers-collection">volunteers Collection</h3>
+<pre><code class="language-javascript">{
+  id: &quot;vol123&quot;,
+  name: &quot;Rajesh Kumar&quot;,
+  mobile: &quot;9123456789&quot;,
+  email: &quot;rajesh@example.com&quot;,
+  roleKey: &quot;sk&quot;,
+  program: &quot;Bal Mandal&quot;,
+  assignedAreas: [&quot;Mansarovar&quot;, &quot;Vaishali Nagar&quot;],
+  isActive: true,
+  photo: &quot;https://storage.../volunteer.jpg&quot;,
+  notes: &quot;Very dedicated SK, 5 years experience&quot;,
+  createdAt: Timestamp,
+}
+</code></pre>
+<hr />
+<h2 id="appendix-d-system-limits-best-practices">Appendix D: System Limits &amp; Best Practices</h2>
+<h3 id="firebase-free-tier-limits">Firebase Free Tier Limits</h3>
+<p><strong>Daily Limits:</strong>
+- Reads: 50,000 per day
+- Writes: 20,000 per day
+- Deletes: 20,000 per day</p>
+<p><strong>Best Practices to Stay Within Limits:</strong></p>
+<ol>
+<li><strong>Use Dashboard Filters:</strong></li>
+<li>Don't load all areas at once</li>
+<li>
+<p>Filter to specific area when possible</p>
+</li>
+<li>
+<p><strong>Batch Operations:</strong></p>
+</li>
+<li>Generate batches for one area at a time</li>
+<li>
+<p>Don't run multiple batch generations simultaneously</p>
+</li>
+<li>
+<p><strong>Standard Promotion:</strong></p>
+</li>
+<li>Run once per year only</li>
+<li>Backup database first</li>
+<li>
+<p>Run during off-peak hours</p>
+</li>
+<li>
+<p><strong>Event Attendance:</strong></p>
+</li>
+<li>Mark attendance during event, not after</li>
+<li>
+<p>Use search to find contacts instead of scrolling full list</p>
+</li>
+<li>
+<p><strong>Dashboard Refresh:</strong></p>
+</li>
+<li>Dashboard auto-loads on page visit</li>
+<li>Don't refresh repeatedly</li>
+<li>Use area filter to reduce query size</li>
+</ol>
+<hr />
+<h3 id="recommended-data-entry-workflow">Recommended Data Entry Workflow</h3>
+<p><strong>Weekly Routine:</strong></p>
+<p><strong>Monday:</strong>
+- Review dashboard metrics
+- Identify contacts without SK assignment
+- Generate batches for unassigned contacts</p>
+<p><strong>Tuesday-Saturday:</strong>
+- SKs add notes on family contacts throughout week
+- Update mobile numbers if changed
+- Mark any contacts as inactive if moved away</p>
+<p><strong>Sunday:</strong>
+- Create week's Sabha event
+- Mark attendance during Sabha
+- Observer attendance marked by end of event</p>
+<p><strong>Monthly:</strong>
+- Review Standard Breakdown metrics
+- Check SK coverage percentage (target: 100%)
+- Export VCF for new SKs joining</p>
+<p><strong>Yearly (June/July):</strong>
+- Backup Firestore database
+- Run Standard Promotion workflow
+- Transfer 8th students to Yuvak
+- Generate new batches for promoted 5th standard students</p>
+<hr />
+<h3 id="security-best-practices">Security Best Practices</h3>
+<ol>
+<li><strong>Volunteer Accounts:</strong></li>
+<li>Use strong passwords (min 8 characters, mixed case, numbers)</li>
+<li>Don't share login credentials</li>
+<li>
+<p>Log out after each session on shared computers</p>
+</li>
+<li>
+<p><strong>Mobile Numbers:</strong></p>
+</li>
+<li>Verify mobile numbers before saving</li>
+<li>Don't use fake numbers for testing (use 9999999999)</li>
+<li>
+<p>Update immediately if parent changes number</p>
+</li>
+<li>
+<p><strong>Photos:</strong></p>
+</li>
+<li>Get parent permission before uploading child photos</li>
+<li>Don't share photos outside organization</li>
+<li>
+<p>Use "Add photo later" if permission pending</p>
+</li>
+<li>
+<p><strong>Notes:</strong></p>
+</li>
+<li>Keep notes professional and factual</li>
+<li>Don't include sensitive medical/family information</li>
+<li>
+<p>Use notes for sampark tracking only</p>
+</li>
+<li>
+<p><strong>Exports:</strong></p>
+</li>
+<li>VCF exports contain phone numbers - handle securely</li>
+<li>Don't share exported files via public channels</li>
+<li>Delete old exports from device after importing</li>
+</ol>
+<hr />
+<h2 id="support-contact">Support &amp; Contact</h2>
+<p><strong>For Technical Issues:</strong>
+- Email: Manish Kumawat (manishkumawat@example.com)
+- Document Issues: Check Troubleshooting section (Section 12)</p>
+<p><strong>For System Training:</strong>
+- Request training session for new volunteers
+- Group training available for area coordinators</p>
+<p><strong>For Feature Requests:</strong>
+- Submit via Admin panel feedback form
+- Or email technical team with detailed description</p>
+<hr />
+<p><strong>Document Version:</strong> 1.0<br />
+<strong>Last Updated:</strong> September 2, 2026<br />
+<strong>Prepared By:</strong> System Development Team<br />
+<strong>Approved By:</strong> Manish Kumawat</p>
+<hr />
+<h2 id="end-of-manual">End of Manual</h2>
+<p><strong>Next Steps:</strong>
+1. Complete one-time setup (Section 4)
+2. Create first volunteer accounts
+3. Train Sanchalak and SKs on contact entry
+4. Run first batch generation
+5. Create first Sabha event and mark attendance
+6. Review dashboard metrics weekly</p>
+<p><strong>Happy Managing! 🙏</strong></p>
+</body>
+</html>

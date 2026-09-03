@@ -20,7 +20,7 @@
 import {
   Home, Users, CalendarDays, Bell, ListChecks, LayoutDashboard,
   ShieldCheck, UserCog, MapPin, Wrench, HeartHandshake, CalendarCheck,
-  PhoneCall, PhoneForwarded,
+  PhoneCall, PhoneForwarded, GraduationCap,
 } from 'lucide-react';
 import { classifyRole, ROLE_LABELS, ROLE_BADGE_CLASSES } from '../constants/roleTemplates';
 
@@ -94,6 +94,10 @@ const NAV = {
     to: '/admin/tools', label: 'Admin Tools', icon: Wrench,
     anyOf: ['view_all_contacts', 'manage_users', 'send_emails', 'manage_templates'],
   },
+  balMandal: {
+    to: '/bal-mandal', label: 'Bal Mandal', icon: GraduationCap,
+    anyOf: ['manage_events'],
+  },
 };
 
 // ── Per-role layouts ─────────────────────────────────────────────────────────
@@ -103,18 +107,18 @@ const NAV = {
 //            permission gate and appends a "Menu" button as the 5th slot.
 const LAYOUTS = {
   admin: {
-    main: ['contacts', 'households', 'events', 'padhramani', 'reminders', 'myContacts', 'calling'],
+    main: ['contacts', 'households', 'events', 'balMandal', 'padhramani', 'reminders', 'myContacts', 'calling'],
     admin: ['dashboard', 'batches', 'volunteers', 'roles', 'areas', 'tools'],
     tabs: ['dashboard', 'contacts', 'households', 'batches'],
   },
   moderator: {
-    main: ['contacts', 'households', 'events', 'padhramani', 'reminders', 'myContacts', 'calling'],
+    main: ['contacts', 'households', 'events', 'balMandal', 'padhramani', 'reminders', 'myContacts', 'calling'],
     admin: ['dashboard', 'batches', 'tools'],
     tabs: ['contacts', 'dashboard', 'batches', 'events'],
   },
   volunteer: {
     // A volunteer's job is the calling queue — it leads, and it is the landing page.
-    main: ['calling', 'myContacts', 'households', 'events', 'reminders', 'contacts'],
+    main: ['calling', 'myContacts', 'households', 'events', 'balMandal', 'reminders', 'contacts'],
     admin: [],
     tabs: ['calling', 'myContacts', 'households', 'events'],
   },

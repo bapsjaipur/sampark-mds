@@ -193,6 +193,8 @@ export default function EventDashboard({ event, rows = [], stats, individuals = 
           {[
             formatEventDate(event?.date, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' }),
             formatEventTime(event?.time),
+            event?.durationMinutes ? `${event.durationMinutes} min` : null,
+            event?.speaker ? `Speaker: ${event.speaker}` : null,
             event?.mandal || 'All Mandals',
             event?.area || 'All Areas',
           ].filter(Boolean).join(' · ')}

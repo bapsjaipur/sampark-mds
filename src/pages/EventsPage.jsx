@@ -52,6 +52,7 @@ import EventForm from '../components/events/EventForm';
 import AttendanceMarking from '../components/events/AttendanceMarking';
 import EventExportButtons from '../components/events/EventExportButtons';
 import EventDashboard from '../components/events/EventDashboard';
+import ObserverAttendancePanel from '../components/bal-mandal/ObserverAttendancePanel';
 import SabhaAnalytics from '../components/events/SabhaAnalytics';
 import { isEventPast } from '../lib/eventAnalytics';
 import Modal from '../components/ui/Modal';
@@ -91,9 +92,12 @@ function EventListItem({ event, count, selected, onClick }) {
       <p className="mt-0.5 text-xs text-slate-400">
         {formatEventDate(event.date, { day: 'numeric', month: 'short', year: 'numeric' })}
         {event.time && ` · ${formatEventTime(event.time)}`}
+        {event.durationMinutes && ` · ${event.durationMinutes}m`}
       </p>
-      {(event.mandal || event.area) && (
-        <p className="truncate text-xs text-slate-400">{[event.mandal, event.area].filter(Boolean).join(' · ')}</p>
+      {(event.speaker || event.mandal || event.area) && (
+        <p className="mt-0.5 truncate text-xs text-slate-400">
+          {[event.speaker ? `Speaker: ${event.speaker}` : null, event.mandal, event.area].filter(Boolean).join(' · ')}
+        </p>
       )}
     </button>
   );
@@ -468,6 +472,13 @@ export default function EventsPage() {
                   />
                 )}
               </div>
+
+              {/* Observer attendance for Bal Mandal events */}
+              {(selectedEvent.mandal === 'Bal Mandal' || selectedEvent.mandal === 'Sishu Mandal') && (
+                <div className="mt-4">
+                  <ObserverAttendancePanel event={selectedEvent} />
+                </div>
+              )}
             </Card>
           )}
         </div>

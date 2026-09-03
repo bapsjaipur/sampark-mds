@@ -672,6 +672,9 @@ function VolunteerEditorInner() {
         isActive: v.isActive !== false, // default to true
         assignedAreas: Array.isArray(v.assignedAreas) ? v.assignedAreas : [],
         assignedMandals: Array.isArray(v.assignedMandals) ? v.assignedMandals : [],
+        // PHASE 30 — program assignment (Yuvak or Bal Mandal). Defaults to Yuvak
+        // for existing volunteers with no program field, so nothing breaks.
+        program: v.program || 'Yuvak',
       });
     }
   }, [selectedId, volunteers]);
@@ -809,6 +812,8 @@ function VolunteerEditorInner() {
         assignedAreas,
         assignedMandals,
         isActive: draft.isActive,
+        // PHASE 30 — program assignment
+        program: draft.program || 'Yuvak',
       });
 
       // The callable is the intended path — it also syncs the Auth email when the
@@ -823,6 +828,7 @@ function VolunteerEditorInner() {
         roleRefs: draft.roleRefs,
         roleRef: primaryRole?.id || null,
         scopeKind: savedScopeKind,
+        program: draft.program || 'Yuvak',
       });
     } catch (err) {
       setError(err.message);
@@ -1179,6 +1185,20 @@ function VolunteerEditorInner() {
               </p>
             </div>
 
+            <div>
+              <Label>Program</Label>
+              <Select
+                value={draft.program || 'Yuvak'}
+                onChange={(e) => setDraft({ ...draft, program: e.target.value })}
+              >
+                <option value="Yuvak">Yuvak (Youth)</option>
+                <option value="Bal Mandal">Bal Mandal (Children)</option>
+              </Select>
+              <p className="mt-1 text-xs text-slate-400">
+                Which program this volunteer works with. Determines which contacts and events they can see.
+              </p>
+            </div>
+
             <div className="flex items-center justify-between rounded-lg border border-slate-100 p-3 bg-slate-50/50">
               <div>
                 <p className="text-sm font-semibold text-slate-800">Login Access</p>
@@ -1200,6 +1220,20 @@ function VolunteerEditorInner() {
               values={draft.roleRefs}
               onChange={(v) => setDraft({ ...draft, roleRefs: v })}
             />
+
+            <div>
+              <Label>Program</Label>
+              <Select
+                value={draft.program || 'Yuvak'}
+                onChange={(e) => setDraft({ ...draft, program: e.target.value })}
+              >
+                <option value="Yuvak">Yuvak Mandal</option>
+                <option value="Bal Mandal">Bal Mandal</option>
+              </Select>
+              <p className="mt-1 text-xs text-slate-400">
+                Determines which program this volunteer manages.
+              </p>
+            </div>
 
             {/* A Santo is city-wide, like an Admin — the two pickers below are not
                 just unnecessary for them, they are actively harmful: an area left

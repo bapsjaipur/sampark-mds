@@ -58,11 +58,17 @@ export default function IndividualCard({ individual, onEdit, onDelete, onView, d
         <p className="truncate text-xs text-slate-400">
           {RELATION_LABEL[individual.relation] || individual.relation} &middot; {individual.mobile || "No mobile"}
           {individual.mandal ? ` · ${individual.mandal}` : ""}
+          {individual.standard ? ` · ${individual.standard}` : ""}
         </p>
         {individual.dob && <p className="text-xs text-slate-400">Born {formatDate(individual.dob)}</p>}
+        {individual.hobby && individual.hobby.length > 0 && (
+          <p className="truncate text-xs text-slate-400">
+            Hobbies: {individual.hobby.join(", ")}
+          </p>
+        )}
         {individual.samparkKaryakartaName && (
           <p className="truncate text-xs text-slate-400">
-            Sampark: {individual.samparkKaryakartaName}{individual.samparkKaryakartaNumber ? ` (${individual.samparkKaryakartaNumber})` : ""}
+            SK: {individual.samparkKaryakartaName}{individual.samparkKaryakartaNumber ? ` (${individual.samparkKaryakartaNumber})` : ""}
           </p>
         )}
       </div>

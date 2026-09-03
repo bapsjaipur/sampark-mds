@@ -44,6 +44,12 @@ const P = PERMISSIONS;
 // overlap on exactly one cell each — the Yuvak Mandal members of Vaishali
 // Nagar are seen by both the Yuvak Super Moderator and the Vaishali Moderator,
 // which is intended: that is a real reporting overlap, not a bug.
+//
+// PHASE 30 — Bal Mandal roles mirror the Yuvak hierarchy with program-scoped names:
+//    85  Nirdeshak        Bal Mandal city head (equiv. to Super Moderator rank)
+//    75  Sanchalak        Bal Mandal area coordinator (equiv. to Moderator rank)
+//    65  Nirikshak        Bal Mandal observer (read-only across city, for Sant role)
+//    45  SK               Sampark Karyakarta for Bal Mandal children (equiv. to Karyakarta)
 // ─────────────────────────────────────────────────────────────────────────────
 export const ROLE_PRESETS = [
   {
@@ -139,6 +145,76 @@ export const ROLE_PRESETS = [
       'Sees only their own Padhramani schedule. No contact, household or admin access. MDS-specific — had no equivalent in Sevak Call.',
     permissions: [P.VIEW_PADHRAMANI],
   },
+  // PHASE 30 — Bal Mandal roles
+  {
+    key: 'nirdeshak',
+    name: 'Nirdeshak (Bal Mandal City Head)',
+    rank: 85,
+    scopeKind: SCOPE_KINDS.MANDAL,
+    description:
+      'Head of Bal Mandal program across the whole city. Sees all Bal Mandal children in every area, manages events, batches, and volunteers. Assign "Bal Mandal" as their program.',
+    permissions: [
+      P.VIEW_ASSIGNED_CONTACTS,
+      P.EDIT_CONTACTS,
+      P.DELETE_CONTACTS,
+      P.VIEW_HOUSEHOLDS,
+      P.EXPORT_DATA,
+      P.IMPORT_DATA,
+      P.GENERATE_BATCHES,
+      P.ASSIGN_BATCHES,
+      P.MANAGE_EVENTS,
+      P.MANAGE_ATTENDANCE,
+      P.MANAGE_SCOPED_VOLUNTEERS,
+      P.SEND_EMAILS,
+    ],
+  },
+  {
+    key: 'sanchalak',
+    name: 'Sanchalak (Bal Mandal Area Coordinator)',
+    rank: 75,
+    scopeKind: SCOPE_KINDS.AREA,
+    description:
+      'Coordinator for Bal Mandal in one area. Sees all Bal Mandal children in their assigned area(s), manages events, assigns SKs to batches. Can create Mandir Sabha events.',
+    permissions: [
+      P.VIEW_ASSIGNED_CONTACTS,
+      P.EDIT_CONTACTS,
+      P.DELETE_CONTACTS,
+      P.VIEW_HOUSEHOLDS,
+      P.EXPORT_DATA,
+      P.ASSIGN_BATCHES,
+      P.MANAGE_EVENTS,
+      P.MANAGE_ATTENDANCE,
+      P.MANAGE_SCOPED_VOLUNTEERS,
+      P.SEND_EMAILS,
+    ],
+  },
+  {
+    key: 'nirikshak',
+    name: 'Nirikshak (Bal Mandal Observer)',
+    rank: 65,
+    scopeKind: SCOPE_KINDS.MANDAL,
+    description:
+      'Observer for Bal Mandal program (typically Sant). Read-only access to all Bal Mandal children city-wide. Can mark their own attendance at events as an observer.',
+    permissions: [
+      P.VIEW_ASSIGNED_CONTACTS,
+      P.VIEW_HOUSEHOLDS,
+      P.MANAGE_ATTENDANCE,
+    ],
+  },
+  {
+    key: 'sk',
+    name: 'SK (Bal Mandal Sampark Karyakarta)',
+    rank: 45,
+    scopeKind: SCOPE_KINDS.INTERSECT,
+    description:
+      'Sampark Karyakarta for Bal Mandal children in one area. Calls their assigned batch, records attendance and notes. The narrowest Bal Mandal scope.',
+    permissions: [
+      P.VIEW_ASSIGNED_CONTACTS,
+      P.EDIT_CONTACTS,
+      P.VIEW_HOUSEHOLDS,
+      P.MANAGE_ATTENDANCE,
+    ],
+  },
 ];
 
 export const ROLE_LABELS = {
@@ -148,6 +224,10 @@ export const ROLE_LABELS = {
   karyakarta: 'Karyakarta',
   volunteer: 'Volunteer',
   santo: 'Santo',
+  nirdeshak: 'Nirdeshak',
+  sanchalak: 'Sanchalak',
+  nirikshak: 'Nirikshak',
+  sk: 'SK',
   custom: 'Custom',
   none: 'No role',
 };
@@ -264,6 +344,10 @@ export const ROLE_BADGE_CLASSES = {
   karyakarta: 'bg-teal-100 text-teal-700 border-teal-200',
   volunteer: 'bg-emerald-100 text-emerald-700 border-emerald-200',
   santo: 'bg-amber-100 text-amber-700 border-amber-200',
+  nirdeshak: 'bg-rose-100 text-rose-700 border-rose-200',
+  sanchalak: 'bg-pink-100 text-pink-700 border-pink-200',
+  nirikshak: 'bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200',
+  sk: 'bg-cyan-100 text-cyan-700 border-cyan-200',
   custom: 'bg-slate-100 text-slate-600 border-slate-200',
   none: 'bg-slate-100 text-slate-500 border-slate-200',
 };

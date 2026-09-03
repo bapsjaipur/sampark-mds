@@ -20,6 +20,7 @@ import { VolunteerBadge, VolunteerRing } from "../components/ui/VolunteerBadge";
 import RequirePermission from "../components/RequirePermission";
 import IndividualForm from "../components/individuals/IndividualForm";
 import AttendanceHistoryPanel from "../components/events/AttendanceHistoryPanel";
+import BalMandalNotesPanel from "../components/bal-mandal/BalMandalNotesPanel";
 import Modal from "../components/ui/Modal";
 import { Avatar } from "../components/ui/Avatar";
 import { Card } from "../components/ui/Card";
@@ -224,6 +225,8 @@ export default function IndividualDetailPage() {
           <Field label="Address" value={individual.householdId ? household?.address : individual.address} />
           <Field label="Date of birth" value={individual.dob ? formatDate(individual.dob) : null} />
           <Field label="Anniversary" value={individual.anniversary ? formatDate(individual.anniversary) : null} />
+          <Field label="Standard" value={individual.standard} />
+          <Field label="Hobbies" value={individual.hobby && individual.hobby.length > 0 ? individual.hobby.join(", ") : null} />
           <Field label="Study" value={individual.study} />
           <Field label="Profession" value={individual.profession} />
           <Field label="Skill" value={individual.skill} />
@@ -247,6 +250,13 @@ export default function IndividualDetailPage() {
       <Card className="mt-4 p-4 sm:p-6">
         <AttendanceHistoryPanel individualId={id} individual={individual} variant="full" />
       </Card>
+
+      {/* Bal Mandal notes */}
+      {(individual.mandal === 'Bal Mandal' || individual.mandal === 'Sishu Mandal') && (
+        <Card className="mt-4 p-4 sm:p-6">
+          <BalMandalNotesPanel individual={individual} />
+        </Card>
+      )}
 
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title={`Edit ${individual.name || "contact"}`} size="lg">
         <IndividualForm

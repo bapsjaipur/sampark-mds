@@ -5,4 +5,6 @@ node_modules/
 .env
 
 # MacOS specific (if applicable)
-.DS_Store
+.DS_Storeevent-counter/venv/
+venv/
+node_modules/

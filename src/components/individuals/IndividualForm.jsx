@@ -27,7 +27,8 @@ import { useAuth } from "../../hooks/usePermissions";
 import PhotoUploader from "../photo/PhotoUploader";
 import { MandalSelect, AreaSelect, SubAreaSelect } from "../AreaMandalSelect";
 import { useAreasAndMandals } from "../../hooks/useAreasAndMandals";
-import { FULL_MEMBER_FIELDS } from "../../lib/areaMandalCodes";
+import { FULL_MEMBER_FIELDS, STANDARD_OPTIONS, HOBBY_OPTIONS } from "../../lib/areaMandalCodes";
+import { getMandalForStandard } from "../../constants/balMandalConfig";
 import { Input, Select, Label, FieldError } from "../ui/Input";
 import { Button } from "../ui/Button";
 
@@ -135,6 +136,10 @@ const emptyForm = {
   // freshly-added person is precisely the one somebody should ring.
   // See services/callingPoolService.js for why absent also means on.
   callingPool: true,
+  // PHASE 30 — Bal Mandal fields.
+  standard: "",
+  hobby: [],
+  hobbyOther: "",
 };
 
 export default function IndividualForm({ individual, onSubmit, onCancel, withinHousehold = false, householdArea = "", householdAddress = "", initialValues = null }) {
@@ -154,6 +159,10 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
           // Absent means on — the 1000+ contacts that predate this field are all
           // on the list, which is what makes the feature migration-free.
           callingPool: individual.callingPool !== false,
+          // PHASE 30 — Bal Mandal fields
+          standard: individual.standard || "",
+          hobby: Array.isArray(individual.hobby) ? individual.hobby : [],
+          hobbyOther: individual.hobbyOther || "",
         }
       // `initialValues` pre-fills a new record — e.g. the walk-in add on the
       // attendance screen seeds the sabha's own Mandal and Area, which are right
@@ -188,6 +197,9 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
   const showSkill = fieldsConfig.skill;
   const showPhoto = fieldsConfig.photo;
   const showSamparkKaryakarta = fieldsConfig.samparkKaryakarta;
+  // PHASE 30 — Bal Mandal fields
+  const showStandard = fieldsConfig.standard;
+  const showHobby = fieldsConfig.hobby;
 
   const validate = () => {
     const errs = {};
@@ -235,6 +247,10 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       // whole write; left off entirely the contact would read as on-the-list,
       // which is right by default but wrong the moment somebody ticks it off.
       callingPool: form.callingPool !== false,
+      // PHASE 30 — Bal Mandal fields
+      standard: showStandard ? form.standard : "",
+      hobby: showHobby ? form.hobby : [],
+      hobbyOther: showHobby ? form.hobbyOther : "",
     };
     if (!isEdit) payload.id = draftId;
     const ok = await onSubmit(payload);
@@ -339,6 +355,61 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
         <div>
           <Label>Skill</Label>
           <Input value={form.skill} onChange={update("skill")} placeholder="e.g. Singing, tabla, public speaking" />
+        </div>
+      )}
+
+      {showStandard && (
+        <div>
+          <Label>Standard</Label>
+          <Select
+            value={form.standard}
+            onChange={(e) => {
+              const newStandard = e.target.value;
+              const autoMandal = getMandalForStandard(newStandard);
+              setForm((f) => ({ ...f, standard: newStandard, mandal: autoMandal }));
+            }}
+          >
+            <option value="">Select standard…</option>
+            {STANDARD_OPTIONS.map((std) => (
+              <option key={std} value={std}>{std}</option>
+            ))}
+          </Select>
+          <p className="mt-1 text-xs text-slate-400">
+            LKG/UKG/1st-4th auto-assigns Sishu Mandal, 5th-8th auto-assigns Bal Mandal.
+          </p>
+        </div>
+      )}
+
+      {showHobby && (
+        <div>
+          <Label>Hobby</Label>
+          <Select
+            multiple
+            value={form.hobby}
+            onChange={(e) => {
+              const options = Array.from(e.target.selectedOptions, (opt) => opt.value);
+              setForm((f) => ({ ...f, hobby: options }));
+            }}
+            className="h-auto min-h-[120px]"
+          >
+            {HOBBY_OPTIONS.map((h) => (
+              <option key={h} value={h}>{h}</option>
+            ))}
+            <option value="Other">Other</option>
+          </Select>
+          <p className="mt-1 text-xs text-slate-400">
+            Hold Ctrl (Windows) or Cmd (Mac) to select multiple hobbies.
+          </p>
+          {form.hobby.includes('Other') && (
+            <div className="mt-3">
+              <Label>Specify other hobby</Label>
+              <Input
+                value={form.hobbyOther}
+                onChange={(e) => setForm((f) => ({ ...f, hobbyOther: e.target.value }))}
+                placeholder="e.g. Gardening, Chess…"
+              />
+            </div>
+          )}
         </div>
       )}
 

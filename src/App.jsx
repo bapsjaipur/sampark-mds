@@ -24,6 +24,8 @@ import PadhramaniPage from "./pages/PadhramaniPage";
 import SantoSchedulePage from "./pages/SantoSchedulePage";
 import MyContactsPage from "./pages/MyContactsPage";
 import ProfilePage from "./pages/ProfilePage";
+import BalMandalDashboard from "./pages/BalMandalDashboard";
+import StandardPromotionPage from "./pages/StandardPromotionPage";
 
 // Phase 20 — landing page now comes from lib/roleView.js rather than a ladder
 // of if-statements here. The old ladder sent anyone with view_assigned_contacts
@@ -59,6 +61,8 @@ export default function App() {
                 <Route path="/my-contacts" element={<MyContactsPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/events" element={<EventsPage />} />
+                <Route path="/bal-mandal" element={<BalMandalDashboard />} />
+                <Route path="/bal-mandal/promotion" element={<StandardPromotionPage />} />
                 <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
                 <Route path="/admin/batches" element={<BatchesPage />} />
                 <Route path="/reminders" element={<RemindersDashboard />} />
