@@ -5,6 +5,18 @@ node_modules/
 .env
 
 # MacOS specific (if applicable)
-.DS_Storeevent-counter/venv/
+.DS_Store
+
+# Python virtualenvs
 venv/
-node_modules/
+event-counter/venv/
+
+# The event-counter side project (RTSP people counter). Untracked deliberately in
+# fd39b416 — it carries a 6.9 MB YOLO weights file, a local SQLite database and
+# __pycache__, none of which belong in the app repo. It was never re-ignored, so
+# the next `git add -A` would have pulled all of it back in.
+#
+# NOTE: the line above this block used to read `.DS_Storeevent-counter/venv/` —
+# `.DS_Store` had no trailing newline, so it fused with the following pattern and
+# git saw one nonsense entry instead of two rules. Keep a newline at end of file.
+event-counter/
