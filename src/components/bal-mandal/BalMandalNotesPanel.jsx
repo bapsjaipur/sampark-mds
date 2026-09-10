@@ -20,14 +20,19 @@ import { Textarea } from '../ui/Input';
 import { MessageSquare, Save } from 'lucide-react';
 
 export default function BalMandalNotesPanel({ individual }) {
-  const { volunteer } = useAuth();
+  const { volunteer, hasPermission } = useAuth();
   const { showToast } = useToast();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
 
   const existingNotes = individual?.notes || '';
-  const canEdit = volunteer?.program === 'Bal Mandal' || volunteer?.roleKey === 'admin';
+  // PHASE 32 — was `volunteer?.roleKey === 'admin'`, a field no save path
+  // writes, so an admin who is not on the Bal Mandal roster was locked out of
+  // their own notes panel. edit_contacts is what the save below actually needs —
+  // firestore.rules gates the write on it — so gate the button on the same thing.
+  const canEdit = hasPermission('edit_contacts')
+    && (volunteer?.program === 'Bal Mandal' || hasPermission('manage_users'));
 
   function startEdit() {
     setDraft('');

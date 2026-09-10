@@ -29,6 +29,7 @@
  */
 
 const admin = require('firebase-admin');
+const { volunteerRoleIds } = require('./callerAccess');
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -82,6 +83,9 @@ const DEFAULT_EMAIL_SETTINGS = {
   autoPostSabhaAdminEnabled: true,
   autoPostSabhaVolunteerEnabled: false,
   autoBirthdayEnabled: true,
+  // PHASE 33 — the weekly sabha coverage digest.
+  autoSabhaDigestEnabled: true,
+  autoSabhaDigestVolunteerEnabled: false,
   senderName: 'BAPS Jaipur MDS',
   fromAddress: '',
   dryRun: false,
@@ -121,29 +125,51 @@ async function loadRolePermissions() {
 
 /**
  * Every volunteer with a deliverable reportEmail, annotated with the
- * permissions their role grants. Used both for "who gets the admin digest" and
+ * permissions their role(s) grant. Used both for "who gets the admin digest" and
  * "which volunteer gets their own numbers".
  *
- * @returns {Promise<Array<{id, name, email, mobile, permissions, assignedAreas}>>}
+ * PHASE 21 ROLES, PHASE 33 FIX. This read `rolePerms[v.roleRef]` — the single
+ * legacy field — while every callable resolved permissions as the UNION across
+ * `roleRefs[]` (lib/callerAccess.js). A volunteer whose send_emails came from
+ * the SECOND entry of roleRefs[] therefore resolved to permissions:[] here and
+ * silently received nothing, forever, with no error anywhere: the recipient list
+ * simply came back one name short and the missing person had no way to notice
+ * except by never getting an email. `roleRef` stays as the pre-Phase-21
+ * fallback, which is exactly what volunteerRoleIds() encodes.
+ *
+ * @returns {Promise<Array<{id, name, email, mobile, permissions, roles,
+ *   assignedAreas, assignedMandals, scopeKind}>>}
  */
 async function loadMailableVolunteers() {
-  const [vSnap, rolePerms] = await Promise.all([
+  const [vSnap, rolesSnap] = await Promise.all([
     db.collection('volunteers').get(),
-    loadRolePermissions(),
+    db.collection('roles').get(),
   ]);
+
+  const roleDocs = {};
+  rolesSnap.forEach((d) => { roleDocs[d.id] = { id: d.id, ...d.data() }; });
 
   const out = [];
   vSnap.forEach((d) => {
     const v = d.data();
     if (v.isActive === false) return;
     if (!isDeliverable(v.reportEmail)) return;
+
+    const roles = volunteerRoleIds(v).map((id) => roleDocs[id]).filter(Boolean);
+    const permissions = [...new Set(roles.flatMap((r) => (Array.isArray(r.permissions) ? r.permissions : [])))];
+
     out.push({
       id: d.id,
       name: v.name || 'Volunteer',
       email: String(v.reportEmail).trim(),
       mobile: v.mobile || '',
-      permissions: rolePerms[v.roleRef] || [],
+      permissions,
+      // The role DOCUMENTS, not just their ids — the sabha digest needs
+      // scopeKind/scopeKindChosen off them to work out whose sabhas are whose.
+      roles,
       assignedAreas: Array.isArray(v.assignedAreas) ? v.assignedAreas : [],
+      assignedMandals: Array.isArray(v.assignedMandals) ? v.assignedMandals : [],
+      scopeKind: typeof v.scopeKind === 'string' ? v.scopeKind : null,
     });
   });
   return out;

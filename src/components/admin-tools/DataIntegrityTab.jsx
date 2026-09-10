@@ -15,6 +15,8 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PartyPopper, MapPin, ScanSearch } from 'lucide-react';
 import { useAllContacts } from '../../hooks/useAllContacts';
+import { useAuth } from '../../hooks/usePermissions';
+import { describeScope, SCOPE_KINDS } from '../../lib/scope';
 import { useToast } from '../../contexts/ToastContext';
 import { findDuplicatePhones, findMissingInfo, findMissingAreaInHousehold } from '../../services/integrityService';
 import { backfillMemberAreas } from '../../services/bulkService';
@@ -49,6 +51,11 @@ function DuplicateGroup({ phone, group, onDelete }) {
  */
 export default function DataIntegrityTab() {
   const [scanning, setScanning] = useState(false);
+  const { scope } = useAuth();
+  // The scan reads through useAllContacts, so it has always covered exactly the
+  // caller's scope — but the copy said "the whole contact list", which told a
+  // mandal head their 12 duplicates were the city's 12. Say which it is.
+  const scoped = !scope?.unrestricted && scope?.kind !== SCOPE_KINDS.NONE;
 
   if (!scanning) {
     return (
@@ -58,9 +65,15 @@ export default function DataIntegrityTab() {
           <p className="text-sm font-medium text-slate-800">Data integrity scan</p>
           <p className="mx-auto mt-1 max-w-md text-xs text-slate-500">
             Finds duplicate phone numbers, contacts missing a number or Mandal, and household
-            members with no Area. It has to compare every contact against every other one, so it
-            loads the whole contact list — a few thousand reads out of the day's free 50,000.
-            It doesn&apos;t run until you ask, and it&apos;s free if you already have Contacts open.
+            members with no Area.
+            {scoped ? (
+              <> It covers <span className="font-medium text-slate-600">{describeScope(scope)}</span> —
+              the same contacts you see everywhere else — and any fix it offers touches only those.</>
+            ) : (
+              <> It has to compare every contact against every other one, so it
+              loads the whole contact list — a few thousand reads out of the day&apos;s free 50,000.</>
+            )}
+            {' '}It doesn&apos;t run until you ask, and it&apos;s free if you already have Contacts open.
           </p>
         </div>
         <Button variant="accent" size="sm" onClick={() => setScanning(true)}>Run scan</Button>
@@ -90,7 +103,7 @@ function IntegrityReport({ onClose }) {
     if (!window.confirm(`Copy the household's Area onto ${missingArea.length} member(s) currently missing one? This only fills blanks — it never overwrites an area already set.`)) return;
     setBackfilling(true);
     try {
-      const { updated, skippedNoHouseholdArea } = await backfillMemberAreas();
+      const { updated, skippedNoHouseholdArea } = await backfillMemberAreas(missingArea);
       const extra = skippedNoHouseholdArea > 0 ? ` ${skippedNoHouseholdArea} skipped (their household has no Area set).` : '';
       showToast({ type: 'success', message: `Fixed ${updated} member area(s).${extra}` });
     } catch (err) {

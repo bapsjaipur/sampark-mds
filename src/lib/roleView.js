@@ -27,6 +27,74 @@ import { classifyRole, ROLE_LABELS, ROLE_BADGE_CLASSES } from '../constants/role
 const has = (perms, p) => Array.isArray(perms) && perms.includes(p);
 const hasAny = (perms, list) => list.some((p) => has(perms, p));
 
+/**
+ * Bal Mandal is a programme assignment, not a legacy role-key assignment.
+ *
+ * Roles created in Admin are identified by their permissions and can be named
+ * freely, so checking a volunteer's old `roleKey` here would reject a valid
+ * custom Admin (or a renamed Bal Mandal role). Administrators and Bal Mandal
+ * volunteers both need at least one contact/event capability that makes the
+ * dashboard useful and permits its Firestore reads.
+ */
+export function canAccessBalMandal(permissions, volunteer) {
+  const isAdministrator = hasAny(permissions, ['manage_users', 'manage_roles']);
+  const isBalMandalVolunteer = volunteer?.program === 'Bal Mandal';
+  const canWorkWithProgramme = hasAny(permissions, [
+    'view_all_contacts',
+    'view_assigned_contacts',
+    'edit_contacts',
+    'manage_events',
+    'manage_attendance',
+  ]);
+  return canWorkWithProgramme && (isAdministrator || isBalMandalVolunteer);
+}
+
+/**
+ * Standard promotion moves an entire year group up a standard, and moves 8th
+ * standard children out of Bal Mandal into Yuvak Mandal altogether. It is the
+ * single most destructive routine bulk write in the app, so it is deliberately
+ * narrower than the rest of the Bal Mandal dashboard.
+ *
+ * The original gate was `['nirdeshak','admin'].includes(volunteer?.roleKey)` —
+ * a field no save path has ever written, so the page and its execute button
+ * were dead for everyone including the Admin they were meant for. This restates
+ * the same intent in permissions, which is what roles are actually identified by:
+ *
+ *   edit_contacts               — the promotion rewrites every child's standard
+ *   manage_users | import_data  — the "programme-wide authority" discriminator
+ *
+ * That admits Admin (via manage_users) and Nirdeshak / Super Moderator (via
+ * import_data, which both templates hold), and keeps out Sanchalak, Nirikshak
+ * and SK — who hold edit_contacts but neither of the second pair. Matching the
+ * old intent matters more than being generous here: an accidental promotion is
+ * not undoable from the UI.
+ */
+export function canRunStandardPromotion(permissions, volunteer) {
+  return canAccessBalMandal(permissions, volunteer)
+    && has(permissions, 'edit_contacts')
+    && hasAny(permissions, ['manage_users', 'import_data']);
+}
+
+/**
+ * An "observer" is whoever marks a child present at a sabha — a Nirikshak or a
+ * visiting sant. Both were previously found with
+ * `where('roleKey','in',['nirikshak','sant'])`, which matched nothing: role
+ * identity lives on the ROLE document (`presetKey`), not the volunteer, and the
+ * sant preset's key is 'santo', not 'sant'.
+ *
+ * `roleDocs` is the roles collection; `roleIds` the ids this volunteer holds.
+ */
+export const OBSERVER_PRESET_KEYS = ['nirikshak', 'santo'];
+
+export function isObserverRole(role) {
+  if (!role) return false;
+  if (OBSERVER_PRESET_KEYS.includes(role.presetKey)) return true;
+  // Hand-built roles never get a presetKey, so fall back to the permission
+  // signature an observer has: they mark attendance but do not edit contacts.
+  const perms = Array.isArray(role.permissions) ? role.permissions : [];
+  return perms.includes('manage_attendance') && !perms.includes('edit_contacts');
+}
+
 // ── The full catalogue of navigable destinations ──────────────────────────────
 // `anyOf: null` means "no permission gate" (every signed-in user).
 // Ordering inside this object is irrelevant; each role picks its own order below.
@@ -84,7 +152,7 @@ const NAV = {
   },
   volunteers: {
     to: '/admin/volunteers', label: 'Volunteers', icon: UserCog,
-    anyOf: ['manage_users'],
+    anyOf: ['manage_users', 'manage_scoped_volunteers'],
   },
   areas: {
     to: '/admin/areas-mandals', label: 'Areas & Mandals', icon: MapPin,
@@ -96,7 +164,7 @@ const NAV = {
   },
   balMandal: {
     to: '/bal-mandal', label: 'Bal Mandal', icon: GraduationCap,
-    anyOf: ['manage_events'],
+    access: 'balMandal',
   },
 };
 
@@ -113,7 +181,7 @@ const LAYOUTS = {
   },
   moderator: {
     main: ['contacts', 'households', 'events', 'balMandal', 'padhramani', 'reminders', 'myContacts', 'calling'],
-    admin: ['dashboard', 'batches', 'tools'],
+    admin: ['dashboard', 'batches', 'volunteers', 'tools'],
     tabs: ['contacts', 'dashboard', 'batches', 'events'],
   },
   volunteer: {
@@ -142,18 +210,19 @@ const HOME_PATHS = {
   none: '/households',
 };
 
-function allowed(item, permissions) {
+function allowed(item, permissions, volunteer) {
   if (!item) return false;
+  if (item.access === 'balMandal') return canAccessBalMandal(permissions, volunteer);
   if (!item.anyOf) return true;
   return hasAny(permissions, item.anyOf);
 }
 
-function pick(keys, permissions) {
-  return keys.map((k) => NAV[k]).filter((item) => allowed(item, permissions));
+function pick(keys, permissions, volunteer) {
+  return keys.map((k) => NAV[k]).filter((item) => allowed(item, permissions, volunteer));
 }
 
 /**
- * getRoleView(permissions)
+ * getRoleView(permissions, volunteer)
  *
  * @returns {{
  *   key: string, label: string, badgeClass: string, homePath: string,
@@ -162,18 +231,18 @@ function pick(keys, permissions) {
  *   allItems: Array<object>
  * }}
  */
-export function getRoleView(permissions) {
+export function getRoleView(permissions, volunteer = null) {
   const key = classifyRole(permissions);
   const layout = LAYOUTS[key] || LAYOUTS.none;
 
-  const mainItems = pick(layout.main, permissions);
-  const adminItems = pick(layout.admin, permissions);
+  const mainItems = pick(layout.main, permissions, volunteer);
+  const adminItems = pick(layout.admin, permissions, volunteer);
 
   // The Santo link is additive: any role that somehow holds view_padhramani
   // without being classified as a Santo (e.g. Admin, who holds everything)
   // still gets the link, but at the end rather than as their headline item.
   const extras = [];
-  if (key !== 'santo' && allowed(NAV.santoSchedule, permissions)
+  if (key !== 'santo' && allowed(NAV.santoSchedule, permissions, volunteer)
       && !mainItems.includes(NAV.santoSchedule)) {
     extras.push(NAV.santoSchedule);
   }
@@ -184,7 +253,7 @@ export function getRoleView(permissions) {
   if (adminItems.length) sections.push({ label: 'Admin', items: adminItems });
 
   // Bottom bar: first 4 permitted tabs, de-duplicated, never empty.
-  let mobileTabs = pick(layout.tabs, permissions).slice(0, 4);
+  let mobileTabs = pick(layout.tabs, permissions, volunteer).slice(0, 4);
   if (mobileTabs.length === 0) mobileTabs = [...mainItems, ...extras].slice(0, 4);
 
   // Landing page must be a destination this role can actually reach, otherwise

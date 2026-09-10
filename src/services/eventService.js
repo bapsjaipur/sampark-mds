@@ -45,9 +45,20 @@ export async function deleteEvent(eventId) {
 /** Live subscription to all events, sorted soonest-first by date. Filtering by
  * mandal/area scope happens client-side in the component, same pattern as
  * the rest of the app (mirrors how households/individuals scoping works). */
-export function subscribeToEvents(callback) {
-  const q = query(collection(db, 'events'), orderBy('date', 'asc'));
-  return onSnapshot(q, (snap) => callback(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+export function subscribeToEvents(callback, scope = null) {
+  const events = collection(db, 'events');
+  // Firestore rules require the query itself to prove its scope. A mandal head
+  // therefore subscribes with their assigned mandal constraint rather than
+  // downloading the city calendar and hiding rows afterwards.
+  const scopedMandals = !scope?.unrestricted && scope?.kind === 'mandal'
+    ? (scope.mandals || []).filter(Boolean).slice(0, 30) : [];
+  const q = scopedMandals.length
+    ? query(events, where('mandal', 'in', scopedMandals))
+    : query(events, orderBy('date', 'asc'));
+  return onSnapshot(q, (snap) => callback(
+    snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')))
+  ));
 }
 
 /** Picks the nearest event that hasn't fully ended yet — ports
@@ -170,4 +181,3 @@ export function subscribeToAttendanceForIndividual(individualId, callback, onErr
     onError,
   );
 }
-

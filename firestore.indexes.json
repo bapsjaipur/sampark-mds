@@ -1,5 +1,14 @@
 {
   "indexes": [
+    { "collectionGroup": "events", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "mandal", "order": "ASCENDING" },
+      { "fieldPath": "date", "order": "ASCENDING" }
+    ]},
+    { "collectionGroup": "events", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "area", "order": "ASCENDING" },
+      { "fieldPath": "mandal", "order": "ASCENDING" },
+      { "fieldPath": "date", "order": "ASCENDING" }
+    ]},
     { "collectionGroup": "individuals", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "mandal", "order": "ASCENDING" },
       { "fieldPath": "dobMonthDay", "order": "ASCENDING" }

@@ -18,6 +18,8 @@ import { collection, query, where, getDocs, writeBatch, doc, serverTimestamp } f
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/usePermissions';
 import { useAreasAndMandals } from '../hooks/useAreasAndMandals';
+import { canRunStandardPromotion } from '../lib/roleView';
+import { matchesScope, writableAreas, writableMandals } from '../lib/scope';
 import { useToast } from '../contexts/ToastContext';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -26,6 +28,10 @@ import { promoteStandard } from '../constants/balMandalConfig';
 import { STANDARD_OPTIONS } from '../lib/areaMandalCodes';
 import { TrendingUp, AlertCircle, Users, ArrowRight, FileText, Download } from 'lucide-react';
 import { cn } from '../lib/cn';
+
+// The two mandals this programme covers. They stay separate in the data — see
+// MANDAL_GROUPS in src/lib/scope.js for why one team covers both.
+const PROGRAM_MANDALS = ['Bal Mandal', 'Sishu Mandal'];
 
 const WRITE_BATCH_LIMIT = 450;
 
@@ -63,7 +69,7 @@ function StandardGroup({ standard, contacts, nextStandard, willTransfer }) {
 }
 
 export default function StandardPromotionPage() {
-  const { volunteer, hasPermission } = useAuth();
+  const { volunteer, permissions, scope } = useAuth();
   const { areas } = useAreasAndMandals();
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
@@ -71,7 +77,25 @@ export default function StandardPromotionPage() {
   const [executing, setExecuting] = useState(false);
   const [completed, setCompleted] = useState(false);
 
-  const canAccess = hasPermission('manage_users') && ['nirdeshak', 'admin'].includes(volunteer?.roleKey);
+  // PHASE 32 — was `hasPermission('manage_users') && ['nirdeshak','admin']
+  // .includes(volunteer?.roleKey)`. Volunteer documents carry no `roleKey`, so
+  // this page was unreachable for everyone, admins included — it always rendered
+  // "Only Nirdeshak and Admin can access this page". canRunStandardPromotion()
+  // restates that same intent in permissions, which is what roles are actually
+  // identified by; see src/lib/roleView.js for the reasoning.
+  const canAccess = canRunStandardPromotion(permissions, volunteer);
+
+  // Which mandals and areas this volunteer may actually rewrite. Same shape the
+  // Bal Mandal dashboard uses — null from writableAreas/writableMandals means
+  // "that axis does not bind this person" (an admin), an array means those only.
+  const allowedMandals = useMemo(() => writableMandals(scope), [scope]);
+  const targetMandals = useMemo(
+    () => (allowedMandals ? PROGRAM_MANDALS.filter((m) => allowedMandals.includes(m)) : PROGRAM_MANDALS),
+    [allowedMandals],
+  );
+  const allowedAreas = useMemo(() => writableAreas(scope), [scope]);
+  const areaFilters = useMemo(() => (allowedAreas || [null]), [allowedAreas]);
+  const scopeKey = `${targetMandals.join('|')}::${areaFilters.join('|')}`;
 
   useEffect(() => {
     if (!canAccess) {
@@ -79,26 +103,54 @@ export default function StandardPromotionPage() {
       return;
     }
     loadContacts();
-  }, [canAccess]);
+  }, [canAccess, scopeKey]);
 
   async function loadContacts() {
     setLoading(true);
 
+    if (targetMandals.length === 0 || areaFilters.length === 0) {
+      setContacts([]);
+      setLoading(false);
+      return;
+    }
+
     try {
       const individualsRef = collection(db, 'individuals');
-      const q = query(
-        individualsRef,
-        where('mandal', 'in', ['Bal Mandal', 'Sishu Mandal']),
-        where('standard', 'in', STANDARD_OPTIONS)
-      );
+      // SCOPED, and it must stay that way: everything this query returns is
+      // rewritten by executePromotion() below. Before Phase 32 the page was
+      // unreachable (a dead `roleKey` gate), so nobody ever noticed that it
+      // pulled every child in the city regardless of who was asking — the day
+      // the gate was fixed, that became a scoped Nirdeshak promoting other
+      // people's areas. One query per area, exactly as the Bal Mandal dashboard
+      // does, which is also fewer reads than the city-wide version it replaces.
+      const snaps = await Promise.all(areaFilters.map((area) => getDocs(
+        area
+          ? query(
+            individualsRef,
+            where('area', '==', area),
+            where('mandal', 'in', targetMandals),
+            where('standard', 'in', STANDARD_OPTIONS),
+          )
+          : query(
+            individualsRef,
+            where('mandal', 'in', targetMandals),
+            where('standard', 'in', STANDARD_OPTIONS),
+          ),
+      )));
 
-      const snap = await getDocs(q);
-      const contactList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const contactList = snaps.flatMap((snap) => snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((c) => matchesScope(scope, { area: c.area, mandal: c.mandal })));
 
       setContacts(contactList);
     } catch (err) {
       console.error('Failed to load contacts:', err);
-      showToast({ type: 'error', message: 'Failed to load contacts' });
+      showToast({
+        type: 'error',
+        message: err?.code === 'permission-denied'
+          ? 'Firestore refused this query — the deployed rules are behind the app.'
+          : 'Failed to load contacts',
+      });
     } finally {
       setLoading(false);
     }
@@ -235,7 +287,10 @@ export default function StandardPromotionPage() {
         <div className="text-center">
           <AlertCircle className="mx-auto h-12 w-12 text-slate-300" />
           <p className="mt-3 text-sm font-medium text-slate-600">Access restricted</p>
-          <p className="mt-1 text-xs text-slate-400">Only Nirdeshak and Admin can access this page</p>
+          <p className="mt-1 text-xs text-slate-400">
+            Standard promotion needs Edit Contacts plus Manage Users or Import Contacts &amp; History —
+            the Nirdeshak, Super Moderator and Admin level.
+          </p>
         </div>
       </div>
     );

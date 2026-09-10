@@ -80,15 +80,39 @@ service cloud.firestore {
     // get() cost once per invocation, not once per field accessed. Always
     // call this exactly ONCE per allow-line (assign to a local `let c`),
     // never call it from inside a loop of independent permission checks.
+    //
+    // HARD LIMIT: a rules function may declare at most TEN `let` bindings.
+    // This one is at nine. Adding a tenth is fine; an eleventh fails the whole
+    // deploy with "Maximum allowed variable count of 10 for a given function
+    // has been reached" pointing at the closing line, not at what you added.
+    // Fold new logic into an existing ternary rather than naming a new local.
     function ctx() {
       let v = get(/databases/$(database)/documents/volunteers/$(request.auth.uid)).data;
-      let hasRole = ('roleRef' in v) && v.roleRef != null;
-      let r = hasRole ? get(/databases/$(database)/documents/roles/$(v.roleRef)).data : {};
+      // Every save path writes BOTH `roleRefs` (the real list) and `roleRef`
+      // (the primary, mirrored for this file — rules cannot loop over a list or
+      // merge permissions from several role documents, so only one can be read).
+      // The fallback covers documents that predate the mirror or were imported
+      // directly: without it such a volunteer resolves to perms:[] and is denied
+      // everything, which looks exactly like a broken role rather than a
+      // missing field.
+      let rid = (('roleRef' in v) && v.roleRef != null && v.roleRef != '') ? v.roleRef
+        : ((('roleRefs' in v) && (v.roleRefs is list) && v.roleRefs.size() > 0) ? v.roleRefs[0] : '');
+      let r = (rid != '') ? get(/databases/$(database)/documents/roles/$(rid)).data : {};
+
       // `is list` / `is string`, not just `in`: a malformed field would otherwise
       // make .size() or a comparison below raise an error, and an error in a rule
       // is a denial with no message — the hardest failure in this file to debug.
       let areas = (('assignedAreas' in v) && (v.assignedAreas is list)) ? v.assignedAreas : [];
-      let mandals = (('assignedMandals' in v) && (v.assignedMandals is list)) ? v.assignedMandals : [];
+      let mandalsRaw = (('assignedMandals' in v) && (v.assignedMandals is list)) ? v.assignedMandals : [];
+      // PHASE 32 — mandals worked by the same people. Bal Mandal and Sishu Mandal
+      // share one set of volunteers, so holding either grants both. This mirrors
+      // MANDAL_GROUPS / expandMandalGroups() in src/lib/scope.js and must be
+      // changed with it: if the client widens and this does not, the UI offers
+      // Sishu Mandal and the database refuses the write. Contacts keep their own
+      // mandal value — this widens WHO MAY SEE them, nothing else.
+      let mandals = mandalsRaw.hasAny(['Bal Mandal', 'Sishu Mandal'])
+        ? mandalsRaw.concat(['Bal Mandal', 'Sishu Mandal'])
+        : mandalsRaw;
       // The volunteer's own `scopeKind` wins when present: with SEVERAL roles
       // the UI honours the WIDEST of their shapes, and this file can only read
       // one role document, so Admin → Volunteers stamps the resolved shape on
@@ -107,10 +131,9 @@ service cloud.firestore {
       // apart from that accident. Mirrors roleStatedScopeKind() in
       // src/lib/scope.js. Every other shape is trusted either way: union is the
       // only value that was ever written by accident.
-      let rkRaw = (('scopeKind' in r) && (r.scopeKind is string)) ? r.scopeKind : '';
-      let rChosen = ('scopeKindChosen' in r) && (r.scopeKindChosen == true);
-      let rk = (rkRaw == 'union' && !rChosen) ? '' : rkRaw;
-      let stated = (vk != '') ? vk : rk;
+      let rk = (('scopeKind' in r) && (r.scopeKind is string)) ? r.scopeKind : '';
+      let stated = (vk != '') ? vk
+        : ((rk == 'union' && !(('scopeKindChosen' in r) && (r.scopeKindChosen == true))) ? '' : rk);
       return {
         'perms': ('permissions' in r) ? r.permissions : [],
         'areas': areas,
@@ -350,7 +373,20 @@ service cloud.firestore {
       return data.get('source', '') == 'history-import';
     }
 
-    function canReadIndividual(data) {
+    // READ IS NOT SCOPED, AND THAT IS DELIBERATE — read the next paragraph
+    // before "fixing" it.
+    //
+    // Firestore allows a QUERY only if it can prove every document the query
+    // could return is readable, without looking at any of them. A scope test
+    // here would therefore not filter the list — it would make every
+    // collection query in the app fail outright, because `individuals` is read
+    // as a whole collection and narrowed in the client (lib/scope.js). Scoping
+    // reads properly means moving the app to per-scope queries first.
+    //
+    // So this takes no `data`: the permission is the whole decision. Writes ARE
+    // scoped below, which is what stops a scoped volunteer from changing
+    // anything outside their territory.
+    function canReadIndividual() {
       let c = ctx();
       return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts', 'edit_contacts']);
     }
@@ -385,7 +421,7 @@ service cloud.firestore {
     }
 
     match /individuals/{individualId} {
-      allow read: if volunteerExists() && canReadIndividual(resource.data);
+      allow read: if volunteerExists() && canReadIndividual();
       allow create: if volunteerExists() && canWriteIndividual(request.resource.data);
       allow update: if volunteerExists() && canUpdateIndividual(resource.data, request.resource.data);
       allow delete: if volunteerExists() && canDeleteIndividual(resource.data);
@@ -462,14 +498,26 @@ service cloud.firestore {
     //   area, createdBy, createdAt, updatedAt   (Phase 6)
     // ---------------------------------------------------------------------
 
+    function eventScopeAllows(data, c) {
+      let inArea = ('area' in data) && data.area != null && data.area in c.areas;
+      let inMandal = ('mandal' in data) && data.mandal != null && data.mandal in c.mandals;
+      return scopeAllows(c, inArea, inMandal);
+    }
+
     function canReadEvents() {
       let c = ctx();
       return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts']);
     }
 
-    function canManageEvents() {
+    function canReadEvent(data) {
       let c = ctx();
-      return c.perms.hasAny(['manage_events']);
+      return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts']) &&
+        eventScopeAllows(data, c);
+    }
+
+    function canManageEvent(data) {
+      let c = ctx();
+      return c.perms.hasAny(['manage_events']) && eventScopeAllows(data, c);
     }
 
     // PHASE 25 — import_data may CREATE a sabha, but not edit or delete one.
@@ -480,22 +528,61 @@ service cloud.firestore {
     // are about (see canWriteIndividual). Editing and deleting existing sabhas
     // stays manage_events: an import has no business rewriting the calendar
     // that is already in place.
-    function canCreateEvents() {
+    function canCreateEvents(data) {
       let c = ctx();
-      return c.perms.hasAny(['manage_events', 'import_data']);
+      return c.perms.hasAny(['import_data']) ||
+        (c.perms.hasAny(['manage_events']) && eventScopeAllows(data, c));
     }
 
     match /events/{eventId} {
-      allow read: if volunteerExists() && canReadEvents();
-      allow create: if volunteerExists() && canCreateEvents();
-      allow update: if volunteerExists() && canManageEvents();
+      allow read: if volunteerExists() && canReadEvent(resource.data);
+      allow create: if volunteerExists() && canCreateEvents(request.resource.data);
+      // Check both versions so an in-scope event cannot be moved into another
+      // mandal by the same update.
+      allow update: if volunteerExists() &&
+        canManageEvent(resource.data) && canManageEvent(request.resource.data);
       // Undo deletes the sabhas the import created. Everything else stays
       // manage_events — an importer must not be able to remove a sabha somebody
       // organised in the app.
       allow delete: if volunteerExists() &&
-        (canManageEvents() || (canImportData() && isImported(resource.data)));
+        (canManageEvent(resource.data) || (canImportData() && isImported(resource.data)));
     }
 
+    // ---------------------------------------------------------------------
+    // sabhaSchedules/{scheduleId}: area, mandal, dayOfWeek, time,
+    //   intervalWeeks, startDate, endDate, durationMinutes, speaker, title,
+    //   active, createdBy, createdAt, updatedAt   (Phase 33)
+    //
+    // A schedule is a RULE that manufactures ordinary events/{id} documents; it
+    // grants nothing by itself. Writing one is therefore exactly as privileged
+    // as creating the sabhas it will produce, and canManageEvent() already asks
+    // the right question of a document carrying `area` and `mandal` — so it is
+    // reused verbatim rather than given a parallel set of helpers that could
+    // drift out of step with the events rules above.
+    //
+    // READ IS UNSCOPED, on purpose and for the same reason as attendance: the
+    // app subscribes to the whole collection and narrows client-side, and
+    // Firestore evaluates a list query's rule per returned document — one
+    // out-of-scope schedule would fail the entire query with permission-denied
+    // rather than filtering it out. The collection is one small document per
+    // (area, mandal) pair and holds no contact data; the events it produces
+    // remain individually scoped by the block above, which is where the real
+    // boundary is.
+    // ---------------------------------------------------------------------
+    match /sabhaSchedules/{scheduleId} {
+      allow read: if volunteerExists() && canReadEvents();
+      allow create: if volunteerExists() && canManageEvent(request.resource.data);
+      // Both versions, so a schedule cannot be dragged into a mandal the caller
+      // does not hold by the same update that saves it.
+      allow update: if volunteerExists() &&
+        canManageEvent(resource.data) && canManageEvent(request.resource.data);
+      // Deleting the rule leaves the sabhas it already created alone — the
+      // service deletes this document only, never a cascade.
+      allow delete: if volunteerExists() && canManageEvent(resource.data);
+    }
+
+    // ---------------------------------------------------------------------
+    // attendance/{eventId_individualId}: eventId, individualId, status,
     // ---------------------------------------------------------------------
     // attendance/{eventId_individualId}: eventId, individualId, status,
     //   markedBy, markedAt   (Phase 6)
@@ -522,6 +609,10 @@ service cloud.firestore {
     }
 
     match /attendance/{attendanceId} {
+      // Attendance is queried as one collection listener and Firestore cannot
+      // prove a per-row parent-event lookup for that query. The Events page
+      // filters the rows by the already scoped event list before displaying
+      // them; event documents themselves remain the access boundary above.
       allow read: if volunteerExists() && canReadEvents();
       allow create, delete: if volunteerExists() && canMarkAttendance();
       // PHASE 25 — this was `allow update: if false`, on the reasoning that

@@ -12,8 +12,16 @@
 // clear it, so "Called 468" only ever went up. The reset lives behind the button
 // in the header; see components/sampark/ResetRoundModal.jsx for what it does and,
 // more importantly, what it refuses to touch.
+// PHASE 31 — SCOPE. This page built its own `individuals` query, area-only, from
+// `assignedAreas`. Two consequences, both bad: an admin paid for a second listener
+// that duplicated Contacts', and a MANDAL-scoped Super Moderator (who has no
+// assigned areas at all — their territory is a mandal across every area) produced
+// no spec, so every tile read 0 with nothing on screen to say why. It now uses the
+// same buildIndividualSpecs() and the same canonical scope object as Contacts, so
+// the numbers cover exactly the people that volunteer is responsible for and cost
+// nothing when Contacts is already open.
 import { useEffect, useMemo, useState } from 'react';
-import { collection, query, where, orderBy } from 'firebase/firestore';
+import { collection } from 'firebase/firestore';
 import { RotateCcw } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { computeOverviewStats, computeVolunteerStats, filterInScope } from '../services/statsService';
@@ -22,54 +30,56 @@ import { useAuth } from '../hooks/usePermissions';
 import RequirePermission from '../components/RequirePermission';
 import { useCallOutcomes } from '../hooks/useCallOutcomes';
 import { useSharedCollection } from '../hooks/useSharedCollection';
+import { buildIndividualSpecs } from '../hooks/useAllContacts';
 import { useVolunteers } from '../hooks/useVolunteers';
+import { describeScope, SCOPE_KINDS } from '../lib/scope';
 import ResetRoundModal from '../components/sampark/ResetRoundModal';
 import { Card } from '../components/ui/Card';
 
 const BATCH_SPEC = [{ key: 'batches', source: 'batches', build: () => collection(db, 'batches') }];
 
 function AdminDashboardInner() {
-  const { permissions, assignedAreas, assignedMandals } = useAuth();
+  const { scope } = useAuth();
   const { colorClasses: statusColorClasses } = useCallOutcomes();
   const [householdIds, setHouseholdIds] = useState([]);
   const [resetOpen, setResetOpen] = useState(false);
 
-  const unscoped = permissions.includes('view_all_contacts');
-  const areasKey = (assignedAreas || []).join(',');
+  const unscoped = scope.unrestricted;
+  const areasKey = (scope.areas || []).join(',');
+  const mandalsKey = (scope.mandals || []).join(',');
 
-  // Area-scoped volunteers only load their area's individuals; admins load all.
-  // No areas assigned yet → no spec at all, which shows empty stats without
-  // spending a read to discover that.
-  const indSpecs = useMemo(() => {
-    const col = collection(db, 'individuals');
-    if (unscoped) {
-      return [{ key: 'individuals|all', source: 'individuals', build: () => query(col, orderBy('name')) }];
-    }
-    const areas = (assignedAreas || []).slice(0, 30);
-    if (!areas.length) return [];
-    return [{
-      key: `individuals|area|${areas.join(',')}`,
-      source: 'individuals (area)',
-      build: () => query(col, where('area', 'in', areas)),
-    }];
-  }, [unscoped, areasKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Same specs, same keys, as useAllContacts — so this is free whenever Contacts
+  // is already open, and a mandal head gets a `where('mandal','in',[…])` that bills
+  // only their own members instead of the whole collection.
+  const indSpecs = useMemo(
+    () => buildIndividualSpecs(scope),
+    [scope.unrestricted, scope.kind, scope.empty, areasKey, mandalsKey], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   const { rows: individuals, loading } = useSharedCollection(indSpecs);
   const { volunteers } = useVolunteers();
   const { rows: batches } = useSharedCollection(BATCH_SPEC);
 
-  useEffect(() => {
-    if (unscoped) { setHouseholdIds([]); return; }
-    getHouseholdIdsForAreas(assignedAreas || []).then(setHouseholdIds);
-  }, [unscoped, areasKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Only an AREA-ish scope needs the household lookup: it resolves the area of a
+  // member whose own `area` field is still blank. A MANDAL scope reads `mandal`
+  // straight off the individual, so spending the reads would buy nothing.
+  const needsHouseholdIds = !unscoped
+    && scope.kind !== SCOPE_KINDS.MANDAL
+    && scope.kind !== SCOPE_KINDS.NONE
+    && (scope.areas || []).length > 0;
 
-  const scope = useMemo(() => ({ unscoped, mandals: assignedMandals || [], householdIds, areas: assignedAreas || [] }), [unscoped, assignedMandals, householdIds, assignedAreas]);
-  const overview = useMemo(() => computeOverviewStats(individuals, scope), [individuals, scope]);
-  const volunteerStats = useMemo(() => computeVolunteerStats(individuals, batches, volunteers, scope), [individuals, batches, volunteers, scope]);
+  useEffect(() => {
+    if (!needsHouseholdIds) { setHouseholdIds([]); return; }
+    getHouseholdIdsForAreas(scope.areas || []).then(setHouseholdIds);
+  }, [needsHouseholdIds, areasKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const statsScope = useMemo(() => ({ ...scope, householdIds }), [scope, householdIds]);
+  const overview = useMemo(() => computeOverviewStats(individuals, statsScope), [individuals, statsScope]);
+  const volunteerStats = useMemo(() => computeVolunteerStats(individuals, batches, volunteers, statsScope), [individuals, batches, volunteers, statsScope]);
   // The exact contacts these numbers are about, and therefore the only ones the
   // reset is allowed to clear. Same predicate computeOverviewStats uses, so the
   // count in the modal can never disagree with the count on the card.
-  const scopedIndividuals = useMemo(() => filterInScope(individuals, scope), [individuals, scope]);
+  const scopedIndividuals = useMemo(() => filterInScope(individuals, statsScope), [individuals, statsScope]);
 
   const pct = overview.total ? Math.round((overview.called / overview.total) * 100) : 0;
   const interested = (overview.statusBreakdown['Interested'] || 0) + (overview.statusBreakdown['Already Volunteer'] || 0);
@@ -82,13 +92,15 @@ function AdminDashboardInner() {
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8 space-y-6 sm:space-y-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">{unscoped ? 'Admin Dashboard' : 'Area Dashboard'}</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">
+            {unscoped ? 'Admin Dashboard' : scope.kind === SCOPE_KINDS.MANDAL ? 'Mandal Dashboard' : 'Area Dashboard'}
+          </h1>
           <p className="text-sm text-slate-400">
             {unscoped
               ? 'Live overview across all areas and Mandals'
-              : assignedAreas?.length
-                ? `Showing stats for: ${assignedAreas.join(', ')}`
-                : 'No areas assigned to your account yet'}
+              : scope.empty
+                ? 'No areas or mandals assigned to your account yet'
+                : `Showing stats for: ${describeScope(scope)}`}
           </p>
         </div>
 
@@ -177,7 +189,7 @@ function AdminDashboardInner() {
         open={resetOpen}
         onClose={() => setResetOpen(false)}
         individuals={scopedIndividuals}
-        scopeLabel={unscoped ? '' : [...(assignedAreas || []), ...(assignedMandals || [])].join(', ')}
+        scopeLabel={unscoped ? '' : describeScope(scope)}
       />
     </div>
   );

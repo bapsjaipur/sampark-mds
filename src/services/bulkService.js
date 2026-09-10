@@ -2,7 +2,7 @@
 // Phase 16 — bulk delete, for undoing accidental imports quickly. Both
 // functions chunk into batches of 400 (Firestore's per-batch write limit).
 
-import { collection, doc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, documentId, query, where, serverTimestamp } from 'firebase/firestore';
 // PHASE 24 — metered drop-ins; identical signatures, they just count what they
 // spend. See src/lib/fsMetered.js.
 import { writeBatch, getDocs } from '../lib/fsMetered';
@@ -18,31 +18,41 @@ function chunk(arr, size = 400) {
  * auto-inherit fix saved with a blank `area`. This finds every individual
  * that has a `householdId` but an empty `area`, and copies the parent
  * household's `area` onto it. Households that themselves have no area, and
- * members already carrying an area, are left untouched. Self-fetches both
- * collections (same one-pass approach as bulkDeleteHouseholdsCascade) so it
- * can run from any admin screen without needing them preloaded.
+ * members already carrying an area, are left untouched.
+ *
+ * PHASE 31 — TAKES THE CONTACTS TO FIX. It used to getDocs() the whole
+ * `individuals` AND `households` collections and write to every match it found
+ * anywhere. On the Data Integrity screen that meant a mandal-scoped Super
+ * Moderator saw "Fix missing areas (3)" — counted from their own scoped list —
+ * and the button silently repaired all 3,100 contacts in the city, editing
+ * mandals they cannot even read. The caller now passes the exact rows the count
+ * came from, so the write set and the number on the button are the same set by
+ * construction, and only the households those rows belong to are fetched
+ * (30 at a time, Firestore's `in` cap) rather than all ~420.
  *
  * Returns { updated, skippedNoHouseholdArea } for a user-facing summary. */
-export async function backfillMemberAreas() {
-  const [householdsSnap, individualsSnap] = await Promise.all([
-    getDocs(collection(db, 'households')),
-    getDocs(collection(db, 'individuals')),
-  ]);
+export async function backfillMemberAreas(candidates = []) {
+  const targets = (candidates || []).filter((c) => c?.id && c?.householdId);
+  if (!targets.length) return { updated: 0, skippedNoHouseholdArea: 0 };
 
+  const householdIds = [...new Set(targets.map((c) => c.householdId))];
   const areaByHousehold = new Map();
-  householdsSnap.forEach((d) => areaByHousehold.set(d.id, (d.data().area || '').trim()));
+  for (const group of chunk(householdIds, 30)) {
+    const snap = await getDocs(query(collection(db, 'households'), where(documentId(), 'in', group)));
+    snap.forEach((d) => areaByHousehold.set(d.id, (d.data().area || '').trim()));
+  }
 
   const toFix = [];
   let skippedNoHouseholdArea = 0;
-  individualsSnap.forEach((d) => {
-    const data = d.data();
-    const hasHousehold = Boolean(data.householdId);
-    const missingArea = !data.area || !String(data.area).trim();
-    if (!hasHousehold || !missingArea) return;
-    const householdArea = areaByHousehold.get(data.householdId);
-    if (!householdArea) { skippedNoHouseholdArea += 1; return; } // household has no area to copy
-    toFix.push({ id: d.id, area: householdArea });
-  });
+  for (const c of targets) {
+    // Re-check the blank here rather than trusting the caller: the list may have
+    // been on screen a while, and overwriting an area someone has since set is
+    // exactly what this promises never to do.
+    if (c.area && String(c.area).trim()) continue;
+    const householdArea = areaByHousehold.get(c.householdId);
+    if (!householdArea) { skippedNoHouseholdArea += 1; continue; } // household has no area to copy
+    toFix.push({ id: c.id, area: householdArea });
+  }
 
   for (const group of chunk(toFix)) {
     const batch = writeBatch(db);

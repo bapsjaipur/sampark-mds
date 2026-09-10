@@ -3,7 +3,7 @@
   "description": "Cloud Functions for BAPS Jaipur MDS",
   "main": "index.js",
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "dependencies": {
     "archiver": "^8.0.0",

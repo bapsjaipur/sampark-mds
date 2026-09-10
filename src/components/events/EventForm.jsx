@@ -1,43 +1,98 @@
 // src/components/events/EventForm.jsx — Attio redesign.
 // PHASE 29 — Sabha Duration + Speaker fields for both Yuvak and Bal Mandal events.
-// Speaker has autocomplete searching all volunteers (not just Bal Mandal), but also accepts free text.
-import { useState, useMemo } from 'react';
+// Speaker has autocomplete searching volunteers, but also accepts free text.
+//
+// PHASE 31 — a scoped creator (Super Moderator) now sees the WHOLE mandal list
+// with the ones outside their territory greyed out, rather than a list cut down
+// to theirs. Two reasons: a head over both Bal and Sishu Mandal must plainly see
+// both of theirs offered, and a truncated list looks like a broken dropdown
+// rather than an enforced boundary. The speaker autocomplete is narrowed the
+// same way — a mandal head searching "Ramesh" wants their own karyakartas, not
+// every Ramesh in Jaipur.
+import { useState, useMemo, useEffect } from 'react';
 import { AreaSelect, MandalSelect } from '../AreaMandalSelect';
 import { Input, Label, FieldError } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { useVolunteers } from '../../hooks/useVolunteers';
+import { useAuth } from '../../hooks/usePermissions';
+import { useAreasAndMandals } from '../../hooks/useAreasAndMandals';
+import { filterVolunteersByScope } from '../../lib/scope';
 
 const emptyForm = { title: '', date: '', time: '', durationMinutes: '', speaker: '', mandal: '', area: '' };
 const selectClass = "h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300";
 
-export default function EventForm({ event, areas = [], onSubmit, onCancel }) {
+export default function EventForm({ event, areas = [], onSubmit, onCancel, allowedMandals = null }) {
   const isEdit = Boolean(event);
   const { volunteers } = useVolunteers();
+  const { scope } = useAuth();
+  const { mandals } = useAreasAndMandals();
+  // An ARRAY means the mandal axis binds this creator — including an empty one,
+  // which is a Super Moderator with no mandals assigned yet. Treating empty as
+  // "unrestricted" (the length > 0 test alone) would hand exactly that person the
+  // whole city's mandal list, so the two cases are kept apart.
+  const mandalRestricted = Array.isArray(allowedMandals);
+  const noMandalAssigned = mandalRestricted && allowedMandals.length === 0;
+  const mustChooseAssignedMandal = mandalRestricted && allowedMandals.length > 0;
+  // Bal Mandal is the sabha created most often, so it is the default whenever it
+  // is within reach. A scoped creator who does NOT hold Bal Mandal still gets a
+  // real default — their first assigned mandal — rather than a blank they have
+  // to notice and fix before the form will submit.
+  const defaultMandal = useMemo(() => {
+    const pool = mustChooseAssignedMandal
+      ? allowedMandals
+      : (mandals || []).map((m) => m.name).filter(Boolean);
+    const bal = pool.find((name) => (name || '').toLowerCase() === 'bal mandal');
+    if (bal) return bal;
+    return mustChooseAssignedMandal ? (pool[0] || '') : '';
+  }, [allowedMandals, mustChooseAssignedMandal, mandals]);
   const [form, setForm] = useState(() =>
     isEdit
       ? { title: event.title || '', date: event.date || '', time: event.time || '', durationMinutes: event.durationMinutes || '', speaker: event.speaker || '', mandal: event.mandal || '', area: event.area || '' }
-      : emptyForm
+      : { ...emptyForm }
   );
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [showSpeakerSuggestions, setShowSpeakerSuggestions] = useState(false);
+  const [mandalTouched, setMandalTouched] = useState(false);
+
+  // Preselect the default mandal for a new event once the reference list loads,
+  // unless the user has already picked one.
+  useEffect(() => {
+    if (isEdit || mandalTouched) return;
+    if (defaultMandal && !form.mandal) {
+      setForm((prev) => ({ ...prev, mandal: defaultMandal }));
+    }
+  }, [isEdit, mandalTouched, defaultMandal, form.mandal]);
 
   const update = (field) => (e) => setForm((prev) => ({ ...prev, [field]: e.target.value }));
 
-  // Filter all volunteers for speaker autocomplete, matching typed text
+  // Speaker autocomplete draws only on volunteers inside the creator's scope.
+  // Unrestricted admins keep the full roster.
+  const speakerPool = useMemo(
+    () => filterVolunteersByScope(volunteers, scope),
+    [volunteers, scope],
+  );
+
   const speakerSuggestions = useMemo(() => {
     if (!form.speaker.trim()) return [];
     const q = form.speaker.toLowerCase();
-    return volunteers
+    return speakerPool
       .filter((v) => (v.name || '').toLowerCase().includes(q))
       .slice(0, 8);
-  }, [volunteers, form.speaker]);
+  }, [speakerPool, form.speaker]);
 
   function validate() {
     const errs = {};
     if (!form.title.trim()) errs.title = 'Title is required.';
     if (!form.date) errs.date = 'Date is required.';
     if (!form.time) errs.time = 'Time is required.';
+    if (mustChooseAssignedMandal && !form.mandal) errs.mandal = 'Choose one of your assigned mandals.';
+    // Also catches an edit that would move an event OUT of the creator's
+    // territory — the greyed-out option can't be picked, but an event already
+    // saved under another mandal would otherwise be re-saved there.
+    else if (mustChooseAssignedMandal && !allowedMandals.includes(form.mandal)) {
+      errs.mandal = `${form.mandal} isn't assigned to you.`;
+    }
     setErrors(errs);
     return Object.keys(errs).length === 0;
   }
@@ -100,7 +155,30 @@ export default function EventForm({ event, areas = [], onSubmit, onCancel }) {
         </div>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <div><Label>Mandal (leave blank for all)</Label><MandalSelect value={form.mandal} onChange={update('mandal')} className={selectClass} allowBlank /></div>
+        <div>
+          <Label required={mustChooseAssignedMandal}>{mandalRestricted ? 'Mandal' : 'Mandal (leave blank for all)'}</Label>
+          <MandalSelect
+            value={form.mandal}
+            onChange={(e) => { setMandalTouched(true); update('mandal')(e); }}
+            className={selectClass}
+            allowBlank={!mustChooseAssignedMandal}
+            allowed={allowedMandals}
+          />
+          {mustChooseAssignedMandal && (
+            <p className="mt-1 text-xs text-slate-400">
+              {allowedMandals.length > 1
+                ? `You can create sabhas for ${allowedMandals.join(' and ')}. The rest are greyed out.`
+                : `Only ${allowedMandals[0]} is assigned to you. The rest are greyed out.`}
+            </p>
+          )}
+          {noMandalAssigned && (
+            <p className="mt-1 text-xs text-amber-600">
+              No mandal is assigned to you yet, so there is nothing to file this sabha under.
+              Ask an admin to set your assigned mandals.
+            </p>
+          )}
+          <FieldError>{errors.mandal}</FieldError>
+        </div>
         <div><Label>Area (leave blank for all)</Label><AreaSelect value={form.area} onChange={update('area')} className={selectClass} allowBlank /></div>
       </div>
       <div className="flex justify-end gap-2 pt-2">

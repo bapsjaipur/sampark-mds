@@ -5,6 +5,31 @@
 // Accessible to Nirdeshak, Sanchalak, Nirikshak, SK (area-scoped), and Admin.
 // Shows real-time statistics for children's program management: standard
 // breakdown, SK workload, promotion preview, attendance trends, and notes activity.
+//
+// PHASE 32 — WHY EVERY METRIC READ ZERO.
+//
+// Two independent faults, one of which hid the other:
+//
+//   1. Both queries lived in ONE try/catch and `setContacts` came AFTER the
+//      events query. The events query always failed, so the contacts — which
+//      had loaded perfectly — were thrown away with it. That is why the page
+//      showed 0 rather than "contacts fine, sabhas missing".
+//   2. Both queries were hard-coded to `mandal in ['Bal Mandal','Sishu Mandal']`
+//      with no area narrowing. Rules are not filters: Firestore refuses a list
+//      query outright if any document it returns fails the rule, and
+//      canReadEvent() checks `data.mandal in c.mandals` per document. A
+//      volunteer assigned only Bal Mandal was therefore denied the whole events
+//      query on account of the Sishu Mandal rows. Same story on the area axis
+//      for an area-scoped Sanchalak.
+//
+// The fix is to ask only for what this volunteer is allowed to be given: the
+// program mandals that are actually in their scope, one area at a time when the
+// area axis binds them. That also costs FEWER reads than the old city-wide
+// query, because a scoped volunteer no longer pulls documents that were only
+// going to be filtered out on the client.
+//
+// The two loads are now independent, so a sabha problem can no longer blank out
+// the contact metrics — it reports itself in a banner instead.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useState, useEffect, useMemo } from 'react';
@@ -12,6 +37,8 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/usePermissions';
 import { useAreasAndMandals } from '../hooks/useAreasAndMandals';
+import { matchesScope, writableAreas, writableMandals } from '../lib/scope';
+import { canAccessBalMandal } from '../lib/roleView';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -21,6 +48,20 @@ import BalMandalBatchGenerator from '../components/bal-mandal/BalMandalBatchGene
 import { Users, GraduationCap, UserCheck, Calendar, TrendingUp, AlertCircle, Activity, MessageSquare, Award, Target } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { STANDARD_OPTIONS } from '../lib/areaMandalCodes';
+
+// The two mandals this programme covers. They stay separate everywhere in the
+// data — see MANDAL_GROUPS in src/lib/scope.js for why one team covers both.
+const PROGRAM_MANDALS = ['Bal Mandal', 'Sishu Mandal'];
+
+function describeQueryError(err) {
+  if (err?.code === 'permission-denied') {
+    return 'Firestore refused this query. The deployed rules are behind the app — run: firebase deploy --only firestore:rules';
+  }
+  if (err?.code === 'failed-precondition') {
+    return 'This query needs an index that has not been created yet — run: firebase deploy --only firestore:indexes';
+  }
+  return err?.message || 'Could not load.';
+}
 
 function MetricCard({ icon: Icon, label, value, sub, tone = 'slate', badge }) {
   const TONES = {
@@ -48,78 +89,121 @@ function MetricCard({ icon: Icon, label, value, sub, tone = 'slate', badge }) {
 }
 
 export default function BalMandalDashboard() {
-  const { volunteer, hasPermission } = useAuth();
+  const { volunteer, permissions, scope } = useAuth();
   const { areas } = useAreasAndMandals();
   const [loading, setLoading] = useState(true);
   const [contacts, setContacts] = useState([]);
   const [events, setEvents] = useState([]);
   const [selectedArea, setSelectedArea] = useState('all');
+  const [contactError, setContactError] = useState('');
+  const [eventError, setEventError] = useState('');
 
-  const canAccess = hasPermission('manage_events') &&
-    ['nirdeshak', 'sanchalak', 'nirikshak', 'sk', 'admin'].includes(volunteer?.roleKey);
+  const canAccess = canAccessBalMandal(permissions, volunteer);
 
-  const availableAreas = useMemo(() => {
-    if (volunteer?.roleKey === 'admin' || volunteer?.roleKey === 'nirdeshak') {
-      return areas;
-    }
-    if (volunteer?.assignedAreas?.length) {
-      return areas.filter(a => volunteer.assignedAreas.includes(a.name));
-    }
-    return [];
-  }, [areas, volunteer]);
+  // PHASE 31 — was a literal `scope.kind === 'mandal'` test, which fails open
+  // for UNION (the kind a volunteer holding both an area and a mandal role
+  // resolves to) and closed for INTERSECT. writableAreas() answers the actual
+  // question — does the area axis bind this person — in one place.
+  const allowedAreas = useMemo(() => writableAreas(scope), [scope]);
+  const availableAreas = useMemo(
+    () => (allowedAreas ? areas.filter((a) => allowedAreas.includes(a.name)) : areas),
+    [areas, allowedAreas],
+  );
+
+  // Only the programme mandals this volunteer may actually read. Asking for one
+  // they are not assigned is what got the whole query refused.
+  const allowedMandals = useMemo(() => writableMandals(scope), [scope]);
+  const targetMandals = useMemo(
+    () => (allowedMandals ? PROGRAM_MANDALS.filter((m) => allowedMandals.includes(m)) : PROGRAM_MANDALS),
+    [allowedMandals],
+  );
+
+  // One entry per query to run. `null` means "no area filter" — correct only
+  // when the area axis does not bind this volunteer, i.e. an admin or a mandal
+  // head who works the whole city.
+  const areaFilters = useMemo(() => {
+    if (selectedArea !== 'all') return [selectedArea];
+    return allowedAreas ? allowedAreas : [null];
+  }, [selectedArea, allowedAreas]);
+
+  const scopeKey = `${targetMandals.join('|')}::${areaFilters.join('|')}`;
 
   useEffect(() => {
     if (!canAccess) {
       setLoading(false);
       return;
     }
-    loadData();
-  }, [canAccess, selectedArea]);
+    let cancelled = false;
+    loadData(() => cancelled);
+    return () => { cancelled = true; };
+    // scopeKey collapses scope + area selection into one primitive, so this does
+    // not re-fire on every render just because useAuth handed back a new object.
+  }, [canAccess, scopeKey]);
 
-  async function loadData() {
+  async function loadData(isCancelled) {
     setLoading(true);
+    setContactError('');
+    setEventError('');
 
-    try {
-      // Load Bal Mandal contacts
-      const individualsRef = collection(db, 'individuals');
-      let contactQuery = query(
-        individualsRef,
-        where('mandal', 'in', ['Bal Mandal', 'Sishu Mandal'])
-      );
-
-      if (selectedArea !== 'all') {
-        contactQuery = query(
-          individualsRef,
-          where('mandal', 'in', ['Bal Mandal', 'Sishu Mandal']),
-          where('area', '==', selectedArea)
-        );
-      }
-
-      const contactSnap = await getDocs(contactQuery);
-      const contactList = contactSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-      // Load recent Bal Mandal events (last 90 days)
-      const eventsRef = collection(db, 'events');
-      const ninetyDaysAgo = new Date();
-      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-      const dateStr = ninetyDaysAgo.toISOString().slice(0, 10);
-
-      const eventQuery = query(
-        eventsRef,
-        where('mandal', 'in', ['Bal Mandal', 'Sishu Mandal']),
-        where('date', '>=', dateStr)
-      );
-
-      const eventSnap = await getDocs(eventQuery);
-      const eventList = eventSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-      setContacts(contactList);
-      setEvents(eventList);
-    } catch (err) {
-      console.error('Failed to load dashboard data:', err);
-    } finally {
+    if (targetMandals.length === 0 || areaFilters.length === 0) {
+      setContacts([]);
+      setEvents([]);
       setLoading(false);
+      return;
     }
+
+    // Both loads run independently and are awaited together: a failure in one
+    // no longer discards the other's results.
+    const [contactList, eventList] = await Promise.all([
+      loadContacts().catch((err) => {
+        console.error('Failed to load Bal Mandal contacts:', err);
+        setContactError(describeQueryError(err));
+        return null;
+      }),
+      loadEvents().catch((err) => {
+        console.error('Failed to load Bal Mandal sabhas:', err);
+        setEventError(describeQueryError(err));
+        return null;
+      }),
+    ]);
+
+    if (isCancelled()) return;
+    setContacts(contactList || []);
+    setEvents(eventList || []);
+    setLoading(false);
+  }
+
+  async function loadContacts() {
+    const ref = collection(db, 'individuals');
+    const snaps = await Promise.all(areaFilters.map((area) => getDocs(
+      area
+        ? query(ref, where('area', '==', area), where('mandal', 'in', targetMandals))
+        : query(ref, where('mandal', 'in', targetMandals)),
+    )));
+
+    // The queries are already narrowed to readable ground, but an INTERSECT
+    // scope needs both axes checked together and no query can express AND
+    // across two assignment lists.
+    return snaps.flatMap((snap) => snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .filter((c) => matchesScope(scope, { area: c.area, mandal: c.mandal })));
+  }
+
+  async function loadEvents() {
+    const ref = collection(db, 'events');
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    const dateStr = ninetyDaysAgo.toISOString().slice(0, 10);
+
+    const snaps = await Promise.all(areaFilters.map((area) => getDocs(
+      area
+        ? query(ref, where('area', '==', area), where('mandal', 'in', targetMandals), where('date', '>=', dateStr))
+        : query(ref, where('mandal', 'in', targetMandals), where('date', '>=', dateStr)),
+    )));
+
+    return snaps.flatMap((snap) => snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .filter((e) => matchesScope(scope, { area: e.area, mandal: e.mandal })));
   }
 
   const metrics = useMemo(() => {
@@ -209,6 +293,50 @@ export default function BalMandalDashboard() {
           <VCFExportPanel contacts={contacts} label="bal-mandal-contacts" />
         </div>
       </div>
+
+      {(contactError || eventError || targetMandals.length === 0 || areaFilters.length === 0) && (
+        <div className="space-y-2">
+          {targetMandals.length === 0 && (
+            <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <p className="text-xs text-amber-800">
+                Neither Bal Mandal nor Sishu Mandal is in your assigned mandals, so there is nothing to
+                count here. Ask an admin to add one on Admin → Volunteers.
+              </p>
+            </div>
+          )}
+          {areaFilters.length === 0 && (
+            <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <p className="text-xs text-amber-800">
+                No area is assigned to you yet, so no contacts can be listed. Ask an admin to set your
+                assigned areas.
+              </p>
+            </div>
+          )}
+          {contactError && (
+            <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-red-800">Contacts could not be loaded</p>
+                <p className="mt-0.5 break-words text-xs text-red-700">{contactError}</p>
+              </div>
+              <Button variant="ghost" onClick={() => loadData(() => false)}>Retry</Button>
+            </div>
+          )}
+          {eventError && (
+            <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-amber-800">
+                  Sabha metrics unavailable — contact metrics below are still accurate
+                </p>
+                <p className="mt-0.5 break-words text-xs text-amber-700">{eventError}</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {loading ? (
         <div className="flex h-[40vh] items-center justify-center">

@@ -72,6 +72,66 @@ function byName(a, b) {
 }
 
 /**
+ * buildIndividualSpecs(scope, { limitCount })
+ *
+ * The `individuals` query shapes for a given scope, as useSharedCollection specs.
+ *
+ * Exported because the Admin dashboard needs the SAME queries under the SAME keys.
+ * It used to build its own, area-only — which billed a second listener for an
+ * admin, and returned nothing at all for a MANDAL-scoped Super Moderator (no
+ * assignedAreas → no spec → every tile read 0 with no error to explain it).
+ * Sharing the builder makes the dashboard free whenever Contacts is already open,
+ * and makes it impossible for the two screens to disagree about who is in scope.
+ */
+export function buildIndividualSpecs(scope, { limitCount = null } = {}) {
+  const col = collection(db, "individuals");
+
+  if (scope?.unrestricted) {
+    const key = limitCount ? `individuals|all|${limitCount}` : "individuals|all";
+    return [{
+      key,
+      source: "individuals",
+      build: () => (limitCount
+        ? query(col, orderBy("name"), limit(limitCount))
+        : query(col, orderBy("name"))),
+    }];
+  }
+
+  // No contact access, or a scoped role whose territory has not been assigned
+  // yet: matches nothing, and opening a listener would cost reads to prove it.
+  if (!scope || scope.kind === SCOPE_KINDS.NONE || scope.empty) return [];
+
+  const areas = (scope.areas || []).slice(0, IN_LIMIT);
+  const mandals = (scope.mandals || []).slice(0, IN_LIMIT);
+  const areaSpec = areas.length ? {
+    key: `individuals|area|${areas.join(",")}`,
+    source: "individuals (area)",
+    build: () => query(col, where("area", "in", areas)),
+  } : null;
+  const mandalSpec = mandals.length ? {
+    key: `individuals|mandal|${mandals.join(",")}`,
+    source: "individuals (mandal)",
+    build: () => query(col, where("mandal", "in", mandals)),
+  } : null;
+
+  switch (scope.kind) {
+    case SCOPE_KINDS.AREA:
+      return areaSpec ? [areaSpec] : [];
+    case SCOPE_KINDS.MANDAL:
+      return mandalSpec ? [mandalSpec] : [];
+    case SCOPE_KINDS.INTERSECT:
+      // Both axes must match, so either one can be the server-side half and the
+      // other is applied by matchesScope at the call site. The area axis is chosen
+      // because it is the same field useHouseholds narrows on, which keeps the two
+      // lists on a page consistent with each other.
+      return areaSpec ? [areaSpec] : (mandalSpec ? [mandalSpec] : []);
+    case SCOPE_KINDS.UNION:
+    default:
+      return [areaSpec, mandalSpec].filter(Boolean);
+  }
+}
+
+/**
  * @param {{ pageSize?: number }} [opts] — pass a pageSize (e.g. 20) to paginate
  *   the unrestricted list via a growing-limit listener. A SCOPED list ignores it:
  *   its query has no orderBy (see the header), so a limit would return an
@@ -96,55 +156,10 @@ export function useAllContacts({ pageSize } = {}) {
   const areasKey = (scope.areas || []).join(",");
   const mandalsKey = (scope.mandals || []).join(",");
 
-  const specs = useMemo(() => {
-    const col = collection(db, "individuals");
-
-    if (isViewAll) {
-      const key = limitCount ? `individuals|all|${limitCount}` : "individuals|all";
-      return [{
-        key,
-        source: "individuals",
-        build: () => (limitCount
-          ? query(col, orderBy("name"), limit(limitCount))
-          : query(col, orderBy("name"))),
-      }];
-    }
-
-    // No contact access, or a scoped role whose territory has not been assigned
-    // yet: matches nothing, and opening a listener would cost reads to prove it.
-    // scope.empty stays distinguishable from "the collection is empty" at the
-    // call site.
-    if (scope.kind === SCOPE_KINDS.NONE || scope.empty) return [];
-
-    const areas = (scope.areas || []).slice(0, IN_LIMIT);
-    const mandals = (scope.mandals || []).slice(0, IN_LIMIT);
-    const areaSpec = areas.length ? {
-      key: `individuals|area|${areas.join(",")}`,
-      source: "individuals (area)",
-      build: () => query(col, where("area", "in", areas)),
-    } : null;
-    const mandalSpec = mandals.length ? {
-      key: `individuals|mandal|${mandals.join(",")}`,
-      source: "individuals (mandal)",
-      build: () => query(col, where("mandal", "in", mandals)),
-    } : null;
-
-    switch (scope.kind) {
-      case SCOPE_KINDS.AREA:
-        return areaSpec ? [areaSpec] : [];
-      case SCOPE_KINDS.MANDAL:
-        return mandalSpec ? [mandalSpec] : [];
-      case SCOPE_KINDS.INTERSECT:
-        // Both axes must match, so either one can be the server-side half and the
-        // other is applied by matchesScope below. The area axis is chosen because
-        // it is the same field useHouseholds narrows on, which keeps the two lists
-        // on a page consistent with each other.
-        return areaSpec ? [areaSpec] : (mandalSpec ? [mandalSpec] : []);
-      case SCOPE_KINDS.UNION:
-      default:
-        return [areaSpec, mandalSpec].filter(Boolean);
-    }
-  }, [isViewAll, scope.kind, scope.empty, areasKey, mandalsKey, limitCount]); // eslint-disable-line react-hooks/exhaustive-deps
+  const specs = useMemo(
+    () => buildIndividualSpecs(scope, { limitCount }),
+    [isViewAll, scope.kind, scope.empty, areasKey, mandalsKey, limitCount], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   useEffect(() => {
     const over = Math.max((scope.areas || []).length, (scope.mandals || []).length);

@@ -20,13 +20,14 @@
 // `doc(collection(db,'individuals'))` regardless of whether Photo ends up
 // being asked for this Mandal, so the id is stable and ready the moment the
 // Photo field *is* shown (e.g. if the person switches Mandal mid-form).
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { doc, collection, getDocs, query, orderBy } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { useAuth } from "../../hooks/usePermissions";
 import PhotoUploader from "../photo/PhotoUploader";
 import { MandalSelect, AreaSelect, SubAreaSelect } from "../AreaMandalSelect";
 import { useAreasAndMandals } from "../../hooks/useAreasAndMandals";
+import { writableMandals } from "../../lib/scope";
 import { FULL_MEMBER_FIELDS, STANDARD_OPTIONS, HOBBY_OPTIONS } from "../../lib/areaMandalCodes";
 import { getMandalForStandard } from "../../constants/balMandalConfig";
 import { Input, Select, Label, FieldError } from "../ui/Input";
@@ -145,6 +146,22 @@ const emptyForm = {
 export default function IndividualForm({ individual, onSubmit, onCancel, withinHousehold = false, householdArea = "", householdAddress = "", initialValues = null }) {
   const isEdit = Boolean(individual);
   const { mandals } = useAreasAndMandals();
+  const { scope } = useAuth();
+
+  // PHASE 31 — null for an admin (pick anything), otherwise the mandals this
+  // person may actually file a contact under. The dropdown greys out the rest
+  // rather than hiding them; see MandalSelect for why.
+  const allowedMandals = useMemo(() => writableMandals(scope), [scope]);
+  // A scoped creator starts on Bal Mandal when it is theirs — it is what they
+  // add all day — falling back to whichever mandal they do hold. An admin still
+  // starts blank: Mandal decides which of the fields below get asked, and
+  // quietly pre-picking one for someone who can choose any is how contacts end
+  // up filed in the wrong group.
+  const defaultMandal = useMemo(() => {
+    if (!allowedMandals || allowedMandals.length === 0) return "";
+    return allowedMandals.find((n) => (n || "").toLowerCase() === "bal mandal") || allowedMandals[0];
+  }, [allowedMandals]);
+
   const [form, setForm] = useState(() =>
     isEdit
       ? {
@@ -166,8 +183,9 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
         }
       // `initialValues` pre-fills a new record — e.g. the walk-in add on the
       // attendance screen seeds the sabha's own Mandal and Area, which are right
-      // far more often than blank is.
-      : { ...emptyForm, ...(initialValues || {}) }
+      // far more often than blank is. It wins over the scoped default for the
+      // same reason: it knows the specific sabha, the default only knows the person.
+      : { ...emptyForm, ...(initialValues || {}), mandal: initialValues?.mandal || defaultMandal }
   );
   // Pre-generated so a photo can be uploaded before the individual doc
   // exists. Only needed when creating — on edit we already have a real id.
@@ -176,6 +194,14 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
 
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
+  const [mandalTouched, setMandalTouched] = useState(false);
+
+  // Seeds the default once, if the scope resolved after this form first rendered.
+  // Guarded on `mandalTouched` so it can never fight a choice already made.
+  useEffect(() => {
+    if (isEdit || mandalTouched) return;
+    if (defaultMandal && !form.mandal) setForm((prev) => ({ ...prev, mandal: defaultMandal }));
+  }, [isEdit, mandalTouched, defaultMandal, form.mandal]);
 
   const update = (field) => (e) => {
     const value = e.target.type === "checkbox" ? e.target.checked : e.target.value;
@@ -207,6 +233,15 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
     const mobileDigits = form.mobile.replace(/\D/g, "");
     if (!mobileDigits) errs.mobile = "Mobile number is required.";
     else if (mobileDigits.length !== 10) errs.mobile = "Enter exactly 10 digits, without +91.";
+    // The dropdown already greys these out, but the Standard field auto-assigns a
+    // Mandal (LKG → Sishu Mandal) and can land outside the writer's territory.
+    // Better to say so here than to let Firestore reject the write as a
+    // "permission denied" the karyakarta has no way to interpret.
+    if (allowedMandals && !allowedMandals.includes(form.mandal)) {
+      errs.mandal = form.mandal
+        ? `${form.mandal} isn't assigned to you.`
+        : "Choose one of your assigned mandals.";
+    }
     if (withinHousehold && showRelation && !form.relation) errs.relation = "Select a relation.";
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -262,8 +297,19 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
         <Label required>Mandal</Label>
-        <MandalSelect value={form.mandal} onChange={update("mandal")} className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300" />
-        <p className="mt-1 text-xs text-slate-400">Choosing a Mandal decides what else gets asked below.</p>
+        <MandalSelect
+          value={form.mandal}
+          onChange={(e) => { setMandalTouched(true); update("mandal")(e); }}
+          allowed={allowedMandals}
+          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
+        />
+        <p className="mt-1 text-xs text-slate-400">
+          Choosing a Mandal decides what else gets asked below.
+          {allowedMandals && allowedMandals.length > 0 && (
+            <> You can add to {allowedMandals.join(" and ")} — the rest are greyed out.</>
+          )}
+        </p>
+        <FieldError>{errors.mandal}</FieldError>
       </div>
 
       <div>
@@ -366,6 +412,9 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
             onChange={(e) => {
               const newStandard = e.target.value;
               const autoMandal = getMandalForStandard(newStandard);
+              // Standard drives Mandal, so it counts as touching it — otherwise
+              // the scoped default would seed itself back over the auto-assignment.
+              setMandalTouched(true);
               setForm((f) => ({ ...f, standard: newStandard, mandal: autoMandal }));
             }}
           >

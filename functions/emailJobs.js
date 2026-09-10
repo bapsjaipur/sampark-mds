@@ -36,7 +36,11 @@ const {
   buildBirthdayData, getMessageTemplates,
 } = require('./lib/reportData');
 const { dailyReportPdf, postSabhaPdf, birthdayPdf } = require('./lib/pdfReport');
-const { permissionsForVolunteer } = require('./lib/callerAccess');
+const { permissionsForVolunteer, volunteerRoleIds } = require('./lib/callerAccess');
+// PHASE 33 — the weekly sabha coverage digest lives in its own file (it has a
+// schedule of its own and no PDF), but its manual "send now" belongs here with
+// the other three so the admin screen has one callable to talk to.
+const { runSabhaDigest } = require('./sabhaDigest');
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -387,6 +391,13 @@ exports.sendManualEmail = onCall({ region: REGION, timeoutSeconds: 300, memory: 
       return { ok: true, result: res };
     }
 
+    if (kind === 'sabhaCoverage') {
+      // No separate override branch: runSabhaDigest already takes `to`, and
+      // passing it also suppresses the per-mandal fan-out — a test send must
+      // reach one inbox, not every sanchalak in the city.
+      return { ok: true, result: await runSabhaDigest({ now, force: true, to: override }) };
+    }
+
     throw new HttpsError('invalid-argument', `Unknown report kind "${kind}".`);
   } catch (err) {
     if (err instanceof HttpsError) throw err;
@@ -420,8 +431,13 @@ exports.previewEmailRecipients = onCall({ region: REGION }, async (request) => {
   allVolunteers.forEach((d) => {
     const v = d.data();
     if (v.isActive === false) return;
-    const perms = rolePerms[v.roleRef] || [];
-    if (!perms.includes('send_emails')) return;
+    // PHASE 33 — the union across roleRefs[], matching loadMailableVolunteers().
+    // Reading only the legacy `roleRef` meant this diagnostic reported a
+    // volunteer as fine while the sender skipped them, which is worse than no
+    // diagnostic: the screen exists precisely to explain "I turned it on and
+    // nobody got anything".
+    const perms = new Set(volunteerRoleIds(v).flatMap((id) => rolePerms[id] || []));
+    if (!perms.has('send_emails')) return;
     if (!isDeliverable(v.reportEmail)) missingEmail.push(v.name || d.id);
   });
   mailable.forEach((v) => {

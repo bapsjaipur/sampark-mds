@@ -29,13 +29,28 @@
 //
 // Rows are grouped under day headings, and the filtered set can be exported to
 // CSV so a month can be handed to someone who does not have a login.
+//
+// PHASE 31 — SCOPE. This screen had none: it read the whole `activity`
+// collection, so a mandal-scoped Super Moderator could read the entire city's
+// edit history, including contacts they cannot open. `activity` rows carry no
+// mandal of their own, so the filter has to join through the contact — and doing
+// that with more queries would be the expensive way. Instead a scoped viewer
+// reuses the contact list they ALREADY have open (useAllContacts, itself
+// narrowed to their scope), which makes the join free and exact: a row is theirs
+// if it is about one of their contacts, or was performed by one of their
+// volunteers. That also lets the scoped path skip the contact-name lookup
+// entirely, since those names are already in hand.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   collection, documentId, getDocs, limit, onSnapshot, orderBy, query, where,
 } from 'firebase/firestore';
-import { Search, X, Download, RotateCcw, ChevronDown } from 'lucide-react';
+import { Search, X, Download, RotateCcw, ChevronDown, ShieldCheck } from 'lucide-react';
 import { db } from '../../lib/firebase';
+import { useAuth } from '../../hooks/usePermissions';
+import { useAllContacts } from '../../hooks/useAllContacts';
+import { useVolunteers } from '../../hooks/useVolunteers';
+import { describeScope, volunteerInScope, SCOPE_KINDS } from '../../lib/scope';
 import { Input, Select, Label } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { cn } from '../../lib/cn';
@@ -207,8 +222,53 @@ function exportCsv(rows) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function AuditTrailTab() {
+  const { scope } = useAuth();
+  // Split rather than branched inside, because the scoped path calls
+  // useAllContacts() and an unrestricted admin must NOT: for them it is the whole
+  // 3,100-document collection, and they don't need it — they see every row anyway.
+  if (scope?.unrestricted || scope?.kind === SCOPE_KINDS.NONE) {
+    return <AuditTrailInner scope={null} />;
+  }
+  return <ScopedAuditTrail scope={scope} />;
+}
+
+/**
+ * Builds the two in-scope sets from listeners that are already open elsewhere in
+ * the app, so scoping the trail costs no additional reads.
+ */
+function ScopedAuditTrail({ scope }) {
+  const { contacts, loading: contactsLoading } = useAllContacts();
+  const { volunteers } = useVolunteers();
+
+  const contactsById = useMemo(
+    () => new Map(contacts.map((c) => [c.id, c])),
+    [contacts],
+  );
+  // A volunteer counts as yours if any of their assigned territory overlaps
+  // yours. This is what keeps rows with no contact attached — "Added mandal",
+  // "Merged areas" — attributable rather than simply vanishing.
+  const inScopeVolunteerIds = useMemo(
+    () => new Set(volunteers.filter((v) => volunteerInScope(v, scope)).map((v) => v.id)),
+    [volunteers, scope],
+  );
+
+  return (
+    <AuditTrailInner
+      scope={scope}
+      contactsById={contactsById}
+      inScopeVolunteerIds={inScopeVolunteerIds}
+      contactsLoading={contactsLoading}
+    />
+  );
+}
+
+function AuditTrailInner({ scope = null, contactsById = null, inScopeVolunteerIds = null, contactsLoading = false }) {
+  const isScoped = Boolean(scope);
   const [entries, setEntries] = useState([]);
-  const [volunteers, setVolunteers] = useState([]);
+  // The roster comes from the shared listener the rest of the app already holds
+  // open — this screen used to open a second one of its own purely to turn ids
+  // into names.
+  const { volunteers: allVolunteers } = useVolunteers();
   const [contactNames, setContactNames] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -253,21 +313,25 @@ export default function AuditTrailTab() {
     );
   }, [from, to, pageLimit]);
 
-  // Volunteers is a small collection (tens of docs) — a live subscription is
-  // cheaper than re-fetching, and new volunteers appear in the filter at once.
-  useEffect(() => onSnapshot(
-    collection(db, 'volunteers'),
-    (snap) => setVolunteers(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    () => setVolunteers([]),
-  ), []);
+  // The volunteer filter offers only the people whose actions can appear here.
+  const volunteers = useMemo(() => (
+    isScoped && inScopeVolunteerIds
+      ? allVolunteers.filter((v) => inScopeVolunteerIds.has(v.id))
+      : allVolunteers
+  ), [allVolunteers, isScoped, inScopeVolunteerIds]);
 
   // ── Resolve just the contacts referenced by the loaded rows ───────────────
+  // Skipped entirely when scoped: those contacts are already loaded, so fetching
+  // them again would be reads spent on data in hand — and the `in` query would
+  // fail outright the moment one id in a chunk of 30 sits outside the caller's
+  // read rules, blanking all thirty names.
   const requestedRef = useRef(new Set());
   useEffect(() => {
+    if (isScoped) return undefined;
     const missing = [...new Set(
       entries.map((e) => e.individualId).filter((id) => id && !requestedRef.current.has(id)),
     )];
-    if (missing.length === 0) return;
+    if (missing.length === 0) return undefined;
     missing.forEach((id) => requestedRef.current.add(id));
 
     let cancelled = false;
@@ -293,22 +357,42 @@ export default function AuditTrailTab() {
   }, [entries]);
 
   const volunteerNames = useMemo(
-    () => Object.fromEntries(volunteers.map((v) => [v.id, v.name || 'Unnamed volunteer'])),
-    [volunteers],
+    () => Object.fromEntries(allVolunteers.map((v) => [v.id, v.name || 'Unnamed volunteer'])),
+    [allVolunteers],
   );
+
+  /**
+   * Is this row inside the viewer's territory?
+   *
+   *   • about one of their contacts        → yes, whoever did it
+   *   • about a contact they cannot see    → no
+   *   • about no contact at all (taxonomy
+   *     edits, bulk actions) and done by
+   *     one of their volunteers            → yes
+   *
+   * The middle case is the load-bearing one: an unresolvable individualId means
+   * the contact is outside the scoped list, so the row is somebody else's.
+   */
+  function rowInScope(e) {
+    if (!isScoped) return true;
+    if (e.individualId) return contactsById?.has(e.individualId) || false;
+    return inScopeVolunteerIds?.has(e.volunteerId) || false;
+  }
 
   // Flatten every row into the shape the search, the list and the CSV all read
   // from, so what is exported is exactly what is on screen.
-  const rows = useMemo(() => entries.map((e) => ({
+  const rows = useMemo(() => entries.filter(rowInScope).map((e) => ({
     id: e.id,
     date: toDate(e.timestamp),
     volunteerId: e.volunteerId || '',
     volunteerName: volunteerNames[e.volunteerId] || 'Unknown volunteer',
     action: e.action || '',
     actionLabel: ACTION_LABELS[e.action] || e.action || '—',
-    contactName: e.individualId ? (contactNames[e.individualId] || '') : '',
+    contactName: e.individualId
+      ? (contactsById?.get(e.individualId)?.name || contactNames[e.individualId] || '')
+      : '',
     details: detailsText(e.details),
-  })), [entries, volunteerNames, contactNames]);
+  })), [entries, volunteerNames, contactNames, contactsById, inScopeVolunteerIds, isScoped]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const term = search.trim();
   const filtered = useMemo(() => {
@@ -362,6 +446,13 @@ export default function AuditTrailTab() {
   const activePreset = PRESETS.find((p) => p.from() === from && !to)?.key || 'custom';
   const hasFilters = Boolean(term || actionFilter || volunteerFilter || to) || from !== daysAgo(29);
   const atCap = entries.length >= pageLimit && pageLimit < MAX_ROWS;
+  // Until the scoped contact list has arrived, every row would be judged
+  // out-of-scope and the trail would flash "nothing logged" before filling in.
+  const busy = loading || (isScoped && contactsLoading);
+  // How many of the fetched rows the scope removed. Worth stating: a mandal head
+  // pulling 150 rows and seeing 4 should know the other 146 exist and are simply
+  // not theirs, rather than doubting the date range.
+  const hiddenByScope = isScoped ? entries.length - rows.length : 0;
 
   function resetFilters() {
     setSearch('');
@@ -456,7 +547,7 @@ export default function AuditTrailTab() {
 
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-slate-500">
-            {loading ? 'Loading…' : (
+            {busy ? 'Loading…' : (
               <>
                 <strong className="text-slate-700">{filtered.length}</strong>
                 {filtered.length === rows.length ? ' actions' : ` of ${rows.length} loaded`}
@@ -464,6 +555,13 @@ export default function AuditTrailTab() {
               </>
             )}
           </span>
+          {isScoped && !busy && (
+            <span className="flex items-center gap-1 text-[11px] text-slate-400">
+              <ShieldCheck className="h-3 w-3" />
+              {describeScope(scope)} only
+              {hiddenByScope > 0 && ` · ${hiddenByScope} hidden`}
+            </span>
+          )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {hasFilters && (
               <Button variant="ghost" size="sm" onClick={resetFilters}>
@@ -480,14 +578,16 @@ export default function AuditTrailTab() {
       {/* ── Results ──────────────────────────────────────────────────────── */}
       {error ? (
         <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">{error}</p>
-      ) : loading ? (
+      ) : busy ? (
         <div className="space-y-1.5">
           {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-12 animate-pulse rounded-lg bg-slate-100" />)}
         </div>
       ) : filtered.length === 0 ? (
         <p className="rounded-lg border border-dashed border-slate-200 py-10 text-center text-sm text-slate-400">
           {rows.length === 0
-            ? 'Nothing was logged in this date range.'
+            ? (isScoped && entries.length > 0
+              ? `Nothing was logged for ${describeScope(scope)} in this date range.`
+              : 'Nothing was logged in this date range.')
             : 'No actions match these filters.'}
         </p>
       ) : (
@@ -544,7 +644,9 @@ export default function AuditTrailTab() {
                 <ChevronDown className="h-3.5 w-3.5" /> Load {PAGE_SIZE} more
               </Button>
               <p className="mt-1.5 text-[11px] text-slate-400">
-                Showing the newest {entries.length} actions in this range. Narrow the dates to see older ones.
+                {isScoped
+                  ? `Searched the newest ${entries.length} actions in this range; ${rows.length} are ${describeScope(scope)}.`
+                  : `Showing the newest ${entries.length} actions in this range. Narrow the dates to see older ones.`}
               </p>
             </div>
           )}
