@@ -9,11 +9,13 @@
 // Accessible to: Nirdeshak, Admin. Sanchalak can view preview but not execute.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { collection, query, where, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { promoteStandard } from '../../constants/balMandalConfig';
 import { useAuth } from '../../hooks/usePermissions';
+import { canRunStandardPromotion } from '../../lib/roleView';
+import { matchesScope, writableAreas, writableMandals } from '../../lib/scope';
 import { useToast } from '../../contexts/ToastContext';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -22,25 +24,70 @@ import Modal from '../ui/Modal';
 import { TrendingUp, Download, AlertTriangle } from 'lucide-react';
 import { WRITE_BATCH_LIMIT } from '../../lib/batchUtils';
 
+// The two mandals this programme covers — see MANDAL_GROUPS in src/lib/scope.js.
+const PROGRAM_MANDALS = ['Bal Mandal', 'Sishu Mandal'];
+
 export default function StandardPromotionPanel() {
-  const { volunteer, hasPermission } = useAuth();
+  const { volunteer, permissions, scope } = useAuth();
   const { showToast } = useToast();
   const [preview, setPreview] = useState(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [executing, setExecuting] = useState(false);
 
-  const canExecute = hasPermission('manage_events') && ['nirdeshak', 'admin'].includes(volunteer?.roleKey);
+  // PHASE 32 — was gated on `volunteer?.roleKey`, a field that does not exist,
+  // so the execute button never enabled for anybody. Same rule as the full
+  // Standard Promotion page — one helper, so the panel and the page can never
+  // disagree about who may run this.
+  const canExecute = canRunStandardPromotion(permissions, volunteer);
+
+  // Which mandals and areas this volunteer may rewrite. Everything loadPreview()
+  // returns is rewritten by executePromotion(), so the query has to be narrowed
+  // to the caller's scope — an unscoped read here would let a scoped Nirdeshak
+  // promote children in areas that are not theirs.
+  const allowedMandals = useMemo(() => writableMandals(scope), [scope]);
+  const targetMandals = useMemo(
+    () => (allowedMandals ? PROGRAM_MANDALS.filter((m) => allowedMandals.includes(m)) : PROGRAM_MANDALS),
+    [allowedMandals],
+  );
+  const allowedAreas = useMemo(() => writableAreas(scope), [scope]);
+  const areaFilters = useMemo(() => (allowedAreas || [null]), [allowedAreas]);
 
   async function loadPreview() {
-    const individualsRef = collection(db, 'individuals');
-    const q = query(
-      individualsRef,
-      where('mandal', 'in', ['Bal Mandal', 'Sishu Mandal']),
-      where('standard', '!=', '')
-    );
+    if (targetMandals.length === 0 || areaFilters.length === 0) {
+      showToast({ type: 'error', message: 'No Bal Mandal area is assigned to you.' });
+      return;
+    }
 
-    const snap = await getDocs(q);
-    const children = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const individualsRef = collection(db, 'individuals');
+    let snaps;
+    try {
+      // `standard != ''` cannot be combined with a second `in` on another field,
+      // so the standard filter moves to the client. It costs nothing extra: the
+      // area+mandal query already returns only this volunteer's children.
+      snaps = await Promise.all(areaFilters.map((area) => getDocs(
+        area
+          ? query(individualsRef, where('area', '==', area), where('mandal', 'in', targetMandals))
+          : query(individualsRef, where('mandal', 'in', targetMandals)),
+      )));
+    } catch (err) {
+      console.error('Promotion preview query failed:', err);
+      showToast({
+        type: 'error',
+        message: err?.code === 'permission-denied'
+          ? 'You do not have permission to read these contacts.'
+          : 'Could not load contacts for promotion.',
+      });
+      return;
+    }
+
+    const children = snaps
+      .flatMap((snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+      .filter((c) => c.standard && matchesScope(scope, { area: c.area, mandal: c.mandal }));
+
+    if (children.length === 0) {
+      showToast({ type: 'error', message: 'No children have a standard set yet, so there is nothing to promote.' });
+      return;
+    }
 
     const promotions = children.map(child => {
       const result = promoteStandard(child.standard);
@@ -52,6 +99,9 @@ export default function StandardPromotionPanel() {
         transferToYuvak: result.transferToYuvak,
         area: child.area,
         mobile: child.mobile,
+        // executePromotion() prepends a history line to this; reading it back as
+        // undefined would write the literal string "undefined" into the note.
+        notes: child.notes || '',
       };
     });
 

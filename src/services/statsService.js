@@ -4,18 +4,49 @@
 // shape from CodeGSV5.gs (totalContacts, totalCalled, statusBreakdown,
 // byMandal), but computed in the browser rather than a GAS endpoint.
 //
-// PHASE 9: both functions accept an optional `scope` — { mandals,
-// householdIds, unscoped } (same shape reminderService.js uses). This is
-// what makes the Moderator screen just this same dashboard, pre-filtered,
-// instead of a separate codepath — a moderator is a volunteer with
-// view_assigned_contacts + assignedAreas/assignedMandals, not a hardcoded
-// role, matching the app's permission-based architecture throughout.
+// PHASE 9: both functions accept an optional `scope`. This is what makes the
+// Moderator screen just this same dashboard, pre-filtered, instead of a separate
+// codepath — a moderator is a volunteer with view_assigned_contacts and an
+// assigned territory, not a hardcoded role, matching the app's permission-based
+// architecture throughout.
+
+// PHASE 31 — SCOPE. `scope` is now the canonical object from lib/scope.js
+// (resolveScope), optionally carrying an extra `householdIds` array. That
+// replaces the ad-hoc `{ unscoped, mandals, householdIds, areas }` shape this
+// file invented, which had two holes:
+//
+//   • it ORed mandal against household, so an INTERSECT (area × mandal)
+//     karyakarta was counted as a UNION — wider than their actual access, and
+//     wider than every other list in the app showed them; and
+//   • computeVolunteerStats filtered batches by AREA alone, so a MANDAL-scoped
+//     Super Moderator — who has no assigned areas — matched no batch at all and
+//     saw an empty Volunteer Activity table.
+//
+// Both now defer to matchesScope()/filterBatchesByScope(), the same predicates
+// the Contacts list and the Batches page use, so the dashboard cannot disagree
+// with the screens it summarises.
+import { matchesScope, SCOPE_KINDS } from '../lib/scope';
+import { filterBatchesByScope } from './batchService';
+
+/**
+ * The area to judge an individual by. Their own denormalised `area` first
+ * (standalone contacts only have that), falling back to "is their household one
+ * of the ones we looked up for the assigned areas" — which is what the optional
+ * `scope.householdIds` is for, and the only reason it still exists.
+ */
+function individualArea(ind, scope) {
+  if (ind?.area) return ind.area;
+  if (scope?.householdIds?.length && ind?.householdId && scope.householdIds.includes(ind.householdId)) {
+    // Membership is the answer; any assigned area serves as the matching value.
+    return scope.areas?.[0] || null;
+  }
+  return null;
+}
 
 function individualInScope(ind, scope) {
-  if (!scope || scope.unscoped) return true;
-  if (scope.mandals?.length && ind.mandal && scope.mandals.includes(ind.mandal)) return true;
-  if (scope.householdIds?.length && scope.householdIds.includes(ind.householdId)) return true;
-  return false;
+  if (!scope || scope.unrestricted) return true;
+  if (scope.kind === SCOPE_KINDS.NONE) return false;
+  return matchesScope(scope, { area: individualArea(ind, scope), mandal: ind?.mandal || null });
 }
 
 /**
@@ -26,7 +57,7 @@ function individualInScope(ind, scope) {
  * what guarantees the reset and the number above it can never disagree.
  */
 export function filterInScope(individuals = [], scope) {
-  if (!scope || scope.unscoped) return individuals;
+  if (!scope || scope.unrestricted) return individuals;
   return individuals.filter((i) => individualInScope(i, scope));
 }
 
@@ -61,15 +92,13 @@ export function computeOverviewStats(individuals, scope) {
 }
 
 /** Per-volunteer activity: how many people each volunteer has called (status
- * set) among the individuals in batches assigned to them. When scoped
- * (moderator view), only batches whose own `area` falls in the moderator's
- * assignedAreas are counted — batches already carry an `area` field, so
- * this doesn't need a household lookup the way individual-level scoping does. */
+ * set) among the individuals in batches assigned to them. When scoped, only
+ * batches inside the viewer's territory are counted — via filterBatchesByScope,
+ * the same predicate the Batches page lists with, so a mandal head sees the
+ * mandal's volunteers and an area head sees the area's. */
 export function computeVolunteerStats(individuals, batches, volunteers, scope) {
   const individualsById = new Map(individuals.map((i) => [i.id, i]));
-  const scopedBatches = scope && !scope.unscoped
-    ? batches.filter((b) => scope.areas?.includes(b.area))
-    : batches;
+  const scopedBatches = filterBatchesByScope(batches || [], scope);
 
   return volunteers.map((v) => {
     const myBatches = scopedBatches.filter((b) => b.assignedVolunteerId === v.id);

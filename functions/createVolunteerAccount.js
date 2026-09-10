@@ -31,18 +31,40 @@ function phoneToSyntheticEmail(phone) {
 exports.createVolunteerAccount = onCall({ region: 'us-central1' }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Must be logged in.');
 
-  // Caller must have manage_users.
+  // An Admin may create any account. A Mandal head with the narrower
+  // manage_scoped_volunteers permission may create only a non-admin account
+  // whose mandal assignment is a subset of their own.
   const callerDoc = await db.collection('volunteers').doc(request.auth.uid).get();
   if (!callerDoc.exists) throw new HttpsError('permission-denied', 'Volunteer record not found.');
   // Resolved across ALL the caller's roles (PHASE 21 multi-role) — and tolerant
   // of a caller with no role at all, which used to throw a raw
   // `doc(undefined)` error that Functions reported as an opaque "internal".
   const callerPerms = await permissionsForVolunteer(db, callerDoc.data());
-  if (!callerPerms.includes('manage_users')) {
-    throw new HttpsError('permission-denied', 'Missing manage_users permission.');
+  const hasManageUsers = callerPerms.includes('manage_users');
+  const callerMandals = Array.isArray(callerDoc.data().assignedMandals)
+    ? callerDoc.data().assignedMandals.filter(Boolean) : [];
+  const hasScopedMandalManagement = !hasManageUsers
+    && callerPerms.includes('manage_scoped_volunteers')
+    && callerDoc.data().scopeKind === 'mandal'
+    && callerMandals.length > 0;
+  if (!hasManageUsers && !hasScopedMandalManagement) {
+    throw new HttpsError('permission-denied', 'Missing permission to create volunteers in this mandal.');
   }
 
   const { name, phone, password, roleRef, roleRefs, scopeKind, assignedAreas, assignedMandals, reportEmail, linkedIndividualId } = request.data || {};
+
+  if (hasScopedMandalManagement) {
+    const targetMandals = Array.isArray(assignedMandals) ? assignedMandals.filter(Boolean) : [];
+    if (!targetMandals.length || !targetMandals.every((mandal) => callerMandals.includes(mandal))) {
+      throw new HttpsError('permission-denied', 'New volunteers must be assigned only to your mandal(s).');
+    }
+    const requestedRoleIds = normalizeRoleRefs({ roleRefs, roleRef })?.roleRefs || [];
+    const roleDocs = requestedRoleIds.length
+      ? await db.getAll(...requestedRoleIds.map((id) => db.collection('roles').doc(id))) : [];
+    if (roleDocs.some((role) => !role.exists || ['manage_users', 'manage_roles'].some((p) => (role.data().permissions || []).includes(p)))) {
+      throw new HttpsError('permission-denied', 'A mandal head cannot create an Admin or role manager account.');
+    }
+  }
 
   if (!name || !phone || !password) {
     throw new HttpsError('invalid-argument', 'name, phone, and password are required.');

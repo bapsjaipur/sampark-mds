@@ -37,7 +37,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Plus, Pencil, Trash2, Users, CalendarDays, ChevronLeft, LayoutDashboard, CheckSquare,
-  Search, X, TrendingUp, ListFilter,
+  Search, X, TrendingUp, ListFilter, CalendarClock,
 } from 'lucide-react';
 import {
   subscribeToEvents, subscribeToAllAttendance, createEvent, updateEvent, deleteEvent, pickUpcomingEvent,
@@ -54,6 +54,7 @@ import EventExportButtons from '../components/events/EventExportButtons';
 import EventDashboard from '../components/events/EventDashboard';
 import ObserverAttendancePanel from '../components/bal-mandal/ObserverAttendancePanel';
 import SabhaAnalytics from '../components/events/SabhaAnalytics';
+import AllAreaSabhas from '../components/events/AllAreaSabhas';
 import { isEventPast } from '../lib/eventAnalytics';
 import Modal from '../components/ui/Modal';
 import RequirePermission from '../components/RequirePermission';
@@ -61,6 +62,7 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input, Select } from '../components/ui/Input';
 import { cn } from '../lib/cn';
+import { matchesScope, writableMandals } from '../lib/scope';
 
 // One definition of "already happened", shared with the season analytics so the
 // Upcoming/Past split and the analytics window can never disagree.
@@ -120,10 +122,16 @@ export default function EventsPage() {
   const { contacts: individuals, isViewAll } = useAllContacts();
   const { volunteers } = useVolunteers();
   const { areas: areaDefs, mandals: mandalDefs } = useAreasAndMandals();
-  const { volunteer, permissions } = useAuth();
+  const { volunteer, permissions, scope } = useAuth();
   const { showToast } = useToast();
 
   const canSeeDashboard = permissions.includes('view_all_contacts') || permissions.includes('manage_events');
+  // PHASE 31 — was a literal `scope.kind === 'mandal'` test, which fell open for
+  // anyone whose resolved kind came out INTERSECT (an area AND a mandal assigned)
+  // or UNION: they got the unrestricted form and could file a sabha under any
+  // mandal in the city. writableMandals() answers the actual question — is the
+  // mandal axis binding for this shape? — and returns null when it isn't.
+  const eventMandalScope = writableMandals(scope);
   const areas = useMemo(
     () => [...new Set((areaDefs || []).map((a) => a.name || a).filter(Boolean))].sort(),
     [areaDefs],
@@ -137,7 +145,16 @@ export default function EventsPage() {
     ...individuals.map((i) => i.mandal),
   ].filter(Boolean))].sort(), [mandalDefs, events, individuals]);
 
-  useEffect(() => subscribeToEvents((evts) => { setEvents(evts); setLoading(false); }), []);
+  // Events carry both scope axes themselves, unlike attendance rows. Filter at
+  // the subscription boundary so every calendar, search, dashboard and export
+  // below works only with the caller's permitted mandal/area events.
+  useEffect(() => subscribeToEvents((evts) => {
+    setEvents(evts.filter((event) => matchesScope(scope, {
+      area: event.area,
+      mandal: event.mandal,
+    })));
+    setLoading(false);
+  }, scope), [scope]);
   useEffect(() => subscribeToAllAttendance(setAttendance), []);
 
   useEffect(() => {
@@ -280,6 +297,19 @@ export default function EventsPage() {
               >
                 <TrendingUp className="h-3.5 w-3.5" /> Season stats
               </button>
+              {/* PHASE 33 — the recurring sabhas and their track record. Sits
+                  next to Season stats because it is the other cross-event view:
+                  season answers "how many came", this answers "did it happen at
+                  all, and where didn't it". */}
+              <button
+                onClick={() => setView('schedules')}
+                className={cn(
+                  'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-[12px] font-medium transition',
+                  view === 'schedules' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+                )}
+              >
+                <CalendarClock className="h-3.5 w-3.5" /> All Area Sabhas
+              </button>
             </div>
           )}
           <RequirePermission permission="manage_events">
@@ -297,6 +327,14 @@ export default function EventsPage() {
           individuals={individuals}
           mandals={mandalOptions}
           areas={areas}
+        />
+      ) : view === 'schedules' && canSeeDashboard ? (
+        // Both props come from the subscriptions already open above, so the
+        // whole grid is derived rather than fetched.
+        <AllAreaSabhas
+          events={events}
+          counts={attendance.counts}
+          onOpenEvent={selectEvent}
         />
       ) : (
       <div className="grid gap-5 lg:grid-cols-[290px_1fr]">
@@ -486,7 +524,7 @@ export default function EventsPage() {
       )}
 
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title={editingEvent ? 'Edit event' : 'New event'}>
-        <EventForm event={editingEvent} areas={areas} onSubmit={editingEvent ? handleUpdate : handleCreate} onCancel={() => setFormOpen(false)} />
+        <EventForm event={editingEvent} areas={areas} allowedMandals={eventMandalScope} onSubmit={editingEvent ? handleUpdate : handleCreate} onCancel={() => setFormOpen(false)} />
       </Modal>
     </div>
   );

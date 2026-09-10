@@ -34,9 +34,9 @@ import StandardPromotionPage from "./pages/StandardPromotionPage";
 // destination is one this role can actually reach, so login can no longer bounce
 // straight into a permission-denied screen.
 function DefaultRedirect() {
-  const { permissions, loading } = useAuth();
+  const { permissions, volunteer, loading } = useAuth();
   if (loading) return null;
-  const { homePath } = getRoleView(permissions);
+  const { homePath } = getRoleView(permissions, volunteer);
   return <Navigate to={homePath} replace />;
 }
 

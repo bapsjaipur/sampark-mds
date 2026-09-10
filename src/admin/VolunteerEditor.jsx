@@ -22,13 +22,14 @@ import { RequirePermission } from '../components/RequirePermission';
 import { useAreasAndMandals } from '../hooks/useAreasAndMandals';
 import { useAllContacts } from '../hooks/useAllContacts';
 import { useVolunteers } from '../hooks/useVolunteers';
+import { useAuth } from '../hooks/usePermissions';
 import { isValidPhone } from '../lib/authHelpers';
 import { Input, Select, Label } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import { Avatar } from '../components/ui/Avatar';
 import ChipMultiSelect from '../components/ui/ChipMultiSelect';
 import Modal from '../components/ui/Modal';
-import { resolveScope, describeScope, statedScopeKind, roleStatedScopeKind, inferScopeKind, SCOPE_KINDS, SCOPE_KIND_META } from '../lib/scope';
+import { resolveScope, describeScope, statedScopeKind, roleStatedScopeKind, inferScopeKind, filterVolunteersByScope, SCOPE_KINDS, SCOPE_KIND_META } from '../lib/scope';
 import { DEFAULT_ROLE_RANK, isSantoRole } from '../constants/roleTemplates';
 import { expandLegacyPermissions, isLegacyRole } from '../constants/permissions';
 import { buildVolunteerRows, computeVolunteerStats, exportVolunteerCsv, exportVolunteerPdf } from '../lib/volunteerExports';
@@ -337,7 +338,7 @@ function ContactSearchPicker({ onPick }) {
   );
 }
 
-function CreateVolunteerForm({ roles, onCreated }) {
+function CreateVolunteerForm({ roles, onCreated, defaultMandals = [], scopedManager = false }) {
   // PHASE 25 — collapsed by default. Expanded, this form is ~330px tall and sat
   // permanently between the page header and the roster, so on a phone every visit
   // to this screen started with scrolling past a form you almost never wanted:
@@ -385,7 +386,9 @@ function CreateVolunteerForm({ roles, onCreated }) {
           [roleStatedScopeKind(roles.find((r) => r.id === form.roleRef))],
         ),
         assignedAreas: [],
-        assignedMandals: [],
+        // A mandal head creates volunteers directly inside their own mandal(s),
+        // never as an unassigned account that could later be placed elsewhere.
+        assignedMandals: defaultMandals,
         linkedIndividualId: mode === 'existing' && pickedContact ? pickedContact.id : null,
       });
       setForm({ name: '', phone: '', password: '', roleRef: '' });
@@ -448,7 +451,9 @@ function CreateVolunteerForm({ roles, onCreated }) {
             <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Temporary password (6+ chars)" />
             <Select value={form.roleRef} onChange={(e) => setForm({ ...form, roleRef: e.target.value })}>
               <option value="">No role yet</option>
-              {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              {roles
+                .filter((r) => !scopedManager || !['manage_users', 'manage_roles'].some((p) => (r.permissions || []).includes(p)))
+                .map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
             </Select>
           </div>
           <Button type="submit" variant="accent" disabled={saving}>{saving ? 'Creating…' : 'Create login'}</Button>
@@ -522,12 +527,28 @@ function ResetPasswordModal({ volunteer, onClose }) {
 // password and closes the request server-side, so there is exactly one code path
 // that can change a password. Deny is a plain client write, which the rules allow
 // for a manage_users holder.
-function PendingResetRequests({ volunteers, onApprove }) {
+//
+// `canApprove` IS NOT DECORATION — WITHOUT IT THIS PANEL LIES.
+//
+// This screen admits `manage_users` OR `manage_scoped_volunteers`, because Phase
+// 21 deliberately lets a Moderator / Super Moderator fix the karyakartas under
+// them WITHOUT manage_users. The passwordResets rules require manage_users for
+// read, update and delete. So for every scoped manager the listener below was
+// guaranteed to be denied, and the denial branch then told them — falsely — that
+// the rules were not deployed and to run a CLI command they cannot run and that
+// would not have helped. Mounting a listener you know the server will refuse is
+// how a permission boundary turns itself into a bug report.
+//
+// Hiding it loses a scoped manager nothing: approving and denying both require
+// manage_users server-side, so all they could ever have done with the row is
+// look at it.
+function PendingResetRequests({ volunteers, onApprove, canApprove }) {
   const [requests, setRequests] = useState([]);
   const [error, setError] = useState(null);
   const [busyId, setBusyId] = useState(null);
 
   useEffect(() => {
+    if (!canApprove) return undefined;
     // No orderBy and no where: requestedAt is a serverTimestamp, so it reads back
     // as null for a moment on a brand-new document and an orderBy would hide the
     // newest request — the one that matters most. The collection cannot grow past
@@ -543,12 +564,26 @@ function PendingResetRequests({ volunteers, onApprove }) {
         );
         setError(null);
       },
+      // We only get here holding manage_users, so a denial has exactly two
+      // causes and the old message asserted the rarer one as fact. State both.
+      //
+      // The second is the one that looks impossible: firestore.rules can read a
+      // single role document (`roleRef`), while this app unions permissions
+      // across `roleRefs[]`. An admin whose manage_users comes from a role that
+      // is not their primary one passes every check on screen and is refused by
+      // the server — client and rules disagreeing, with only the client visible.
       (err) => setError(err?.code === 'permission-denied'
-        ? 'Password reset requests can’t be read yet — the rules for the "passwordResets" '
-          + 'collection are not deployed. Run: firebase deploy --only firestore:rules'
+        ? 'Password reset requests could not be read. Either the rules for the '
+          + '"passwordResets" collection have not been deployed yet, or your '
+          + 'manage_users permission comes from a role that is not your primary '
+          + 'one — re-save your volunteer record under Admin → Volunteers to '
+          + 'refresh it. Nobody is locked out either way; requests are still '
+          + 'being recorded.'
         : (err?.message || 'Could not load password reset requests.')),
     );
-  }, []);
+  }, [canApprove]);
+
+  if (!canApprove) return null;
 
   async function deny(req) {
     setBusyId(req.id);
@@ -639,9 +674,50 @@ function VolunteerEditorInner() {
   // PHASE 24 — the roster comes from the shared listener (see useVolunteers), so
   // this screen, Roles, Batches, Events and the Admin dashboard bill it once
   // between them instead of once each.
-  const { volunteers } = useVolunteers();
+  const { volunteers: allVolunteers } = useVolunteers();
+  const { permissions, scope } = useAuth();
+  const isGlobalUserManager = permissions.includes('manage_users');
+  // PHASE 31 — WHO IS ON MY ROSTER IS A QUESTION FOR THE SCOPE, NOT THE PERMISSION.
+  //
+  // Visibility used to hang off `isScopedMandalManager`, which requires the
+  // person to NOT hold manage_users. A Super Moderator whose role happens to
+  // include manage_users therefore skipped every narrowing below and got the
+  // entire city's roster, fully editable — which is exactly the complaint. The
+  // two questions are different: `manage_users` says they may edit a volunteer
+  // at all, the scope says WHICH volunteers are theirs. Split them.
+  const scopeRestricted = !scope?.unrestricted
+    && scope?.kind !== SCOPE_KINDS.NONE
+    && ((scope?.mandals?.length || 0) > 0 || (scope?.areas?.length || 0) > 0);
+  // Kept for the questions that really are about the permission: which ROLES may
+  // be handed out, and whether the create form runs in scoped mode.
+  const isScopedMandalManager = !isGlobalUserManager
+    && permissions.includes('manage_scoped_volunteers')
+    && !scope?.unrestricted
+    && (scope?.mandals?.length || 0) > 0;
+  const volunteers = useMemo(() => (
+    scopeRestricted ? filterVolunteersByScope(allVolunteers, scope) : allVolunteers
+  ), [allVolunteers, scopeRestricted, scope]);
   const [roles, setRoles] = useState([]);
   const { areas, mandals } = useAreasAndMandals();
+  // What a scoped manager is allowed to hand out. Mirrors CreateVolunteerForm and
+  // functions/createVolunteerAccount.js: never a role that could manage users or
+  // roles, and never territory outside their own — the rules refuse both, and
+  // offering them only turns a policy into a raw "insufficient permissions".
+  const assignableRoles = useMemo(() => (
+    isScopedMandalManager
+      ? roles.filter((r) => !['manage_users', 'manage_roles'].some((p) => (r.permissions || []).includes(p)))
+      : roles
+  ), [roles, isScopedMandalManager]);
+  const assignableAreaNames = useMemo(() => {
+    const all = areas.map((a) => a.name);
+    if (!scopeRestricted || !scope?.areas?.length) return all;
+    return all.filter((a) => scope.areas.includes(a));
+  }, [areas, scopeRestricted, scope]);
+  const assignableMandalNames = useMemo(() => {
+    const all = mandals.map((m) => m.name);
+    if (!scopeRestricted || !scope?.mandals?.length) return all;
+    return all.filter((m) => scope.mandals.includes(m));
+  }, [mandals, scopeRestricted, scope]);
   const [selectedId, setSelectedId] = useState(null);
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -718,8 +794,10 @@ function VolunteerEditorInner() {
   const currentView = VIEWS.find((v) => v.key === statusView) || VIEWS[0];
   const visibleRows = useMemo(() => scopedRows.filter(currentView.test), [scopedRows, currentView]);
 
-  const areaNames = useMemo(() => areas.map((a) => a.name), [areas]);
-  const mandalNames = useMemo(() => mandals.map((m) => m.name), [mandals]);
+  // The roster filters offer only what the roster can actually contain — a scoped
+  // manager picking a mandal they don't oversee would just empty the list.
+  const areaNames = assignableAreaNames;
+  const mandalNames = assignableMandalNames;
 
   /** What the reader of the export is looking at, printed on both the CSV meta
    *  block and the PDF header — a filtered roster that says nothing about its
@@ -926,6 +1004,7 @@ function VolunteerEditorInner() {
 
       <PendingResetRequests
         volunteers={volunteers}
+        canApprove={isGlobalUserManager}
         onApprove={(v) => { setNotice(null); setResetTarget(v); }}
       />
 
@@ -1003,7 +1082,11 @@ function VolunteerEditorInner() {
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
       <div className="md:col-span-1">
-        <CreateVolunteerForm roles={roles} />
+        <CreateVolunteerForm
+          roles={roles}
+          defaultMandals={scopeRestricted ? (scope.mandals || []) : []}
+          scopedManager={isScopedMandalManager}
+        />
 
         {/* Search + filters */}
         <div className="mb-3 space-y-2">
@@ -1216,7 +1299,7 @@ function VolunteerEditorInner() {
             </div>
 
             <RolePicker
-              roles={roles}
+              roles={assignableRoles}
               values={draft.roleRefs}
               onChange={(v) => setDraft({ ...draft, roleRefs: v })}
             />
@@ -1274,7 +1357,7 @@ function VolunteerEditorInner() {
                 <div>
                   <Label>Assigned areas <span className="font-normal text-slate-400">— from the household address</span></Label>
                   <ChipMultiSelect
-                    options={areas.map((a) => a.name)}
+                    options={assignableAreaNames}
                     value={draft.assignedAreas}
                     onChange={(v) => setDraft({ ...draft, assignedAreas: v })}
                     allLabel="areas"
@@ -1285,7 +1368,7 @@ function VolunteerEditorInner() {
                 <div>
                   <Label>Assigned mandals <span className="font-normal text-slate-400">— from the individual</span></Label>
                   <ChipMultiSelect
-                    options={mandals.map((m) => m.name)}
+                    options={assignableMandalNames}
                     value={draft.assignedMandals}
                     onChange={(v) => setDraft({ ...draft, assignedMandals: v })}
                     allLabel="mandals"
@@ -1331,7 +1414,7 @@ function VolunteerEditorInner() {
 
 export function VolunteerEditor() {
   return (
-    <RequirePermission permission="manage_users" fallback={<div className="p-6 text-sm text-slate-500">You don't have permission to manage volunteers.</div>}>
+    <RequirePermission anyOf={["manage_users", "manage_scoped_volunteers"]} fallback={<div className="p-6 text-sm text-slate-500">You don't have permission to manage volunteers.</div>}>
       <VolunteerEditorInner />
     </RequirePermission>
   );

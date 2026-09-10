@@ -327,10 +327,242 @@ function buildBirthdayReport(data) {
   return { subject: heading, html, text };
 }
 
+// ── Weekly sabha coverage digest ────────────────────────────────────────────
+
+/**
+ * PHASE 33 — the track record, as an email.
+ *
+ * "automatically sabha creation will help in seeing track record which area and
+ *  which day sabha not happen. so easy to fallow up there Volunteer."
+ *
+ * The All Area Sabhas screen answers that for whoever opens it; this answers it
+ * for the people who never do. Which is why the follow-up list comes FIRST and
+ * the full grid second: a report that opens with a wall of green teaches its
+ * readers that there is nothing in it for them, and by the time a mandal has
+ * genuinely stopped meeting nobody is reading it any more.
+ */
+const COVERAGE_COLORS = {
+  held: '#16a34a',
+  unmarked: '#f59e0b',
+  missed: '#dc2626',
+  none: '#eef2f6',
+};
+
+const COVERAGE_LABELS = {
+  held: 'Held',
+  unmarked: 'No attendance marked',
+  missed: 'No sabha',
+};
+
+/** One coverage row as a strip of coloured week cells. Table cells, not spans —
+ *  Outlook's Word renderer drops the height on an inline-block.
+ *
+ *  The `title` is set only on weeks that went wrong. A tooltip nobody hovers is
+ *  worth ~40 bytes on every cell, and in a city-sized grid that is most of the
+ *  message; on a red or amber cell it is the one place the exact date survives
+ *  for a screen reader, so those keep it. */
+function coverageStrip(cells) {
+  const tds = cells.map((c) => {
+    const bg = c ? COVERAGE_COLORS[c.status] : COVERAGE_COLORS.none;
+    const title = c && c.status !== 'held'
+      ? ` title="${esc(`${c.date}: ${COVERAGE_LABELS[c.status]}`)}"`
+      : '';
+    return `<td width="16"${title} style="width:16px;padding:0 2px 0 0;">`
+      + `<div style="height:16px;border-radius:3px;background:${bg};font-size:1px;line-height:16px;">&nbsp;</div></td>`;
+  }).join('');
+  return `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>${tds}</tr></table>`;
+}
+
+/**
+ * How many schedules the week-by-week grid will draw.
+ *
+ * Gmail clips a message over 102 KB behind a "View entire message" link, and a
+ * clipped report looks broken in exactly the way that stops people opening the
+ * next one. Each grid row costs ~1.5 KB, so an unbounded grid breaks somewhere
+ * around sixty schedules — which BAPS Jaipur will pass.
+ *
+ * The grid is reference material; the follow-up table above it is the task, and
+ * that one is never truncated. Rows arrive sorted worst-first, so what falls off
+ * the end is always the healthiest. The plain-text alternative keeps every row.
+ */
+const GRID_ROW_LIMIT = 30;
+
+function coverageLegend() {
+  const item = (color, label) => `<span style="white-space:nowrap;margin-right:12px;">`
+    + `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${color};"></span>`
+    + `<span style="color:${MUTED};font-size:11px;">&nbsp;${esc(label)}</span></span>`;
+  return `<div style="margin:8px 0 0;">
+    ${item(COVERAGE_COLORS.held, 'Held')}
+    ${item(COVERAGE_COLORS.unmarked, 'Not marked')}
+    ${item(COVERAGE_COLORS.missed, 'No sabha')}
+    ${item(COVERAGE_COLORS.none, 'None due')}
+  </div>`;
+}
+
+function lastHeldLabel(row, fmt) {
+  if (row.lastHeld) return fmt(row.lastHeld);
+  return row.dueTotal ? 'not once' : '—';
+}
+
+/**
+ * buildSabhaCoverageReport(data, opts)
+ *
+ * @param {object} data from lib/sabhaCoverage.loadSabhaCoverage()
+ * @param {object} [opts]
+ * @param {object} [opts.forVolunteer] {id, name} — renders the narrowed copy for
+ *   one mandal head instead of the org-wide digest.
+ * @param {function} [opts.formatDate] 'YYYY-MM-DD' → '13 Sep'
+ */
+function buildSabhaCoverageReport(data, opts = {}) {
+  const solo = opts.forVolunteer || null;
+  const fmt = opts.formatDate || ((d) => String(d || '—'));
+  const rows = data.rows || [];
+  const followUps = rows.filter((r) => r.needsFollowUp);
+  const totals = data.totals || {};
+
+  const heading = solo
+    ? `Your sabhas — ${data.periodLabel}`
+    : `Sabha coverage — ${data.periodLabel}`;
+  const subject = followUps.length
+    ? `${heading} · ${followUps.length} need${followUps.length === 1 ? 's' : ''} a call`
+    : heading;
+
+  const parts = [];
+
+  parts.push(`<div style="color:${MUTED};font-size:13px;line-height:1.6;margin-bottom:14px;">`
+    + `The last ${data.weeksBack} completed weeks, ${esc(data.periodLabel)}. `
+    + (solo
+      ? 'Only the sabhas you are responsible for. '
+      : 'Every recurring sabha in the city. ')
+    + 'This week is not included — it has not finished yet.'
+    + '</div>');
+
+  parts.push(tiles([
+    { label: 'Sabhas due', value: totals.due || 0 },
+    { label: 'Held', value: totals.held || 0, tone: COVERAGE_COLORS.held },
+    { label: 'Not held', value: (totals.missed || 0) + (totals.unmarked || 0), tone: COVERAGE_COLORS.missed },
+    { label: 'Need a call', value: followUps.length, tone: followUps.length ? ORANGE : SLATE },
+  ]));
+
+  if (!rows.length) {
+    parts.push(`<div style="color:${MUTED};font-size:13px;padding:14px;border:1px dashed ${BORDER};border-radius:8px;text-align:center;">`
+      + 'No recurring sabhas are set up yet. Add one under Events → All Area Sabhas.'
+      + '</div>');
+  } else {
+    // ── The follow-up list, first, because it is the only part that is a task.
+    if (followUps.length) {
+      parts.push(sectionTitle(solo ? 'Chase these' : 'Needs a call'));
+      parts.push(`<div style="color:${MUTED};font-size:12px;margin:-4px 0 8px;">`
+        + 'Two or more scheduled sabhas in a row with nothing recorded. Either the sabha stopped, or it happened and nobody marked attendance — both are worth one phone call.'
+        + '</div>');
+      parts.push(table(
+        ['Area', 'Mandal', 'Missed in a row', 'Last held'],
+        followUps.map((r) => [
+          esc(r.area),
+          esc(r.mandal),
+          `<strong style="color:${COVERAGE_COLORS.missed}">${r.missStreak}</strong>`,
+          esc(lastHeldLabel(r, fmt)),
+        ]),
+      ));
+    } else {
+      parts.push(sectionTitle('Nothing to chase'));
+      parts.push(`<div style="color:#166534;font-size:13px;padding:12px 14px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:8px;">`
+        + 'Every recurring sabha met, or missed at most one week. Nothing needs following up.'
+        + '</div>');
+    }
+
+    // ── The grid.
+    parts.push(sectionTitle(`Week by week`));
+    const gridHead = `<tr>
+      <th align="left" style="padding:7px 10px;border-bottom:1px solid ${BORDER};color:${MUTED};font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;">Sabha</th>
+      <th align="left" style="padding:7px 10px;border-bottom:1px solid ${BORDER};color:${MUTED};font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;">${esc(data.weeks.length ? `${data.weeks[0].label} → ${data.weeks[data.weeks.length - 1].label}` : '')}</th>
+      <th align="right" style="padding:7px 10px;border-bottom:1px solid ${BORDER};color:${MUTED};font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;">Held</th>
+    </tr>`;
+    const gridRows = rows.slice(0, GRID_ROW_LIMIT);
+    const gridBody = gridRows.map((r) => `<tr>
+      <td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;color:${SLATE};font-size:13px;">
+        <div style="font-weight:600;">${esc(r.area)}${r.paused ? ` <span style="color:${MUTED};font-weight:400;font-size:11px;">(paused)</span>` : ''}</div>
+        <div style="color:${MUTED};font-size:11px;">${esc(r.mandal)} · ${esc(r.cadence)}</div>
+      </td>
+      <td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;">${coverageStrip(r.cells)}</td>
+      <td align="right" style="padding:8px 10px;border-bottom:1px solid #f1f5f9;color:${SLATE};font-size:13px;white-space:nowrap;">
+        ${r.held}<span style="color:${MUTED};">/${r.dueTotal}</span>
+      </td>
+    </tr>`).join('');
+    parts.push(`<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${BORDER};border-radius:8px;border-collapse:separate;overflow:hidden;"><thead>${gridHead}</thead><tbody>${gridBody}</tbody></table>`);
+    parts.push(coverageLegend());
+
+    const hidden = rows.length - gridRows.length;
+    if (hidden > 0) {
+      parts.push(`<div style="margin-top:8px;color:${MUTED};font-size:12px;">`
+        + `Showing the ${gridRows.length} sabhas needing the most attention. `
+        + `${hidden} more ${hidden === 1 ? 'is' : 'are'} further down the list — open Events → All Area Sabhas for the full grid.`
+        + '</div>');
+    }
+
+    if (!data.attendanceKnown) {
+      parts.push(`<div style="margin-top:10px;color:#854d0e;font-size:12px;padding:10px 12px;border:1px solid #fde68a;background:#fefce8;border-radius:8px;">`
+        + 'There were too many sabhas in this window to check attendance on each one, so a green week here means the sabha existed — not that anybody was marked present.'
+        + '</div>');
+    }
+
+    // ── What is coming, so the email is also a nudge and not only a scolding.
+    const upcoming = rows.filter((r) => r.nextDate).sort((a, b) => a.nextDate.localeCompare(b.nextDate));
+    if (upcoming.length) {
+      parts.push(sectionTitle('Next up'));
+      parts.push(table(
+        ['Area', 'Mandal', 'When'],
+        upcoming.slice(0, 20).map((r) => [
+          esc(r.area),
+          esc(r.mandal),
+          `${esc(fmt(r.nextDate))}${r.time ? esc(` · ${r.time}`) : ''}`,
+        ]),
+      ));
+    }
+
+    if (totals.paused) {
+      parts.push(`<div style="margin-top:12px;color:${MUTED};font-size:12px;">`
+        + `${totals.paused} schedule${totals.paused === 1 ? ' is' : 's are'} paused. Paused sabhas keep their history but create nothing new, and are never counted as needing a call.`
+        + '</div>');
+    }
+  }
+
+  const html = shell({
+    title: heading,
+    subtitle: 'Jai Swaminarayan',
+    bodyHtml: parts.join(''),
+    footerNote: solo
+      ? 'You are receiving this because you manage these sabhas.'
+      : null,
+  });
+
+  const textLines = [
+    heading,
+    '',
+    `Due ${totals.due || 0} · held ${totals.held || 0} · not held ${(totals.missed || 0) + (totals.unmarked || 0)} · need a call ${followUps.length}`,
+    '',
+  ];
+  if (followUps.length) {
+    textLines.push('NEEDS A CALL');
+    followUps.forEach((r) => {
+      textLines.push(`  ${r.area} · ${r.mandal} — ${r.missStreak} in a row, last held ${lastHeldLabel(r, fmt)}`);
+    });
+    textLines.push('');
+  }
+  textLines.push('EVERY SABHA');
+  rows.forEach((r) => {
+    textLines.push(`  ${r.area} · ${r.mandal} (${r.cadence})${r.paused ? ' [paused]' : ''} — held ${r.held}/${r.dueTotal}, last ${lastHeldLabel(r, fmt)}`);
+  });
+  if (!rows.length) textLines.push('  no recurring sabhas set up yet');
+
+  return { subject, html, text: textLines.join('\n') };
+}
+
 module.exports = {
   buildDailyReport,
   buildPostSabhaReport,
   buildBirthdayReport,
+  buildSabhaCoverageReport,
   statusPill,
   statusLabel,
   STATUS_DISPLAY,

@@ -210,7 +210,7 @@ export function subscribeToBatches(cb, onError) {
  * to the maximum. If every batch is numberless the query comes back empty and
  * numbering starts at 1, exactly as the old full scan did.
  */
-async function nextBatchNumber() {
+export async function nextBatchNumber() {
   const snap = await getDocs(query(
     collection(db, 'batches'), orderBy('batchNumber', 'desc'), limit(1),
   ));
@@ -800,7 +800,14 @@ export function filterBatchesByScope(batches, scope, viewerId = null) {
 
     switch (scope.kind) {
       case SCOPE_KINDS.AREA: return areaOk;
-      case SCOPE_KINDS.MANDAL: return mandalOk;
+      // PHASE 31 — a MANDAL scope is the ONE case where a missing field is not
+      // read as "spans everything". A mandal head oversees a column of the grid,
+      // and a batch with no mandal is a city-wide Yuvak batch they can neither
+      // edit (canEditBatch below refuses it, and so do the rules) nor act on. The
+      // permissive reading put every legacy batch in a Bal Mandal head's list as
+      // undeletable, unassignable noise — the opposite of "only my mandal".
+      // Their own assigned batch is still exempt, via the viewerId check above.
+      case SCOPE_KINDS.MANDAL: return Boolean(b.mandal) && scope.mandals.includes(b.mandal);
       case SCOPE_KINDS.INTERSECT: return areaOk && mandalOk;
       case SCOPE_KINDS.UNION:
       default: return areaOk || mandalOk;

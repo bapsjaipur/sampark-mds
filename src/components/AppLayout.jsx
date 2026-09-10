@@ -151,7 +151,7 @@ export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('mds_sidebar_collapsed') === '1');
 
-  const roleView = useMemo(() => getRoleView(permissions), [permissions]);
+  const roleView = useMemo(() => getRoleView(permissions, volunteer), [permissions, volunteer]);
 
   useEffect(() => {
     localStorage.setItem('mds_sidebar_collapsed', collapsed ? '1' : '0');

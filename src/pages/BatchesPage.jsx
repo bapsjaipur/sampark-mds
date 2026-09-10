@@ -71,10 +71,15 @@ function BatchesPageInner() {
     [mandalDefs],
   );
 
-  const areas = scope?.unrestricted || scope?.kind === SCOPE_KINDS.MANDAL
+  // PHASE 31 — narrow on whatever is ASSIGNED rather than on the scope kind. The
+  // old test keyed off the kind alone, so a MANDAL-scoped Super Moderator was
+  // handed every area in the city even when specific areas had been assigned to
+  // them. An empty list still means "no restriction on this axis" — that is what
+  // a mandal head with no areas genuinely has, since their column crosses them all.
+  const areas = scope?.unrestricted || !scope?.areas?.length
     ? allAreas
     : allAreas.filter((a) => scope.areas.includes(a));
-  const mandals = scope?.unrestricted || scope?.kind === SCOPE_KINDS.AREA
+  const mandals = scope?.unrestricted || !scope?.mandals?.length
     ? allMandals
     : allMandals.filter((m) => scope.mandals.includes(m));
 

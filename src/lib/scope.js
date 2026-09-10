@@ -114,6 +114,50 @@ export const SCOPE_KIND_META = {
 export const ALL_SCOPE_KINDS = Object.values(SCOPE_KINDS);
 
 /**
+ * PHASE 32 — MANDALS WORKED BY THE SAME PEOPLE.
+ *
+ * Bal Mandal and Sishu Mandal are two separate mandals on the CONTACT — a child
+ * is one or the other, and that distinction is kept on purpose so the split can
+ * be analysed later. But right now there is one set of volunteers covering both:
+ * there is no separate Sishu Mandal karyakarta to assign, and nobody wants to
+ * tick two boxes on every volunteer to say something that is true of all of them.
+ *
+ * So the pairing lives here, at scope-resolution time, and NOT in the data:
+ * being assigned either mandal resolves to both. Nothing is written to any
+ * volunteer document, so the day Sishu Mandal gets its own team this array is
+ * emptied and every scope narrows back on the next page load — no migration, no
+ * stranded `assignedMandals` to clean up.
+ *
+ * What this does NOT do: it does not merge the two mandals anywhere else. A
+ * contact stays Bal Mandal or Sishu Mandal, sabhas are still created per mandal,
+ * batches are still cut per mandal, and every report still groups by the real
+ * value. The only thing widened is who is allowed to see and edit them.
+ *
+ * firestore.rules mirrors this in ctx(). If you change this array, change the
+ * rules in the same commit — otherwise the UI offers Sishu Mandal and the
+ * database refuses the write.
+ */
+export const MANDAL_GROUPS = [
+  ['Bal Mandal', 'Sishu Mandal'],
+];
+
+/**
+ * Grows a list of assigned mandals to include everything in the same group.
+ * Order is preserved and duplicates removed, so `describeScope` reads naturally
+ * and the assignment the admin actually made still comes first.
+ */
+export function expandMandalGroups(mandals = []) {
+  const out = [];
+  const seen = new Set();
+  const push = (m) => { if (m && !seen.has(m)) { seen.add(m); out.push(m); } };
+  (mandals || []).forEach(push);
+  for (const group of MANDAL_GROUPS) {
+    if (group.some((m) => seen.has(m))) group.forEach(push);
+  }
+  return out;
+}
+
+/**
  * inferScopeKind({ areas, mandals })
  *
  * The shape to use when NO role states one. Read straight off the assignment,
@@ -205,7 +249,12 @@ export function resolveScope({ role = null, roles = null, volunteer = null, perm
   const list = Array.isArray(roles) && roles.length ? roles : (role ? [role] : []);
 
   const areas = Array.isArray(volunteer?.assignedAreas) ? volunteer.assignedAreas.filter(Boolean) : [];
-  const mandals = Array.isArray(volunteer?.assignedMandals) ? volunteer.assignedMandals.filter(Boolean) : [];
+  // Expanded, not stored: MANDAL_GROUPS pairs mandals that share one set of
+  // volunteers, so being given Bal Mandal resolves to Sishu Mandal too. The
+  // volunteer document is untouched — see MANDAL_GROUPS above.
+  const mandals = expandMandalGroups(
+    Array.isArray(volunteer?.assignedMandals) ? volunteer.assignedMandals.filter(Boolean) : [],
+  );
 
   // view_all_contacts has always meant "ignore scoping", and firestore.rules
   // still short-circuits on it. Honour that before looking at scopeKind, or a
@@ -322,6 +371,66 @@ export function filterHouseholdsByScope(households, scope) {
   // hiding households here would hide the only way to reach those members.
   if (scope.kind === SCOPE_KINDS.MANDAL) return households || [];
   return (households || []).filter((h) => scope.areas.includes(h?.area));
+}
+
+/**
+ * writableMandals(scope) — which mandals may this person CREATE or FILE things
+ * under? `null` means "this axis doesn't restrict them"; an array means those
+ * names and no others; `[]` means nothing at all.
+ *
+ * Reading is the wrong test for a form. A UNION-scoped karyakarta with an area
+ * and a mandal can legitimately add a Mahila Mandal contact in their area, so
+ * narrowing their Mandal dropdown to their one assigned mandal would take away
+ * something they are entitled to. Only the shapes where the mandal axis is
+ * genuinely binding — MANDAL (the column) and INTERSECT (the cell) — restrict it.
+ *
+ * Screens should GREY OUT what this excludes rather than removing it: a Super
+ * Moderator over two mandals needs to see both offered, and a dropdown that
+ * silently drops options can't be told apart from one that failed to load.
+ */
+export function writableMandals(scope) {
+  if (!scope || scope.unrestricted) return null;
+  if (scope.kind === SCOPE_KINDS.NONE) return [];
+  if (scope.kind === SCOPE_KINDS.MANDAL || scope.kind === SCOPE_KINDS.INTERSECT) {
+    return scope.mandals || [];
+  }
+  return null;
+}
+
+/** The area-axis twin of writableMandals(). Same null/array/[] contract. */
+export function writableAreas(scope) {
+  if (!scope || scope.unrestricted) return null;
+  if (scope.kind === SCOPE_KINDS.NONE) return [];
+  if (scope.kind === SCOPE_KINDS.AREA || scope.kind === SCOPE_KINDS.INTERSECT) {
+    return scope.areas || [];
+  }
+  return null;
+}
+
+/**
+ * Is this VOLUNTEER inside the viewer's territory?
+ *
+ * A volunteer isn't a contact: they hold two lists of their own rather than one
+ * area and one mandal, so matchesScope() can't judge them. Overlap on either
+ * list counts — a karyakarta assigned to your mandal is yours to see even if
+ * their area sits outside your own, which is what makes a mandal head able to
+ * find every person working their column.
+ *
+ * A volunteer with no territory at all (an admin, a santo) belongs to nobody in
+ * particular and stays out of scoped lists.
+ */
+export function volunteerInScope(volunteer, scope) {
+  if (!scope || scope.unrestricted) return true;
+  if (scope.kind === SCOPE_KINDS.NONE) return false;
+  const vMandals = Array.isArray(volunteer?.assignedMandals) ? volunteer.assignedMandals : [];
+  const vAreas = Array.isArray(volunteer?.assignedAreas) ? volunteer.assignedAreas : [];
+  return vMandals.some((m) => scope.mandals.includes(m))
+    || vAreas.some((a) => scope.areas.includes(a));
+}
+
+export function filterVolunteersByScope(volunteers, scope) {
+  if (!scope || scope.unrestricted) return volunteers || [];
+  return (volunteers || []).filter((v) => volunteerInScope(v, scope));
 }
 
 /** Human-readable territory, e.g. "Vaishali Nagar + 2 more · Yuvak Mandal". */

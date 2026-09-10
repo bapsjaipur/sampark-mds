@@ -43,6 +43,14 @@ export const DEFAULT_EMAIL_SETTINGS = {
   autoPostSabhaVolunteerEnabled: false,
   // Birthday + anniversary digest at 06:00 IST.
   autoBirthdayEnabled: true,
+  // Phase 33 — weekly sabha coverage digest, Monday morning. Reports on
+  // COMPLETED weeks only: which area's sabha happened, which didn't, and who has
+  // now missed two in a row.
+  autoSabhaDigestEnabled: true,
+  // The per-mandal-head copy of the same digest, narrowed to the schedules that
+  // person is responsible for. Off by default, and unlike the admin digest it is
+  // only sent to someone who actually has a miss to chase — see runSabhaDigest.
+  autoSabhaDigestVolunteerEnabled: false,
   senderName: 'BAPS Jaipur MDS',
   // Left blank → the Trigger Email extension's configured default sender is
   // used. Only set this if that sender is verified, or mail will bounce.

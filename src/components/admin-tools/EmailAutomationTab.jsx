@@ -70,6 +70,18 @@ const TOGGLES = [
     when: 'Every morning at 6:10 am',
     description: 'Today’s birthdays and anniversaries with a one-tap WhatsApp link per person. Skipped on days with nobody to wish.',
   },
+  {
+    key: 'autoSabhaDigestEnabled',
+    title: 'Weekly sabha coverage',
+    when: 'Monday mornings at 7:12 am',
+    description: 'Which area’s sabha happened last week and which didn’t, six weeks of history per schedule, and who has now missed two in a row. Covers completed weeks only.',
+  },
+  {
+    key: 'autoSabhaDigestVolunteerEnabled',
+    title: 'Coverage copy to each mandal head',
+    when: 'With the report above',
+    description: 'The same digest narrowed to the sabhas that person runs — and only sent to someone who actually has a miss to chase, so a clean week stays quiet.',
+  },
 ];
 
 const KIND_LABELS = {
@@ -80,6 +92,8 @@ const KIND_LABELS = {
   'post-sabha-manual': 'Post-sabha (manual)',
   birthday: 'Birthday summary',
   'birthday-manual': 'Birthday summary (manual)',
+  'sabha-digest': 'Sabha coverage',
+  'sabha-digest-volunteer': 'Sabha coverage (mandal head)',
 };
 
 const STATUS_STYLES = {
@@ -208,6 +222,8 @@ function EmailAutomationInner() {
         autoPostSabhaAdminEnabled: !!draft.autoPostSabhaAdminEnabled,
         autoPostSabhaVolunteerEnabled: !!draft.autoPostSabhaVolunteerEnabled,
         autoBirthdayEnabled: !!draft.autoBirthdayEnabled,
+        autoSabhaDigestEnabled: !!draft.autoSabhaDigestEnabled,
+        autoSabhaDigestVolunteerEnabled: !!draft.autoSabhaDigestVolunteerEnabled,
         dryRun: !!draft.dryRun,
         senderName: String(draft.senderName || '').trim(),
         fromAddress: String(draft.fromAddress || '').trim(),
@@ -472,6 +488,9 @@ function EmailAutomationInner() {
           <Button variant="secondary" onClick={() => handleSend('birthday', false)} disabled={!!sending}>
             {sending === 'birthday' ? 'Sending…' : 'Send birthday summary'}
           </Button>
+          <Button variant="secondary" onClick={() => handleSend('sabhaCoverage', false)} disabled={!!sending}>
+            {sending === 'sabhaCoverage' ? 'Sending…' : 'Send sabha coverage'}
+          </Button>
         </div>
 
         <div className="mt-4 border-t border-slate-100 pt-3">
@@ -490,6 +509,9 @@ function EmailAutomationInner() {
               </Button>
               <Button variant="ghost" onClick={() => handleSend('birthday', true)} disabled={!!sending}>
                 {sending === 'birthday-test' ? 'Sending…' : 'Birthday'}
+              </Button>
+              <Button variant="ghost" onClick={() => handleSend('sabhaCoverage', true)} disabled={!!sending}>
+                {sending === 'sabhaCoverage-test' ? 'Sending…' : 'Sabha'}
               </Button>
             </div>
           </div>

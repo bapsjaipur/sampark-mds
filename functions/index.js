@@ -65,6 +65,20 @@ exports.scheduledBirthdaySummary = emailJobs.scheduledBirthdaySummary;
 exports.sendManualEmail = emailJobs.sendManualEmail;
 exports.previewEmailRecipients = emailJobs.previewEmailRecipients;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 33 — recurring sabhas. Sunday 04:07 IST, materialises the next four
+// weeks of every active sabhaSchedules rule as ordinary events/{id} documents.
+// The All Area Sabhas screen has a button that does the same thing on demand;
+// both write the SAME derived id, so neither can duplicate the other's work.
+//
+// The digest is the other half: Monday 07:12 IST it reports on the weeks that
+// have finished — which area's sabha happened, which didn't, and who has now
+// missed two in a row. Generating the calendar is only useful if somebody is
+// told when the calendar and reality stop agreeing.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.scheduledSabhaGeneration = require('./sabhaScheduler').scheduledSabhaGeneration;
+exports.scheduledSabhaDigest = require('./sabhaDigest').scheduledSabhaDigest;
+
 exports.backupDatabase = onCall({ region: 'us-central1', maxInstances: 1, timeoutSeconds: 540 }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Must be logged in.');
   const volDoc = await db.collection('volunteers').doc(request.auth.uid).get();

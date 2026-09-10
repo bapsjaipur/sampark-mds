@@ -8,64 +8,83 @@
 //
 // Any Bal Mandal volunteer can mark observers. Observers themselves can mark
 // their own attendance.
+//
+// PHASE 32 — THE OBSERVER LIST WAS ALWAYS EMPTY.
+//
+// The panel looked for observers with
+// `where('roleKey','in',['nirikshak','sant'])`. Two things were wrong with that
+// and either alone was fatal: volunteer documents carry no `roleKey` at all
+// (role identity lives on the role document), and the sant preset's key is
+// 'santo', not 'sant'. The query matched nothing, `observers.length === 0`, and
+// the component returned null — so the section simply never appeared and looked
+// like "no observers are assigned yet".
+//
+// It now joins the two shared listeners the app already keeps open — volunteers
+// and roles — through isObserverRole(). That is not just a fix: it removes a
+// getDocs on every event page, so the panel is now free.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { useState, useEffect, useMemo } from 'react';
+import { collection, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../hooks/usePermissions';
+import { useVolunteers } from '../../hooks/useVolunteers';
+import { useRoles, rolesOfVolunteer } from '../../hooks/useRoles';
+import { isObserverRole } from '../../lib/roleView';
 import { useToast } from '../../contexts/ToastContext';
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
-import { Eye, X } from 'lucide-react';
+import { Eye } from 'lucide-react';
 
 export default function ObserverAttendancePanel({ event }) {
-  const { volunteer } = useAuth();
+  const { volunteer, hasPermission } = useAuth();
+  const { volunteers } = useVolunteers();
+  const { rolesById } = useRoles();
   const { showToast } = useToast();
-  const [observers, setObservers] = useState([]);
   const [attendedIds, setAttendedIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
 
-  const canMark = volunteer?.program === 'Bal Mandal' || volunteer?.roleKey === 'admin';
+  // manage_attendance is the permission that means "may mark someone present";
+  // manage_users covers the admin who is not on the Bal Mandal roster.
+  const canMark = hasPermission('manage_attendance')
+    && (volunteer?.program === 'Bal Mandal' || hasPermission('manage_users'));
   const isBalMandalEvent = event?.mandal === 'Bal Mandal' || event?.mandal === 'Sishu Mandal';
+
+  // Derived from listeners that are already open elsewhere in the app, so this
+  // costs no reads of its own.
+  const observers = useMemo(() => {
+    if (!isBalMandalEvent) return [];
+    return (volunteers || [])
+      .filter((v) => v?.isActive !== false && v?.program === 'Bal Mandal')
+      .map((v) => {
+        const role = rolesOfVolunteer(v, rolesById).find(isObserverRole);
+        return role ? { ...v, roleName: role.name || 'Observer' } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [volunteers, rolesById, isBalMandalEvent]);
 
   useEffect(() => {
     if (!event?.id || !isBalMandalEvent) {
       setLoading(false);
-      return;
+      return undefined;
     }
-    loadObservers();
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const attendanceRef = collection(db, 'events', event.id, 'observerAttendance');
+        const attendanceSnap = await getDocs(attendanceRef);
+        if (cancelled) return;
+        setAttendedIds(new Set(attendanceSnap.docs.map((d) => d.id)));
+      } catch (err) {
+        console.error('Failed to load observer attendance:', err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [event?.id, isBalMandalEvent]);
-
-  async function loadObservers() {
-    setLoading(true);
-
-    try {
-      // Find all Nirikshak and Sant volunteers
-      const volunteersRef = collection(db, 'volunteers');
-      const q = query(
-        volunteersRef,
-        where('program', '==', 'Bal Mandal'),
-        where('roleKey', 'in', ['nirikshak', 'sant']),
-        where('isActive', '==', true)
-      );
-
-      const snap = await getDocs(q);
-      const observerList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-      // Load attendance records for this event
-      const attendanceRef = collection(db, 'events', event.id, 'observerAttendance');
-      const attendanceSnap = await getDocs(attendanceRef);
-      const attended = new Set(attendanceSnap.docs.map(d => d.id));
-
-      setObservers(observerList);
-      setAttendedIds(attended);
-    } catch (err) {
-      console.error('Failed to load observers:', err);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function toggleAttendance(observerId) {
     if (!canMark) return;
@@ -128,7 +147,7 @@ export default function ObserverAttendancePanel({ event }) {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-slate-900">{obs.name}</p>
                 <p className="truncate text-xs text-slate-500">
-                  {obs.roleKey === 'nirikshak' ? 'Nirikshak' : 'Sant'} · {obs.areas?.join(', ') || 'No area'}
+                  {obs.roleName} · {obs.assignedAreas?.join(', ') || 'No area'}
                 </p>
               </div>
               {isPresent && (
