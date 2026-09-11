@@ -26,9 +26,13 @@ import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestor
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import {
   Mail, Send, RefreshCw, AlertTriangle, CheckCircle2, Users, FlaskConical, Clock, Lock,
+  CalendarClock, Info, CalendarPlus, Copy, MessageCircle, CalendarDays,
 } from 'lucide-react';
 import { db } from '../../lib/firebase';
 import { saveSettings, describeSettingsError } from '../../services/settingsService';
+import { getMyCalendarFeed, rebuildCalendarCacheNow } from '../../services/calendarService';
+import { getWhatsAppCloudStatus, saveWhatsAppCloudConfig, sendWhatsAppCloudMessage } from '../../services/whatsappCloudService';
+import { getGoogleCalendarStatus, saveGoogleCalendarConfig } from '../../services/googleCalendarService';
 import { useSettings } from '../../hooks/useSettings';
 import { useAuth } from '../../hooks/usePermissions';
 import { useToast } from '../../contexts/ToastContext';
@@ -38,11 +42,15 @@ import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Input, Label, Textarea } from '../ui/Input';
 import { cn } from '../../lib/cn';
+import {
+  describeCron, parseTimeCron, buildTimeCron, cronToTimeInput, isValidCron, WEEKDAYS,
+} from '../../lib/cron';
 
 const TOGGLES = [
   {
     key: 'autoDailyAdminEnabled',
     title: 'Daily calling report',
+    cronKey: 'scheduleDailyCron',
     when: 'Every night at 10:05 pm',
     description: 'Totals, a per-volunteer table and a status breakdown for the day, with a PDF attached. Goes to everyone listed below.',
   },
@@ -55,6 +63,7 @@ const TOGGLES = [
   {
     key: 'autoPostSabhaAdminEnabled',
     title: 'Post-sabha attendance report',
+    cronKey: 'schedulePostSabhaCron',
     when: 'Checked every 15 minutes',
     description: 'Fires about 10 minutes after a sabha ends, once per event. Includes the 12-month attendance ratio and who did not come.',
   },
@@ -67,12 +76,14 @@ const TOGGLES = [
   {
     key: 'autoBirthdayEnabled',
     title: 'Birthday & anniversary summary',
+    cronKey: 'scheduleBirthdayCron',
     when: 'Every morning at 6:10 am',
     description: 'Today’s birthdays and anniversaries with a one-tap WhatsApp link per person. Skipped on days with nobody to wish.',
   },
   {
     key: 'autoSabhaDigestEnabled',
     title: 'Weekly sabha coverage',
+    cronKey: 'scheduleSabhaDigestCron',
     when: 'Monday mornings at 7:12 am',
     description: 'Which area’s sabha happened last week and which didn’t, six weeks of history per schedule, and who has now missed two in a row. Covers completed weeks only.',
   },
@@ -81,6 +92,43 @@ const TOGGLES = [
     title: 'Coverage copy to each mandal head',
     when: 'With the report above',
     description: 'The same digest narrowed to the sabhas that person runs — and only sent to someone who actually has a miss to chase, so a clean week stays quiet.',
+  },
+];
+
+// PHASE 34 — the five job schedules the admin can edit, in the order they run
+// through a week. Each maps to a cron field on settings/email. `mode` picks the
+// friendly control: a wall-clock time, a time-plus-weekday, or a poll interval.
+// `note` explains what "generation" even is — it has no toggle of its own above.
+const SCHEDULE_FIELDS = [
+  {
+    key: 'scheduleDailyCron', overlayKey: 'daily', mode: 'daily',
+    title: 'Daily calling report',
+    note: 'Runs once a night. 22:05 by default so a full day of calls is in.',
+  },
+  {
+    key: 'scheduleBirthdayCron', overlayKey: 'birthday', mode: 'daily',
+    title: 'Birthday & anniversary summary',
+    note: 'A morning time works best — the wishes go out for the same day.',
+  },
+  {
+    key: 'scheduleSabhaDigestCron', overlayKey: 'sabhaDigest', mode: 'weekly',
+    title: 'Weekly sabha coverage',
+    note: 'Pick the morning after your sabha week closes, so the week is complete.',
+  },
+  {
+    key: 'scheduleSabhaGenerationCron', overlayKey: 'sabhaGeneration', mode: 'weekly',
+    title: 'Create the coming week’s sabhas',
+    note: 'The background job that turns each recurring sabha into next week’s dated event. No email — run it a day or two before the digest.',
+  },
+  {
+    key: 'schedulePostSabhaCron', overlayKey: 'postSabha', mode: 'everyN',
+    title: 'Post-sabha attendance check',
+    note: 'How often to look for a sabha that just ended. More frequent = a faster report, a few more reads each day.',
+  },
+  {
+    key: 'scheduleCalendarRebuildCron', overlayKey: 'calendarRebuild', mode: 'daily',
+    title: 'Rebuild the birthday calendar',
+    note: 'The background job behind the subscribable calendar below. Runs before dawn so the day’s events are ready. No email.',
   },
 ];
 
@@ -129,6 +177,87 @@ function Toggle({ checked, onChange, label, disabled = false }) {
   );
 }
 
+/** Shared styling for the time/day/number inputs so they line up with <Input>. */
+const CRON_INPUT = 'rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 focus:border-orange-400 focus:outline-none focus:ring-1 focus:ring-orange-200';
+
+/**
+ * The friendly editor for one schedule. It never blocks a value: if the stored
+ * cron isn't one of the three shapes it understands (someone hand-tuned it, or a
+ * future field uses a range), it steps aside and shows the raw cron in a text box
+ * so the string stays editable rather than being silently rewritten.
+ */
+function ScheduleEditor({ mode, cron, onChange, disabled }) {
+  const parsed = parseTimeCron(cron);
+  const timeVal = cronToTimeInput(cron); // '' unless it's a plain time cron
+
+  const fitsFriendly = mode === 'everyN'
+    ? !!(parsed && parsed.kind === 'everyN')
+    : !!timeVal; // daily + weekly both need a real time
+
+  if (!fitsFriendly) {
+    return (
+      <div>
+        <input
+          type="text"
+          disabled={disabled}
+          className={cn(CRON_INPUT, LOCKABLE, 'w-48 font-mono')}
+          value={cron || ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="min hour * * day"
+          aria-label="Cron expression"
+        />
+        <p className="mt-1 text-[11px] text-slate-400">Custom schedule — five cron fields, minute first.</p>
+      </div>
+    );
+  }
+
+  if (mode === 'everyN') {
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs text-slate-500">Every</span>
+        <input
+          type="number" min={1} max={59} inputMode="numeric"
+          disabled={disabled}
+          className={cn(CRON_INPUT, LOCKABLE, 'w-16')}
+          value={parsed.minutes}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            if (Number.isInteger(n) && n >= 1 && n <= 59) onChange(`*/${n} * * * *`);
+          }}
+          aria-label="Minutes between checks"
+        />
+        <span className="text-xs text-slate-500">minutes</span>
+      </div>
+    );
+  }
+
+  // daily or weekly — a time input, plus a weekday picker for weekly.
+  const dow = parsed && parsed.kind === 'weekly' ? parsed.dow : '1';
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        type="time"
+        disabled={disabled}
+        className={cn(CRON_INPUT, LOCKABLE)}
+        value={timeVal}
+        onChange={(e) => onChange(buildTimeCron(e.target.value, mode === 'weekly' ? dow : null) || cron)}
+        aria-label="Time of day"
+      />
+      {mode === 'weekly' && (
+        <select
+          disabled={disabled}
+          className={cn(CRON_INPUT, LOCKABLE)}
+          value={dow}
+          onChange={(e) => onChange(buildTimeCron(timeVal, e.target.value) || cron)}
+          aria-label="Day of week"
+        >
+          {WEEKDAYS.map((d) => <option key={d.value} value={d.value}>{d.long}</option>)}
+        </select>
+      )}
+    </div>
+  );
+}
+
 function EmailAutomationInner() {
   const { settings, loading, readDenied } = useSettings('email');
   const { volunteer, hasPermission } = useAuth();
@@ -145,6 +274,29 @@ function EmailAutomationInner() {
   const [audience, setAudience] = useState(null);
   const [audienceLoading, setAudienceLoading] = useState(false);
   const [logs, setLogs] = useState([]);
+
+  // PHASE 35 — the subscribable calendar. Nothing loads on mount: minting a feed
+  // link is a write, and rebuilding scans every contact, so both wait for a click.
+  const [rebuilding, setRebuilding] = useState(false);
+  const [calFeed, setCalFeed] = useState(null); // { url, scopeKind, unrestricted, empty }
+  const [calFeedLoading, setCalFeedLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // PHASE 36 — WhatsApp Cloud API. Status is a plain read of the config doc, so it
+  // loads on mount; the access token is never returned, only whether one is set.
+  const [waStatus, setWaStatus] = useState(null);
+  const [waDraft, setWaDraft] = useState({ enabled: false, phoneNumberId: '', apiVersion: 'v21.0', accessToken: '' });
+  const [waSaving, setWaSaving] = useState(false);
+  const [waTestTo, setWaTestTo] = useState('');
+  const [waTestText, setWaTestText] = useState('Namaste 🙏 Test message from BAPS Jaipur MDS.');
+  const [waSending, setWaSending] = useState(false);
+
+  // PHASE 37 — per-user Google Calendar push. Same pattern: status on mount, the
+  // client secret is write-only (never returned).
+  const [gcalStatus, setGcalStatus] = useState(null);
+  const [gcalDraft, setGcalDraft] = useState({ enabled: false, clientId: '', clientSecret: '' });
+  const [gcalSaving, setGcalSaving] = useState(false);
+  const [gcalCopied, setGcalCopied] = useState(false);
 
   // Only seed the draft once — re-seeding on every snapshot would wipe whatever
   // the admin is typing the moment their own save round-trips.
@@ -165,6 +317,24 @@ function EmailAutomationInner() {
       // A missing index or a role without send_emails must not blank the screen.
       (err) => console.warn('[EmailAutomationTab] emailLogs listener stopped:', err.message),
     );
+  }, []);
+
+  // Load the two integration statuses once. Each is a couple of reads of a config
+  // doc; a not-yet-deployed callable just leaves the card in its "not configured"
+  // state rather than blanking the screen — same forgiving posture as the log.
+  useEffect(() => {
+    getWhatsAppCloudStatus()
+      .then((s) => {
+        setWaStatus(s);
+        setWaDraft((d) => ({ ...d, enabled: !!s.enabled, phoneNumberId: s.phoneNumberId || '', apiVersion: s.apiVersion || 'v21.0' }));
+      })
+      .catch((err) => console.warn('[EmailAutomationTab] WhatsApp status unavailable:', err.message));
+    getGoogleCalendarStatus()
+      .then((s) => {
+        setGcalStatus(s);
+        setGcalDraft((d) => ({ ...d, enabled: !!s.enabled, clientId: s.clientId || '' }));
+      })
+      .catch((err) => console.warn('[EmailAutomationTab] Google Calendar status unavailable:', err.message));
   }, []);
 
   const loadAudience = useMemo(() => async () => {
@@ -214,6 +384,15 @@ function EmailAutomationInner() {
       return;
     }
 
+    // Each schedule must still be five cron fields. buildTimeCron/ScheduleEditor
+    // keep them well-formed, but the raw-cron fallback lets someone type freely —
+    // so guard here rather than deploy a string Cloud Scheduler will reject.
+    const badCron = SCHEDULE_FIELDS.find((f) => !isValidCron(draft[f.key]));
+    if (badCron) {
+      showToast({ type: 'error', message: `“${badCron.title}” needs a valid schedule (five cron fields, e.g. 5 22 * * *).` });
+      return;
+    }
+
     setSaving(true);
     try {
       await saveSettings('email', {
@@ -229,6 +408,15 @@ function EmailAutomationInner() {
         fromAddress: String(draft.fromAddress || '').trim(),
         maxRecipients: cap,
         extraRecipients,
+        // PHASE 34 — schedules. Saved here so the panel and pull-schedules.js can
+        // read them; they only change WHEN a job fires after the functions are
+        // redeployed with the new values (see the note in the Schedule times card).
+        scheduleDailyCron: String(draft.scheduleDailyCron).trim(),
+        schedulePostSabhaCron: String(draft.schedulePostSabhaCron).trim(),
+        scheduleBirthdayCron: String(draft.scheduleBirthdayCron).trim(),
+        scheduleSabhaDigestCron: String(draft.scheduleSabhaDigestCron).trim(),
+        scheduleSabhaGenerationCron: String(draft.scheduleSabhaGenerationCron).trim(),
+        scheduleCalendarRebuildCron: String(draft.scheduleCalendarRebuildCron).trim(),
       }, volunteer?.id);
       setDraft(null); // re-seed from the saved document
       showToast({ type: 'success', message: 'Email settings saved.' });
@@ -271,9 +459,170 @@ function EmailAutomationInner() {
     }
   }
 
+  // A callable that isn't deployed yet comes back as not-found/internal; say so
+  // plainly rather than surfacing a raw CORS/500 that reads like a real bug.
+  function calendarError(err) {
+    const code = String(err?.code || '');
+    if (code.includes('not-found') || code.includes('internal') || code.includes('unavailable')) {
+      return 'The calendar functions aren’t deployed yet. Deploy the functions, then try this again.';
+    }
+    return err?.message || 'Something went wrong with the calendar.';
+  }
+
+  async function handleRebuildCalendar() {
+    setRebuilding(true);
+    try {
+      const res = await rebuildCalendarCacheNow();
+      showToast({
+        type: 'success',
+        message: `Calendar rebuilt — ${res.birthdays} birthday${res.birthdays === 1 ? '' : 's'} and ${res.anniversaries} anniversar${res.anniversaries === 1 ? 'y' : 'ies'}. Subscribers refresh on their calendar’s own cycle.`,
+      });
+    } catch (err) {
+      showToast({ type: 'error', message: calendarError(err) });
+    } finally {
+      setRebuilding(false);
+    }
+  }
+
+  async function loadCalFeed(rotate = false) {
+    if (rotate && !window.confirm('Rotate your calendar link? The old URL stops working immediately and anyone you shared it with must re-subscribe.')) return;
+    setCalFeedLoading(true);
+    try {
+      const res = await getMyCalendarFeed({ rotate });
+      setCalFeed(res);
+      setCopied(false);
+      if (rotate) showToast({ type: 'success', message: 'New link generated — the old one no longer works.' });
+    } catch (err) {
+      showToast({ type: 'error', message: calendarError(err) });
+    } finally {
+      setCalFeedLoading(false);
+    }
+  }
+
+  async function copyCalFeed() {
+    if (!calFeed?.url) return;
+    try {
+      await navigator.clipboard.writeText(calFeed.url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      showToast({ type: 'info', message: 'Couldn’t copy automatically — select the link and copy it by hand.' });
+    }
+  }
+
+  // Shared "is this even deployed" mapping for the two integration cards.
+  function integrationError(err, label) {
+    const code = String(err?.code || '');
+    if (code.includes('not-found') || code.includes('internal') || code.includes('unavailable')) {
+      return `The ${label} functions aren’t deployed yet. Deploy the functions, then try this again.`;
+    }
+    return err?.message || `Something went wrong with ${label}.`;
+  }
+
+  async function handleSaveWhatsApp() {
+    setWaSaving(true);
+    try {
+      const res = await saveWhatsAppCloudConfig({
+        enabled: !!waDraft.enabled,
+        phoneNumberId: String(waDraft.phoneNumberId || '').trim(),
+        apiVersion: String(waDraft.apiVersion || 'v21.0').trim() || 'v21.0',
+        accessToken: String(waDraft.accessToken || '').trim(), // blank keeps the stored token
+      });
+      setWaStatus((s) => ({ ...(s || {}), ...res }));
+      setWaDraft((d) => ({ ...d, accessToken: '' })); // never keep the token in component state
+      showToast({ type: 'success', message: 'WhatsApp settings saved.' });
+    } catch (err) {
+      showToast({ type: 'error', message: integrationError(err, 'WhatsApp') });
+    } finally {
+      setWaSaving(false);
+    }
+  }
+
+  async function handleClearWhatsAppToken() {
+    if (!window.confirm('Remove the saved WhatsApp access token? Automatic sending stops until a new token is saved.')) return;
+    setWaSaving(true);
+    try {
+      const res = await saveWhatsAppCloudConfig({
+        enabled: !!waDraft.enabled,
+        phoneNumberId: String(waDraft.phoneNumberId || '').trim(),
+        apiVersion: String(waDraft.apiVersion || 'v21.0').trim() || 'v21.0',
+        clearToken: true,
+      });
+      setWaStatus((s) => ({ ...(s || {}), ...res }));
+      showToast({ type: 'info', message: 'Access token removed.' });
+    } catch (err) {
+      showToast({ type: 'error', message: integrationError(err, 'WhatsApp') });
+    } finally {
+      setWaSaving(false);
+    }
+  }
+
+  async function handleSendWhatsAppTest() {
+    const to = String(waTestTo || '').trim();
+    const text = String(waTestText || '').trim();
+    if (!to || !text) {
+      showToast({ type: 'error', message: 'Enter a mobile number and a message to test.' });
+      return;
+    }
+    setWaSending(true);
+    try {
+      const res = await sendWhatsAppCloudMessage({ to, text });
+      if (res?.skipped === 'not-configured') {
+        showToast({ type: 'info', message: 'Not sent — save a token and tick Enable first.' });
+      } else if (res?.ok) {
+        showToast({ type: 'success', message: `Sent ✓${res.id ? ` (id ${res.id})` : ''}.` });
+      } else {
+        showToast({ type: 'info', message: 'Done — check the number received it.' });
+      }
+    } catch (err) {
+      showToast({ type: 'error', message: err.message || 'WhatsApp send failed.' });
+    } finally {
+      setWaSending(false);
+    }
+  }
+
+  async function handleSaveGoogle() {
+    setGcalSaving(true);
+    try {
+      const res = await saveGoogleCalendarConfig({
+        enabled: !!gcalDraft.enabled,
+        clientId: String(gcalDraft.clientId || '').trim(),
+        clientSecret: String(gcalDraft.clientSecret || '').trim(), // blank keeps the stored secret
+      });
+      setGcalStatus((s) => ({ ...(s || {}), ...res }));
+      setGcalDraft((d) => ({ ...d, clientSecret: '' })); // never keep the secret in component state
+      showToast({ type: 'success', message: 'Google Calendar settings saved.' });
+    } catch (err) {
+      showToast({ type: 'error', message: integrationError(err, 'Google Calendar') });
+    } finally {
+      setGcalSaving(false);
+    }
+  }
+
+  async function copyRedirectUri() {
+    if (!gcalStatus?.redirectUri) return;
+    try {
+      await navigator.clipboard.writeText(gcalStatus.redirectUri);
+      setGcalCopied(true);
+      setTimeout(() => setGcalCopied(false), 2000);
+    } catch {
+      showToast({ type: 'info', message: 'Couldn’t copy automatically — select the URL and copy it by hand.' });
+    }
+  }
+
   if (loading || !draft) return <p className="text-sm text-slate-400">Loading email settings…</p>;
 
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
+
+  // The exact contents of functions/schedules.local.json for the times shown —
+  // shown in the "apply" box so it can be pasted straight in. Keys match
+  // DEFAULT_SCHEDULES in functions/lib/scheduleConfig.js and the FIELD_MAP in
+  // functions/pull-schedules.js.
+  const scheduleOverlay = SCHEDULE_FIELDS.reduce((acc, f) => {
+    acc[f.overlayKey] = String(draft[f.key] || '').trim();
+    return acc;
+  }, {});
+  const scheduleOverlayText = JSON.stringify(scheduleOverlay, null, 2);
 
   return (
     <div className="space-y-5">
@@ -366,7 +715,9 @@ function EmailAutomationInner() {
             <div key={t.key} className="flex items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
               <div className="min-w-0">
                 <p className="text-[13px] font-medium text-slate-800">{t.title}</p>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{t.when}</p>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                  {t.cronKey ? describeCron(draft[t.cronKey]) : t.when}
+                </p>
                 <p className="mt-0.5 text-xs text-slate-500">{t.description}</p>
               </div>
               <Toggle
@@ -378,6 +729,294 @@ function EmailAutomationInner() {
             </div>
           ))}
         </div>
+      </Card>
+
+      {/* ── Schedule times ────────────────────────────────────────────────── */}
+      <Card className="p-4">
+        <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+          <CalendarClock className="h-4 w-4 text-slate-400" /> Schedule times
+        </h3>
+        <p className="mb-3 text-xs text-slate-500">
+          When each job runs, in IST (Asia/Kolkata). You can edit and save a time here, but a Cloud Functions
+          schedule is fixed when the functions are deployed — so a change only takes effect after the next deploy,
+          using the steps below.
+        </p>
+
+        <div className="divide-y divide-slate-100">
+          {SCHEDULE_FIELDS.map((f) => (
+            <div key={f.key} className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 sm:pr-4">
+                <p className="text-[13px] font-medium text-slate-800">{f.title}</p>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{describeCron(draft[f.key])}</p>
+                <p className="mt-0.5 text-xs text-slate-500">{f.note}</p>
+              </div>
+              <div className="shrink-0">
+                <ScheduleEditor
+                  mode={f.mode}
+                  cron={draft[f.key]}
+                  onChange={(next) => set({ [f.key]: next })}
+                  disabled={!canEditSettings}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Applying the change — the half that actually moves the schedule. */}
+        <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <div className="min-w-0">
+            <p className="font-semibold">Saving is step 1 of 2 — a new time goes live only after a redeploy.</p>
+            <p className="mt-1 text-amber-800">
+              Save these settings, then from the <code className="rounded bg-amber-100 px-1 py-0.5 font-mono">functions</code> folder
+              either run <code className="rounded bg-amber-100 px-1 py-0.5 font-mono">npm run schedules:pull</code> (it copies
+              the saved times into <code className="rounded bg-amber-100 px-1 py-0.5 font-mono">functions/schedules.local.json</code>)
+              or paste the block below into that file by hand:
+            </p>
+            <pre className="mt-2 overflow-x-auto rounded-md border border-amber-200 bg-white/70 p-2 font-mono text-[11px] leading-relaxed text-slate-700">{scheduleOverlayText}</pre>
+            <p className="mt-2 text-amber-800">
+              Then redeploy: <code className="rounded bg-amber-100 px-1 py-0.5 font-mono">firebase deploy --only functions</code>.
+              Until then the times above are what <em>will</em> run, not necessarily what is running now.
+            </p>
+          </div>
+        </div>
+      </Card>
+
+      {/* ── Birthday & anniversary calendar (Phase 35) ────────────────────── */}
+      <Card className="p-4">
+        <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+          <CalendarPlus className="h-4 w-4 text-slate-400" /> Birthday &amp; anniversary calendar
+        </h3>
+        <p className="mb-3 text-xs text-slate-500">
+          A subscribe-once calendar feed: each volunteer adds one private link to Google or Apple Calendar and every
+          contact <em>they</em> are responsible for shows up as a yearly all-day event, with the WhatsApp wish a tap
+          away. Editing a contact’s date of birth moves the same event rather than adding a duplicate. The shared list
+          is rebuilt on the schedule above; the button below rebuilds it right now.
+        </p>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" onClick={handleRebuildCalendar} disabled={rebuilding}>
+            <RefreshCw className={cn('h-3.5 w-3.5', rebuilding && 'animate-spin')} />
+            {rebuilding ? 'Rebuilding…' : 'Rebuild now'}
+          </Button>
+          <span className="text-xs text-slate-400">
+            Refreshes the dataset immediately — useful right after a bulk edit. Subscribed calendars still pick up
+            changes on Google/Apple’s own refresh cycle, usually within a day.
+          </span>
+        </div>
+
+        <div className="mt-4 border-t border-slate-100 pt-3">
+          <Label>Your personal calendar link</Label>
+          {!calFeed ? (
+            <div className="mt-1">
+              <Button variant="ghost" onClick={() => loadCalFeed(false)} disabled={calFeedLoading}>
+                {calFeedLoading ? 'Getting your link…' : 'Show my calendar link'}
+              </Button>
+              <p className="mt-1 text-xs text-slate-400">
+                A private URL scoped to exactly what you can see. Treat it like a password — anyone who has it can
+                see that same list of birthdays.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-1 space-y-2">
+              {calFeed.empty && (
+                <p className="flex items-start gap-1.5 text-xs text-amber-700">
+                  <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  Your link works, but no contact in your scope has a birthday or anniversary saved yet, so the
+                  calendar will be empty until some dates are filled in.
+                </p>
+              )}
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input
+                  readOnly
+                  value={calFeed.url}
+                  onFocus={(e) => e.target.select()}
+                  className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs text-slate-600"
+                  aria-label="Your calendar subscription URL"
+                />
+                <Button variant="secondary" onClick={copyCalFeed} className="shrink-0">
+                  {copied ? <><CheckCircle2 className="h-3.5 w-3.5" /> Copied</> : <><Copy className="h-3.5 w-3.5" /> Copy</>}
+                </Button>
+              </div>
+              <p className="text-xs text-slate-500">
+                Google Calendar → <em>Other calendars → From URL</em>, paste, and add. Apple Calendar →
+                <em> File → New Calendar Subscription</em>. It updates itself from then on.
+              </p>
+              <button
+                type="button"
+                onClick={() => loadCalFeed(true)}
+                disabled={calFeedLoading}
+                className="text-xs font-medium text-slate-400 underline-offset-2 hover:text-rose-600 hover:underline disabled:opacity-50"
+              >
+                Shared it by mistake? Rotate the link
+              </button>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* ── WhatsApp Cloud API (Phase 36) ─────────────────────────────────── */}
+      <Card className="p-4">
+        <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+          <MessageCircle className="h-4 w-4 text-slate-400" /> WhatsApp Cloud API
+        </h3>
+        <p className="mb-3 text-xs text-slate-500">
+          The one-tap wa.me links elsewhere in the app still need a person to press send. This is the automatic
+          sender — messages go straight through Meta’s WhatsApp Cloud API. The access token is stored server-side
+          and is never shown here again once saved.
+        </p>
+
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+          <span className={cn('rounded-full px-2 py-0.5 font-semibold', waStatus?.configured ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500')}>
+            {waStatus?.configured ? 'Configured' : 'Not configured'}
+          </span>
+          <span className={cn('rounded-full px-2 py-0.5 font-semibold', waStatus?.enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500')}>
+            {waStatus?.enabled ? 'Enabled' : 'Off'}
+          </span>
+          {waStatus?.tokenSet && <span className="rounded-full bg-sky-50 px-2 py-0.5 font-semibold text-sky-700">Token saved</span>}
+        </div>
+
+        <div className="flex items-center justify-between gap-3 border-t border-slate-100 py-3">
+          <div className="min-w-0">
+            <p className="text-[13px] font-medium text-slate-800">Send automatically through Meta</p>
+            <p className="mt-0.5 text-xs text-slate-500">When off, the app only builds wa.me links for a human to send.</p>
+          </div>
+          <Toggle checked={!!waDraft.enabled} onChange={(v) => setWaDraft((d) => ({ ...d, enabled: v }))} label="Enable WhatsApp Cloud API" disabled={!canEditSettings} />
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <Label>Phone number ID</Label>
+            <Input className={LOCKABLE} disabled={!canEditSettings} value={waDraft.phoneNumberId} onChange={(e) => setWaDraft((d) => ({ ...d, phoneNumberId: e.target.value }))} placeholder="From Meta → WhatsApp → API Setup" />
+          </div>
+          <div>
+            <Label>API version</Label>
+            <Input className={LOCKABLE} disabled={!canEditSettings} value={waDraft.apiVersion} onChange={(e) => setWaDraft((d) => ({ ...d, apiVersion: e.target.value }))} placeholder="v21.0" />
+          </div>
+        </div>
+
+        <div className="mt-3">
+          <Label>Access token</Label>
+          <Input
+            type="password"
+            className={LOCKABLE}
+            disabled={!canEditSettings}
+            value={waDraft.accessToken}
+            onChange={(e) => setWaDraft((d) => ({ ...d, accessToken: e.target.value }))}
+            placeholder={waStatus?.tokenSet ? 'Saved — leave blank to keep it' : 'Paste the permanent access token'}
+          />
+          <p className="mt-1 text-xs text-slate-400">
+            Stored server-side only, never shown again. Use a System User <em>permanent</em> token — the 24-hour test
+            token from the dashboard expires overnight.
+          </p>
+        </div>
+
+        {canEditSettings && (
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button variant="accent" onClick={handleSaveWhatsApp} disabled={waSaving}>
+              {waSaving ? 'Saving…' : 'Save WhatsApp settings'}
+            </Button>
+            {waStatus?.tokenSet && (
+              <Button variant="ghost" onClick={handleClearWhatsAppToken} disabled={waSaving}>Remove token</Button>
+            )}
+          </div>
+        )}
+
+        <div className="mt-4 border-t border-slate-100 pt-3">
+          <Label>Send a test message</Label>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input value={waTestTo} onChange={(e) => setWaTestTo(e.target.value)} placeholder="10-digit mobile" className="sm:w-48" />
+            <Input value={waTestText} onChange={(e) => setWaTestText(e.target.value)} placeholder="Message text" className="sm:flex-1" />
+            <Button variant="secondary" onClick={handleSendWhatsAppTest} disabled={waSending} className="shrink-0">
+              {waSending ? 'Sending…' : 'Send test'}
+            </Button>
+          </div>
+          <p className="mt-1 text-xs text-amber-700">
+            Meta only delivers free-form text within 24 hours of the person last messaging your number. For
+            unsolicited birthday wishes you must use a pre-approved message <em>template</em> — so this test works
+            best sent to a number that has just messaged the business.
+          </p>
+        </div>
+      </Card>
+
+      {/* ── Google Calendar push (Phase 37) ───────────────────────────────── */}
+      <Card className="p-4">
+        <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+          <CalendarDays className="h-4 w-4 text-slate-400" /> Google Calendar (per-volunteer push)
+        </h3>
+        <p className="mb-3 text-xs text-slate-500">
+          An optional upgrade over the subscribe-once feed above: once an OAuth client is set up here, each volunteer
+          can connect their own Google account from the Reminders screen and press “Sync now” to write their in-scope
+          birthdays straight into their calendar — updated in place, never duplicated. The client secret is stored
+          server-side and never shown again.
+        </p>
+
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+          <span className={cn('rounded-full px-2 py-0.5 font-semibold', gcalStatus?.configured ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500')}>
+            {gcalStatus?.configured ? 'Configured' : 'Not configured'}
+          </span>
+          <span className={cn('rounded-full px-2 py-0.5 font-semibold', gcalStatus?.enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500')}>
+            {gcalStatus?.enabled ? 'Enabled' : 'Off'}
+          </span>
+        </div>
+
+        <div className="mb-3 rounded-lg border border-slate-100 bg-slate-50/60 p-3 text-xs text-slate-600">
+          <p className="font-medium text-slate-700">One-time setup in the Google Cloud console</p>
+          <ol className="mt-1 list-decimal space-y-0.5 pl-4">
+            <li>APIs &amp; Services → Credentials → create an <strong>OAuth client ID</strong> (type “Web application”).</li>
+            <li>Under “Authorised redirect URIs”, add the exact URL below.</li>
+            <li>Enable the <strong>Google Calendar API</strong> for the project.</li>
+            <li>Paste the Client ID and secret here, then tick Enable.</li>
+          </ol>
+          {gcalStatus?.redirectUri && (
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+              <input
+                readOnly
+                value={gcalStatus.redirectUri}
+                onFocus={(e) => e.target.select()}
+                className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-[11px] text-slate-600"
+                aria-label="Redirect URI to register in Google Cloud"
+              />
+              <Button variant="secondary" onClick={copyRedirectUri} className="shrink-0">
+                {gcalCopied ? <><CheckCircle2 className="h-3.5 w-3.5" /> Copied</> : <><Copy className="h-3.5 w-3.5" /> Copy</>}
+              </Button>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-3 border-t border-slate-100 py-3">
+          <div className="min-w-0">
+            <p className="text-[13px] font-medium text-slate-800">Allow volunteers to connect Google Calendar</p>
+            <p className="mt-0.5 text-xs text-slate-500">When off, the Connect button on the Reminders screen stays hidden.</p>
+          </div>
+          <Toggle checked={!!gcalDraft.enabled} onChange={(v) => setGcalDraft((d) => ({ ...d, enabled: v }))} label="Enable Google Calendar sync" disabled={!canEditSettings} />
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <Label>OAuth client ID</Label>
+            <Input className={LOCKABLE} disabled={!canEditSettings} value={gcalDraft.clientId} onChange={(e) => setGcalDraft((d) => ({ ...d, clientId: e.target.value }))} placeholder="xxxxx.apps.googleusercontent.com" />
+          </div>
+          <div>
+            <Label>OAuth client secret</Label>
+            <Input
+              type="password"
+              className={LOCKABLE}
+              disabled={!canEditSettings}
+              value={gcalDraft.clientSecret}
+              onChange={(e) => setGcalDraft((d) => ({ ...d, clientSecret: e.target.value }))}
+              placeholder={gcalStatus?.configured ? 'Saved — leave blank to keep it' : 'From the OAuth client'}
+            />
+          </div>
+        </div>
+
+        {canEditSettings && (
+          <div className="mt-4 flex items-center gap-2">
+            <Button variant="accent" onClick={handleSaveGoogle} disabled={gcalSaving}>
+              {gcalSaving ? 'Saving…' : 'Save Google Calendar settings'}
+            </Button>
+          </div>
+        )}
       </Card>
 
       {/* ── Sender & safety ───────────────────────────────────────────────── */}

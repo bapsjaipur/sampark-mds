@@ -40,6 +40,8 @@ const { buildSabhaCoverageReport } = require('./lib/emailTemplates');
 const { loadSabhaCoverage, DEFAULT_WEEKS_BACK } = require('./lib/sabhaCoverage');
 const { resolveScope, matchesScope } = require('./lib/volunteerScope');
 const { formatDayMonth } = require('./lib/sabhaDates');
+// PHASE 34 — editable cron, see lib/scheduleConfig.js.
+const { schedules } = require('./lib/scheduleConfig');
 
 const REGION = 'us-central1';
 const TZ = 'Asia/Kolkata';
@@ -49,9 +51,10 @@ const TZ = 'Asia/Kolkata';
 // enough for a hundred sequential round trips on a cold instance.
 const SCHEDULE_OPTS = { region: REGION, timeZone: TZ, timeoutSeconds: 300, memory: '512MiB' };
 
-// Monday 07:12 IST. Off the hour for the same reason as the other jobs — Cloud
-// Scheduler stampedes at :00 and Firestore reads queue behind each other.
-const DIGEST_SCHEDULE = '12 7 * * 1';
+// Monday 07:12 IST by default. Off the hour for the same reason as the other
+// jobs — Cloud Scheduler stampedes at :00 and Firestore reads queue behind each
+// other. Editable from the admin panel via lib/scheduleConfig.js.
+const DIGEST_SCHEDULE = schedules.sabhaDigest;
 
 /** Bounded fan-out. Same cap as the per-volunteer daily report. */
 const MAX_PER_VOLUNTEER_EMAILS = 40;

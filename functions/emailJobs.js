@@ -41,6 +41,9 @@ const { permissionsForVolunteer, volunteerRoleIds } = require('./lib/callerAcces
 // schedule of its own and no PDF), but its manual "send now" belongs here with
 // the other three so the admin screen has one callable to talk to.
 const { runSabhaDigest } = require('./sabhaDigest');
+// PHASE 34 — cron strings now live in one editable place. See lib/scheduleConfig.js
+// for why they are read from a file rather than settings/email at runtime.
+const { schedules } = require('./lib/scheduleConfig');
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -52,12 +55,14 @@ const TZ = 'Asia/Kolkata';
 // default, and the daily job reads the whole activity log for the day.
 const SCHEDULE_OPTS = { region: REGION, timeZone: TZ, timeoutSeconds: 300, memory: '512MiB' };
 
-// Schedules are deliberately a few minutes off the hour. Cloud Scheduler fires
-// thousands of :00 jobs across the region at once and Firestore reads queue
-// behind each other; nobody notices a report arriving at 22:05 instead of 22:00.
-const DAILY_SCHEDULE = '5 22 * * *';       // legacy dailyEmailTrigger ran at 22:00 IST
-const POST_SABHA_SCHEDULE = '*/15 * * * *'; // legacy polled every 15 minutes
-const BIRTHDAY_SCHEDULE = '10 6 * * *';    // legacy birthday trigger ran at 06:00 IST
+// Schedules are read from lib/scheduleConfig.js (defaults, overridable by the
+// admin panel via schedules.local.json). They are deliberately a few minutes off
+// the hour — Cloud Scheduler fires thousands of :00 jobs across the region at
+// once and Firestore reads queue behind each other; nobody notices a report
+// arriving at 22:05 instead of 22:00.
+const DAILY_SCHEDULE = schedules.daily;       // legacy dailyEmailTrigger ran at 22:00 IST
+const POST_SABHA_SCHEDULE = schedules.postSabha; // legacy polled every 15 minutes
+const BIRTHDAY_SCHEDULE = schedules.birthday;    // legacy birthday trigger ran at 06:00 IST
 
 /** Bounded fan-out for the per-volunteer variants — see runDailyReport. */
 const MAX_PER_VOLUNTEER_EMAILS = 40;

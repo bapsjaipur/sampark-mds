@@ -835,5 +835,67 @@ service cloud.firestore {
     match /mail/{mailId} {
       allow read, write: if false;
     }
+
+    // ---------------------------------------------------------------------
+    // calendarTokens/{token} (Phase 35): token → { volunteerId } lookup for the
+    // subscribable birthday/anniversary calendar feed (functions/calendarSync.js).
+    //
+    // Closed to every client, in both directions — and that is the whole security
+    // model of the feed. The token IS the credential (a calendar app subscribing
+    // to the URL cannot send an auth header), so if these rows were readable, any
+    // signed-in volunteer could read another volunteer's token from here and
+    // subscribe to their scoped feed. They are written by the getMyCalendarFeed
+    // callable and read by the calendarFeed HTTP function, both through the Admin
+    // SDK, which bypasses these rules. A client never needs to touch them.
+    // ---------------------------------------------------------------------
+
+    match /calendarTokens/{token} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // whatsappConfig/{doc} (Phase 36): the Meta WhatsApp Cloud API credentials —
+    // whatsappConfig/cloud holds { enabled, accessToken, phoneNumberId, apiVersion }.
+    //
+    // Closed to every client, in both directions. accessToken is a bearer
+    // credential: whoever holds it can send WhatsApp messages from the temple's
+    // number, so it must never reach a browser — which is exactly why it is here
+    // and NOT under settings/{docId} (that block is world- or send_emails-readable
+    // above). The three whatsappCloud callables read and write it through the
+    // Admin SDK, which bypasses these rules; getWhatsAppCloudStatus reports only
+    // whether a token is set, never the token itself. See functions/whatsappCloud.js.
+    // ---------------------------------------------------------------------
+
+    match /whatsappConfig/{doc} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // googleCalendarConfig/{doc} + googleCalendarTokens/{id} + googleOAuthStates/{nonce}
+    // (Phase 37): the per-user Google Calendar push (functions/googleCalendar.js).
+    //
+    //   googleCalendarConfig/config    → { enabled, clientId, clientSecret }
+    //   googleCalendarTokens/{volId}   → { refreshToken, email, lastSyncAt, ... }
+    //   googleOAuthStates/{nonce}      → { volunteerId, createdAt } (single-use)
+    //
+    // All three are closed to every client, in both directions, for the same
+    // reason as whatsappConfig: the OAuth client secret and each volunteer's
+    // refresh token are bearer credentials that must never reach a browser. Only
+    // the googleCalendar callables and the googleOAuthCallback HTTP endpoint touch
+    // them, through the Admin SDK (which bypasses these rules). getGoogleCalendar
+    // Status reports connection state only — never the secret or the token.
+    // ---------------------------------------------------------------------
+
+    match /googleCalendarConfig/{doc} {
+      allow read, write: if false;
+    }
+
+    match /googleCalendarTokens/{volunteerId} {
+      allow read, write: if false;
+    }
+
+    match /googleOAuthStates/{nonce} {
+      allow read, write: if false;
+    }
   }
 }

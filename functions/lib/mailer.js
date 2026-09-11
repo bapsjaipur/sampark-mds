@@ -91,6 +91,18 @@ const DEFAULT_EMAIL_SETTINGS = {
   dryRun: false,
   maxRecipients: 50,
   extraRecipients: [],
+  // PHASE 34 — cron strings edited from the Report Emails tab. Runtime code here
+  // does NOT use these to decide when to fire (the schedule is fixed at deploy —
+  // see lib/scheduleConfig.js); they live in settings/email only so the panel can
+  // read and write them, and pull-schedules.js can copy them into the deploy.
+  // KEEP IN SYNC with src/services/settingsService.js and lib/scheduleConfig.js.
+  scheduleDailyCron: '5 22 * * *',
+  schedulePostSabhaCron: '*/15 * * * *',
+  scheduleBirthdayCron: '10 6 * * *',
+  scheduleSabhaDigestCron: '12 7 * * 1',
+  scheduleSabhaGenerationCron: '7 4 * * 0',
+  // PHASE 35 — the calendar-feed dataset rebuild. See functions/calendarSync.js.
+  scheduleCalendarRebuildCron: '40 3 * * *',
 };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;

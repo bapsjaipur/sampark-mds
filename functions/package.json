@@ -5,6 +5,9 @@
   "engines": {
     "node": "22"
   },
+  "scripts": {
+    "schedules:pull": "node pull-schedules.js"
+  },
   "dependencies": {
     "archiver": "^8.0.0",
     "firebase-admin": "^12.1.0",

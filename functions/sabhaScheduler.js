@@ -38,6 +38,8 @@ const admin = require('firebase-admin');
 const {
   toDateStr, occurrenceKey, scheduledEventId, occurrencesBetween, eventFieldsFromSchedule,
 } = require('./lib/sabhaDates');
+// PHASE 34 — editable cron, see lib/scheduleConfig.js.
+const { schedules } = require('./lib/scheduleConfig');
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -46,9 +48,10 @@ const REGION = 'us-central1';
 const TZ = 'Asia/Kolkata';
 const SCHEDULE_OPTS = { region: REGION, timeZone: TZ, timeoutSeconds: 300, memory: '256MiB' };
 
-// Sunday 04:07 IST — before anybody is awake, and off the hour for the same
-// reason as the email jobs (Cloud Scheduler stampedes at :00).
-const GENERATE_SCHEDULE = '7 4 * * 0';
+// Sunday 04:07 IST by default — before anybody is awake, and off the hour for
+// the same reason as the email jobs (Cloud Scheduler stampedes at :00). Editable
+// from the admin panel via lib/scheduleConfig.js.
+const GENERATE_SCHEDULE = schedules.sabhaGeneration;
 
 /** How far ahead each run materialises. Mirrors DEFAULT_WEEKS_AHEAD. */
 const WEEKS_AHEAD = 4;

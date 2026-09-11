@@ -4,6 +4,12 @@ node_modules/
 # Environment variables
 .env
 
+# PHASE 34 — per-deployer schedule overrides written by `npm run schedules:pull`
+# (functions/pull-schedules.js) from settings/email. Like .env, this is local to
+# whoever deploys; the committed defaults in functions/lib/scheduleConfig.js are
+# the fallback when it is absent.
+functions/schedules.local.json
+
 # MacOS specific (if applicable)
 .DS_Store
 

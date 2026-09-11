@@ -68,6 +68,22 @@ export const DEFAULT_EMAIL_SETTINGS = {
   // their `reportEmail` on the Volunteers screen. This list covers everyone
   // else — a sanchalak, a trustee — who needs the numbers but never signs in.
   extraRecipients: [],
+  // PHASE 34 — the cron string for each scheduled job, editable from the Report
+  // Emails tab. A Cloud Functions schedule is fixed at DEPLOY time, so editing
+  // these does not change anything until the functions are redeployed with the
+  // new values (functions/pull-schedules.js writes them into the deploy). The
+  // defaults are the times these jobs have always run. KEEP IN SYNC with
+  // DEFAULT_SCHEDULES in functions/lib/scheduleConfig.js and the mirror in
+  // functions/lib/mailer.js.
+  scheduleDailyCron: '5 22 * * *',            // daily calling report — 22:05 IST
+  schedulePostSabhaCron: '*/15 * * * *',      // post-sabha poll — every 15 minutes
+  scheduleBirthdayCron: '10 6 * * *',         // birthday & anniversary — 06:10 IST
+  scheduleSabhaDigestCron: '12 7 * * 1',      // weekly sabha coverage — Mon 07:12 IST
+  scheduleSabhaGenerationCron: '7 4 * * 0',   // recurring-sabha generation — Sun 04:07 IST
+  // PHASE 35 — the Google/Apple calendar feed rebuilds its dataset here. Editing
+  // this only takes effect after the functions are redeployed, exactly like the
+  // five above. See functions/calendarSync.js.
+  scheduleCalendarRebuildCron: '40 3 * * *',  // calendar reminder feed — 03:40 IST
 };
 
 export const DEFAULT_MESSAGE_TEMPLATE_SETTINGS = {

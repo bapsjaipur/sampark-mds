@@ -26,12 +26,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Phone, Cake, Heart, MessageCircle, User, Info, Search, X, CalendarHeart, PartyPopper,
+  CalendarPlus, Copy, Check, CalendarDays, RefreshCw,
 } from 'lucide-react';
 import { getReminders } from '../../services/reminderService';
+import { getMyCalendarFeed } from '../../services/calendarService';
+import {
+  getGoogleCalendarStatus, startGoogleCalendarAuth, syncMyGoogleCalendar, disconnectGoogleCalendar,
+} from '../../services/googleCalendarService';
 import { logActivity } from '../../lib/activityLog';
 import { useAuth } from '../../hooks/usePermissions';
 import { useSettings } from '../../hooks/useSettings';
 import { useVolunteerIdentity } from '../../hooks/useVolunteerIdentity';
+import { useToast } from '../../contexts/ToastContext';
 import {
   buildWhatsAppUrl,
   buildTelUrl,
@@ -287,6 +293,7 @@ export default function RemindersDashboard() {
   const { volunteer, permissions, scope } = useAuth();
   const { settings: templates } = useSettings('messageTemplate');
   const { identify } = useVolunteerIdentity();
+  const { showToast } = useToast();
 
   const [raw, setRaw] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -297,6 +304,101 @@ export default function RemindersDashboard() {
   const [search, setSearch] = useState('');
   const [areaFilter, setAreaFilter] = useState('');
   const [mandalFilter, setMandalFilter] = useState('');
+
+  // PHASE 35 — the volunteer's own subscribable calendar link. Fetched on demand
+  // (minting the link is a write), then shown inline with copy + instructions.
+  const [calOpen, setCalOpen] = useState(false);
+  const [calFeed, setCalFeed] = useState(null);
+  const [calLoading, setCalLoading] = useState(false);
+  const [calCopied, setCalCopied] = useState(false);
+
+  // PHASE 37 — the optional per-user Google Calendar push. Status is fetched only
+  // when the calendar panel is opened, so a volunteer who never opens it costs no
+  // extra reads. Null until fetched; { configured, enabled, connected, email, ... }.
+  const [gcal, setGcal] = useState(null);
+  const [gcalBusy, setGcalBusy] = useState(false);
+
+  async function openCalendar() {
+    setCalOpen(true);
+    // Cheap status read, only the first time the panel opens. Silent on failure —
+    // the ICS link below still works and is the primary path.
+    if (!gcal) getGoogleCalendarStatus().then(setGcal).catch(() => {});
+    if (calFeed || calLoading) return;
+    setCalLoading(true);
+    try {
+      const res = await getMyCalendarFeed({ rotate: false });
+      setCalFeed(res);
+    } catch (err) {
+      const code = String(err?.code || '');
+      const msg = code.includes('not-found') || code.includes('internal') || code.includes('unavailable')
+        ? 'Calendar sync isn’t switched on yet — ask an admin to deploy it.'
+        : (err?.message || 'Could not get your calendar link.');
+      showToast({ type: 'error', message: msg });
+      setCalOpen(false);
+    } finally {
+      setCalLoading(false);
+    }
+  }
+
+  async function copyCalendar() {
+    if (!calFeed?.url) return;
+    try {
+      await navigator.clipboard.writeText(calFeed.url);
+      setCalCopied(true);
+      setTimeout(() => setCalCopied(false), 2000);
+    } catch {
+      showToast({ type: 'info', message: 'Couldn’t copy automatically — select the link and copy it.' });
+    }
+  }
+
+  async function connectGoogle() {
+    setGcalBusy(true);
+    try {
+      const { url } = await startGoogleCalendarAuth();
+      window.open(url, '_blank', 'noopener');
+      showToast({ type: 'info', message: 'Finish signing in on the Google tab, then come back and press “Sync now”.' });
+    } catch (err) {
+      showToast({ type: 'error', message: err?.message || 'Could not start Google sign-in.' });
+    } finally {
+      setGcalBusy(false);
+    }
+  }
+
+  async function syncGoogle() {
+    setGcalBusy(true);
+    try {
+      const res = await syncMyGoogleCalendar();
+      if (res?.skipped === 'not-connected') {
+        showToast({ type: 'info', message: 'Not connected yet — press Connect and finish the Google sign-in first.' });
+      } else if (res?.skipped === 'not-configured') {
+        showToast({ type: 'info', message: 'Google Calendar sync isn’t switched on yet.' });
+      } else if (res?.ok) {
+        showToast({
+          type: 'success',
+          message: `Synced ${res.upserted} event${res.upserted === 1 ? '' : 's'} to your Google Calendar${res.capped ? ` (first ${res.maxPerSync} — the rest are in the subscribe link above)` : ''}.`,
+        });
+      }
+      getGoogleCalendarStatus().then(setGcal).catch(() => {}); // refresh connected/lastSync
+    } catch (err) {
+      showToast({ type: 'error', message: err?.message || 'Sync failed.' });
+    } finally {
+      setGcalBusy(false);
+    }
+  }
+
+  async function disconnectGoogle() {
+    if (!window.confirm('Disconnect Google Calendar? Events already added stay in your calendar; future changes just stop syncing.')) return;
+    setGcalBusy(true);
+    try {
+      await disconnectGoogleCalendar();
+      showToast({ type: 'info', message: 'Google Calendar disconnected.' });
+      getGoogleCalendarStatus().then(setGcal).catch(() => {});
+    } catch (err) {
+      showToast({ type: 'error', message: err?.message || 'Could not disconnect.' });
+    } finally {
+      setGcalBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!volunteer) return;
@@ -375,15 +477,105 @@ export default function RemindersDashboard() {
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       {/* ── Header ───────────────────────────────────────────────────────── */}
-      <div className="mb-5">
-        <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">Reminders</h1>
-        <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-slate-500">
-          Birthdays and anniversaries in
-          <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[12px] font-medium text-slate-700">
-            {scopeText}
-          </span>
-        </p>
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">Reminders</h1>
+          <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-slate-500">
+            Birthdays and anniversaries in
+            <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[12px] font-medium text-slate-700">
+              {scopeText}
+            </span>
+          </p>
+        </div>
+        {!(scope?.empty && !scope?.unrestricted) && (
+          <Button variant="secondary" size="sm" onClick={openCalendar} disabled={calLoading} className="shrink-0">
+            <CalendarPlus className="h-3.5 w-3.5" />
+            {calLoading ? 'Getting link…' : 'Add to Calendar'}
+          </Button>
+        )}
       </div>
+
+      {/* The volunteer's own subscribable feed — every name in their scope as a
+          yearly all-day event, kept in sync by their calendar app itself. */}
+      {calOpen && calFeed && (
+        <div className="mb-5 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+          <div className="flex items-start justify-between gap-2">
+            <p className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
+              <CalendarPlus className="h-4 w-4 text-slate-400" /> Your birthday &amp; anniversary calendar
+            </p>
+            <button
+              onClick={() => setCalOpen(false)}
+              aria-label="Close"
+              className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          {calFeed.empty ? (
+            <p className="mt-1 text-xs text-amber-700">
+              No dates are saved in your scope yet — the calendar will fill in as birthdays are added.
+            </p>
+          ) : (
+            <p className="mt-1 text-xs text-slate-500">
+              Add this private link once and every birthday and anniversary in your list appears in Google or Apple
+              Calendar, updating itself from then on.
+            </p>
+          )}
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+            <input
+              readOnly
+              value={calFeed.url}
+              onFocus={(e) => e.target.select()}
+              className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-600"
+              aria-label="Your calendar subscription URL"
+            />
+            <Button variant="secondary" size="sm" onClick={copyCalendar} className="shrink-0">
+              {calCopied ? <><Check className="h-3.5 w-3.5" /> Copied</> : <><Copy className="h-3.5 w-3.5" /> Copy link</>}
+            </Button>
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+            Google Calendar → Other calendars → From URL. Apple Calendar → File → New Calendar Subscription. Keep
+            the link private — it shows your whole list.
+          </p>
+
+          {/* PHASE 37 — the optional push: shown only once an admin has set up and
+              enabled the OAuth client. Writes editable events into the volunteer's
+              own calendar, updated in place so a corrected date never duplicates. */}
+          {gcal?.configured && gcal?.enabled && (
+            <div className="mt-3 border-t border-slate-200 pt-3">
+              <p className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
+                <CalendarDays className="h-4 w-4 text-slate-400" /> Or push straight into Google Calendar
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Connect your Google account once, then press Sync to write these birthdays in as editable events.
+                Fixing a date and syncing again updates the same event — it never adds a duplicate.
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {gcal.connected ? (
+                  <>
+                    <Button variant="accent" size="sm" onClick={syncGoogle} disabled={gcalBusy}>
+                      <RefreshCw className={cn('h-3.5 w-3.5', gcalBusy && 'animate-spin')} />
+                      {gcalBusy ? 'Working…' : 'Sync now'}
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={disconnectGoogle} disabled={gcalBusy}>Disconnect</Button>
+                    <span className="text-[11px] text-slate-400">
+                      {gcal.email ? `Connected as ${gcal.email}` : 'Connected'}
+                      {gcal.lastSyncAt ? ` · last synced ${new Date(gcal.lastSyncAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}` : ''}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Button variant="secondary" size="sm" onClick={connectGoogle} disabled={gcalBusy}>
+                      <CalendarDays className="h-3.5 w-3.5" /> {gcalBusy ? 'Opening…' : 'Connect Google Calendar'}
+                    </Button>
+                    <span className="text-[11px] text-slate-400">Opens Google in a new tab. Come back and press Sync.</span>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {scope?.empty && !scope?.unrestricted && (
         <div className="mb-5 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">

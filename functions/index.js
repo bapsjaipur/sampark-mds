@@ -79,6 +79,48 @@ exports.previewEmailRecipients = emailJobs.previewEmailRecipients;
 exports.scheduledSabhaGeneration = require('./sabhaScheduler').scheduledSabhaGeneration;
 exports.scheduledSabhaDigest = require('./sabhaDigest').scheduledSabhaDigest;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 35 — birthday & anniversary reminders as a subscribable calendar feed.
+// Each volunteer pastes one private URL into Google/Apple Calendar and every
+// contact THEY are responsible for appears as a yearly all-day event. The dataset
+// is precomputed to Cloud Storage once a day (rebuildCalendarCache) so serving a
+// feed costs a handful of reads, not a full scan — see functions/calendarSync.js.
+// ─────────────────────────────────────────────────────────────────────────────
+const calendarSync = require('./calendarSync');
+exports.rebuildCalendarCache = calendarSync.rebuildCalendarCache;
+exports.calendarFeed = calendarSync.calendarFeed;
+exports.getMyCalendarFeed = calendarSync.getMyCalendarFeed;
+exports.rebuildCalendarCacheNow = calendarSync.rebuildCalendarCacheNow;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 36 — WhatsApp Cloud API sender (Meta Graph API). The wa.me links in the
+// app need a human to press send; these callables post through Meta with no human
+// in the loop, configured entirely from the admin panel. The access token lives
+// in the server-only whatsappConfig/cloud doc, never in a browser or in source —
+// see functions/whatsappCloud.js.
+// ─────────────────────────────────────────────────────────────────────────────
+const whatsappCloud = require('./whatsappCloud');
+exports.getWhatsAppCloudStatus = whatsappCloud.getWhatsAppCloudStatus;
+exports.saveWhatsAppCloudConfig = whatsappCloud.saveWhatsAppCloudConfig;
+exports.sendWhatsAppCloudMessage = whatsappCloud.sendWhatsAppCloudMessage;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 37 — per-user Google Calendar push (OAuth 2.0). The instant, editable
+// upgrade over the read-only ICS feed: each volunteer connects their own Google
+// account once and presses "Sync now" to write their in-scope birthdays straight
+// into their calendar, updated in place (never duplicated). The OAuth client
+// secret and each volunteer's refresh token live in server-only collections —
+// see functions/googleCalendar.js. googleOAuthCallback is a public HTTP endpoint
+// (Google redirects the browser to it); the rest are callables.
+// ─────────────────────────────────────────────────────────────────────────────
+const googleCalendar = require('./googleCalendar');
+exports.getGoogleCalendarStatus = googleCalendar.getGoogleCalendarStatus;
+exports.saveGoogleCalendarConfig = googleCalendar.saveGoogleCalendarConfig;
+exports.startGoogleCalendarAuth = googleCalendar.startGoogleCalendarAuth;
+exports.googleOAuthCallback = googleCalendar.googleOAuthCallback;
+exports.syncMyGoogleCalendar = googleCalendar.syncMyGoogleCalendar;
+exports.disconnectGoogleCalendar = googleCalendar.disconnectGoogleCalendar;
+
 exports.backupDatabase = onCall({ region: 'us-central1', maxInstances: 1, timeoutSeconds: 540 }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Must be logged in.');
   const volDoc = await db.collection('volunteers').doc(request.auth.uid).get();

@@ -6,6 +6,8 @@ import { AuthProvider, useAuth } from "./hooks/usePermissions";
 import { ToastProvider } from "./contexts/ToastContext";
 import { getRoleView } from "./lib/roleView";
 import LoginPage from "./pages/LoginPage";
+import PrivacyPolicyPage from "./pages/legal/PrivacyPolicyPage";
+import TermsPage from "./pages/legal/TermsPage";
 import AppLayout, { RequireAuth } from "./components/AppLayout";
 import HouseholdsPage from "./pages/HouseholdsPage";
 import HouseholdDetailPage from "./pages/HouseholdDetailPage";
@@ -47,6 +49,11 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            {/* Public legal pages — linked from the Google OAuth consent screen,
+                so they must stay OUTSIDE RequireAuth (a signed-out reviewer opens
+                them directly). See src/pages/legal/LegalShell.jsx. */}
+            <Route path="/privacy" element={<PrivacyPolicyPage />} />
+            <Route path="/terms" element={<TermsPage />} />
 
             <Route element={<RequireAuth />}>
               <Route element={<AppLayout />}>
