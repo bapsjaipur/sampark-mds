@@ -62,7 +62,7 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input, Select } from '../components/ui/Input';
 import { cn } from '../lib/cn';
-import { matchesScope, writableMandals } from '../lib/scope';
+import { writableMandals, eventInScope, eventAreas, areaLabel } from '../lib/scope';
 
 // One definition of "already happened", shared with the season analytics so the
 // Upcoming/Past split and the analytics window can never disagree.
@@ -96,9 +96,9 @@ function EventListItem({ event, count, selected, onClick }) {
         {event.time && ` · ${formatEventTime(event.time)}`}
         {event.durationMinutes && ` · ${event.durationMinutes}m`}
       </p>
-      {(event.speaker || event.mandal || event.area) && (
+      {(event.speaker || event.mandal || areaLabel(event)) && (
         <p className="mt-0.5 truncate text-xs text-slate-400">
-          {[event.speaker ? `Speaker: ${event.speaker}` : null, event.mandal, event.area].filter(Boolean).join(' · ')}
+          {[event.speaker ? `Speaker: ${event.speaker}` : null, event.mandal, areaLabel(event)].filter(Boolean).join(' · ')}
         </p>
       )}
     </button>
@@ -152,12 +152,11 @@ export default function EventsPage() {
 
   // Events carry both scope axes themselves, unlike attendance rows. Filter at
   // the subscription boundary so every calendar, search, dashboard and export
-  // below works only with the caller's permitted mandal/area events.
+  // below works only with the caller's permitted mandal/area events. eventInScope
+  // understands a joint sabha's areas[] and a city-wide sabha (Phase 34), so a
+  // mandal head still sees the all-area sabha that belongs to their mandal.
   useEffect(() => subscribeToEvents((evts) => {
-    setEvents(evts.filter((event) => matchesScope(scope, {
-      area: event.area,
-      mandal: event.mandal,
-    })));
+    setEvents(evts.filter((event) => eventInScope(scope, event)));
     setLoading(false);
   }, scope), [scope]);
   useEffect(() => subscribeToAllAttendance(setAttendance), []);
@@ -217,7 +216,7 @@ export default function EventsPage() {
       if (listMandal && (e.mandal || '') !== listMandal) return false;
       if (!q) return true;
       // Date is searchable as typed too — "2026-01" or "jan" both find January.
-      return [e.title, e.speaker, e.mandal, e.area, e.date,
+      return [e.title, e.speaker, e.mandal, ...eventAreas(e), e.date,
         formatEventDate(e.date, { day: 'numeric', month: 'short', year: 'numeric' })]
         .some((v) => String(v || '').toLowerCase().includes(q));
     };
@@ -460,7 +459,7 @@ export default function EventsPage() {
                       formatEventTime(selectedEvent.time),
                       selectedEvent.speaker,
                       selectedEvent.mandal,
-                      selectedEvent.area,
+                      areaLabel(selectedEvent),
                     ].filter(Boolean).join(' · ')}
                   </p>
                 </div>
@@ -535,7 +534,7 @@ export default function EventsPage() {
       )}
 
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title={editingEvent ? 'Edit event' : 'New event'}>
-        <EventForm event={editingEvent} areas={areas} allowedMandals={eventMandalScope} onSubmit={editingEvent ? handleUpdate : handleCreate} onCancel={() => setFormOpen(false)} />
+        <EventForm event={editingEvent} allowedMandals={eventMandalScope} onSubmit={editingEvent ? handleUpdate : handleCreate} onCancel={() => setFormOpen(false)} />
       </Modal>
     </div>
   );

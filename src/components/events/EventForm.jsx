@@ -10,22 +10,23 @@
 // same way — a mandal head searching "Ramesh" wants their own karyakartas, not
 // every Ramesh in Jaipur.
 import { useState, useMemo, useEffect } from 'react';
-import { AreaSelect, MandalSelect } from '../AreaMandalSelect';
+import { MandalSelect } from '../AreaMandalSelect';
+import ChipMultiSelect from '../ui/ChipMultiSelect';
 import { Input, Label, FieldError } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { useVolunteers } from '../../hooks/useVolunteers';
 import { useAuth } from '../../hooks/usePermissions';
 import { useAreasAndMandals } from '../../hooks/useAreasAndMandals';
-import { filterVolunteersByScope } from '../../lib/scope';
+import { filterVolunteersByScope, eventAreas } from '../../lib/scope';
 
-const emptyForm = { title: '', date: '', time: '', durationMinutes: '', speaker: '', mandal: '', area: '' };
+const emptyForm = { title: '', date: '', time: '', durationMinutes: '', speaker: '', mandal: '', areas: [] };
 const selectClass = "h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300";
 
-export default function EventForm({ event, areas = [], onSubmit, onCancel, allowedMandals = null }) {
+export default function EventForm({ event, onSubmit, onCancel, allowedMandals = null }) {
   const isEdit = Boolean(event);
   const { volunteers } = useVolunteers();
   const { scope } = useAuth();
-  const { mandals } = useAreasAndMandals();
+  const { mandals, areas: areaDefs } = useAreasAndMandals();
   // An ARRAY means the mandal axis binds this creator — including an empty one,
   // which is a Super Moderator with no mandals assigned yet. Treating empty as
   // "unrestricted" (the length > 0 test alone) would hand exactly that person the
@@ -47,7 +48,7 @@ export default function EventForm({ event, areas = [], onSubmit, onCancel, allow
   }, [allowedMandals, mustChooseAssignedMandal, mandals]);
   const [form, setForm] = useState(() =>
     isEdit
-      ? { title: event.title || '', date: event.date || '', time: event.time || '', durationMinutes: event.durationMinutes || '', speaker: event.speaker || '', mandal: event.mandal || '', area: event.area || '' }
+      ? { title: event.title || '', date: event.date || '', time: event.time || '', durationMinutes: event.durationMinutes || '', speaker: event.speaker || '', mandal: event.mandal || '', areas: eventAreas(event) }
       : { ...emptyForm }
   );
   const [errors, setErrors] = useState({});
@@ -65,6 +66,15 @@ export default function EventForm({ event, areas = [], onSubmit, onCancel, allow
   }, [isEdit, mandalTouched, defaultMandal, form.mandal]);
 
   const update = (field) => (e) => setForm((prev) => ({ ...prev, [field]: e.target.value }));
+
+  // Area options come from the reference collection (the same source AreaSelect
+  // drew on), plus any area an edited event already lists that has since been
+  // renamed out of it — so opening an old event never silently drops one.
+  const areaNames = useMemo(() => {
+    const names = (areaDefs || []).map((a) => a.name || a).filter(Boolean);
+    return [...new Set([...names, ...form.areas])];
+  }, [areaDefs, form.areas]);
+  const cityWide = form.areas.length === 0;
 
   // Speaker autocomplete draws only on volunteers inside the creator's scope.
   // Unrestricted admins keep the full roster.
@@ -179,7 +189,22 @@ export default function EventForm({ event, areas = [], onSubmit, onCancel, allow
           )}
           <FieldError>{errors.mandal}</FieldError>
         </div>
-        <div><Label>Area (leave blank for all)</Label><AreaSelect value={form.area} onChange={update('area')} className={selectClass} allowBlank /></div>
+      </div>
+      <div>
+        <Label>Areas (leave empty for a city-wide sabha)</Label>
+        <ChipMultiSelect
+          options={areaNames}
+          value={form.areas}
+          onChange={(next) => setForm((prev) => ({ ...prev, areas: next }))}
+          emptyLabel="No areas defined yet."
+        />
+        <p className="mt-1 text-xs text-slate-400">
+          {cityWide
+            ? 'City-wide — this sabha counts for every area.'
+            : form.areas.length > 1
+              ? `Joint sabha across ${form.areas.join(' + ')} — attendance is marked once and counts for each area.`
+              : `Files this sabha under ${form.areas[0]}.`}
+        </p>
       </div>
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>

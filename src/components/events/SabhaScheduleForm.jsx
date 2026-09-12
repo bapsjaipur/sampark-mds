@@ -3,17 +3,36 @@
 // PHASE 33 — the recurrence rule editor. "that things of recurring which mandal
 // and area it will created by Mandal Head Super Moderator."
 //
-// Area and mandal are BOTH required here, unlike EventForm where either may be
-// left blank for "all". A schedule with a blank area is a rule that cannot be
-// tracked — the whole point of the grid is one row per area saying whether that
-// area's sabha happened, and a row covering "everywhere" answers nothing. It
-// would also generate one shared event for the entire city, so eighteen areas
-// would fight over a single attendance sheet.
+// PHASE 34 — a recurring sabha can now span SEVERAL areas, or none.
+//
+// "there should be also all area recurring sabha, and multiple area combine
+//  sabha option of selecting two areas one time."
+//
+// So the single Area dropdown became a multi-select, matching EventForm:
+//
+//   • pick two or more areas → ONE joint recurring sabha. It generates a single
+//     event each week whose attendance is marked once and counts for every area
+//     it lists (occurrenceKeys in sabhaSchedule.js is what lets the grid credit
+//     that one event to each area's row).
+//   • pick none → a CITY-WIDE recurring sabha, one weekly event for the whole
+//     city that counts for every area.
+//
+// Mandal stays single and required — a sabha is still one mandal's gathering,
+// and the generated events must each carry a mandal for firestore.rules to admit
+// them. An AREA-RESTRICTED creator (Area Moderator / Karyakarta) still can't make
+// a city-wide rule: the events it would generate carry area=null, which the
+// rules refuse unless the mandal matches, so validate() makes them pick at least
+// one of their own areas. Areas outside their territory are shown greyed, never
+// dropped — the same choice AreaSelect made — so the boundary reads as enforced
+// rather than as a broken list.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useMemo, useState } from 'react';
-import { AreaSelect, MandalSelect } from '../AreaMandalSelect';
+import { MandalSelect } from '../AreaMandalSelect';
+import ChipMultiSelect from '../ui/ChipMultiSelect';
 import { Input, Label, FieldError, Select } from '../ui/Input';
 import { Button } from '../ui/Button';
+import { useAreasAndMandals } from '../../hooks/useAreasAndMandals';
+import { eventAreas } from '../../lib/scope';
 import { WEEKDAYS, INTERVALS, toDateStr } from '../../lib/sabhaSchedule';
 
 const selectClass = 'h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300';
@@ -24,6 +43,7 @@ export default function SabhaScheduleForm({
   const isEdit = Boolean(schedule);
   const mandalRestricted = Array.isArray(allowedMandals);
   const areaRestricted = Array.isArray(allowedAreas);
+  const { areas: areaDefs } = useAreasAndMandals();
 
   const defaultMandal = useMemo(() => {
     if (!mandalRestricted) return '';
@@ -33,7 +53,7 @@ export default function SabhaScheduleForm({
 
   const [form, setForm] = useState(() => (isEdit ? {
     title: schedule.title || '',
-    area: schedule.area || '',
+    areas: eventAreas(schedule),
     mandal: schedule.mandal || '',
     dayOfWeek: String(schedule.dayOfWeek ?? 0),
     time: schedule.time || '',
@@ -45,7 +65,10 @@ export default function SabhaScheduleForm({
     active: schedule.active !== false,
   } : {
     title: '',
-    area: areaRestricted && allowedAreas.length === 1 ? allowedAreas[0] : '',
+    // An area-restricted creator with exactly one area gets it pre-selected;
+    // with several they pick, and an unrestricted creator starts city-wide
+    // (empty) until they choose.
+    areas: areaRestricted && allowedAreas.length === 1 ? [allowedAreas[0]] : [],
     mandal: defaultMandal,
     dayOfWeek: '0',
     time: '',
@@ -61,10 +84,34 @@ export default function SabhaScheduleForm({
 
   const update = (field) => (e) => setForm((p) => ({ ...p, [field]: e.target.value }));
 
+  // Every defined area, plus any the edited schedule already lists that has
+  // since been renamed away — so opening an old rule never silently drops one.
+  // Areas outside an area-restricted creator's territory render greyed rather
+  // than being removed (ChipMultiSelect's disabled option), the same choice
+  // AreaSelect made, so the boundary can't be mistaken for a broken list.
+  const areaOptions = useMemo(() => {
+    const names = (areaDefs || []).map((a) => a.name || a).filter(Boolean);
+    return [...new Set([...names, ...form.areas])].map((name) => ({
+      value: name,
+      label: name,
+      disabled: areaRestricted && !allowedAreas.includes(name),
+    }));
+  }, [areaDefs, form.areas, areaRestricted, allowedAreas]);
+
+  const cityWide = form.areas.length === 0;
+  const areaLabelText = form.areas.length ? form.areas.join(' + ') : 'All areas';
+
   function validate() {
     const errs = {};
-    if (!form.area) errs.area = 'Pick the area this sabha runs in.';
-    else if (areaRestricted && !allowedAreas.includes(form.area)) errs.area = `${form.area} isn’t assigned to you.`;
+    // City-wide (no areas) is fine for an unrestricted creator; an area-scoped
+    // one must name at least one of their areas, because the events this rule
+    // generates would otherwise carry area=null, which the rules refuse from
+    // them.
+    if (areaRestricted && form.areas.length === 0) {
+      errs.areas = 'Pick at least one of your areas — an area-restricted schedule can’t be city-wide.';
+    } else if (areaRestricted && form.areas.some((a) => !allowedAreas.includes(a))) {
+      errs.areas = 'One or more of these areas aren’t assigned to you.';
+    }
     if (!form.mandal) errs.mandal = 'Pick the mandal.';
     else if (mandalRestricted && !allowedMandals.includes(form.mandal)) errs.mandal = `${form.mandal} isn’t assigned to you.`;
     if (!form.time) errs.time = 'Time is required — it goes on every sabha this creates.';
@@ -80,7 +127,7 @@ export default function SabhaScheduleForm({
     setSaving(true);
     const ok = await onSubmit({
       title: form.title.trim(),
-      area: form.area,
+      areas: form.areas,
       mandal: form.mandal,
       dayOfWeek: Number(form.dayOfWeek),
       time: form.time,
@@ -99,11 +146,6 @@ export default function SabhaScheduleForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
-          <Label required>Area</Label>
-          <AreaSelect value={form.area} onChange={update('area')} className={selectClass} allowBlank allowed={allowedAreas} />
-          <FieldError>{errors.area}</FieldError>
-        </div>
-        <div>
           <Label required>Mandal</Label>
           <MandalSelect
             value={form.mandal}
@@ -114,6 +156,26 @@ export default function SabhaScheduleForm({
           />
           <FieldError>{errors.mandal}</FieldError>
         </div>
+      </div>
+
+      <div>
+        <Label required={areaRestricted}>
+          {areaRestricted ? 'Areas' : 'Areas (leave empty for a city-wide sabha)'}
+        </Label>
+        <ChipMultiSelect
+          options={areaOptions}
+          value={form.areas}
+          onChange={(next) => setForm((p) => ({ ...p, areas: next }))}
+          emptyLabel="No areas defined yet."
+        />
+        <p className="mt-1 text-xs text-slate-400">
+          {cityWide
+            ? 'City-wide — one recurring sabha for the whole city, counted for every area.'
+            : form.areas.length > 1
+              ? `Joint sabha across ${areaLabelText} — one sabha each time, attendance marked once and counted for each area.`
+              : `Files this recurring sabha under ${form.areas[0]}.`}
+        </p>
+        <FieldError>{errors.areas}</FieldError>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -162,9 +224,9 @@ export default function SabhaScheduleForm({
 
       <div>
         <Label>Sabha title (optional)</Label>
-        <Input value={form.title} onChange={update('title')} placeholder={`${form.mandal || 'Sabha'} — ${form.area || 'Area'}`} />
+        <Input value={form.title} onChange={update('title')} placeholder={`${form.mandal || 'Sabha'} — ${areaLabelText}`} />
         <p className="mt-1 text-xs text-slate-400">
-          Left blank, each generated sabha is titled “{form.mandal || 'Sabha'} — {form.area || 'Area'}”.
+          Left blank, each generated sabha is titled “{form.mandal || 'Sabha'} — {areaLabelText}”.
           Every one can still be renamed individually afterwards.
         </p>
       </div>

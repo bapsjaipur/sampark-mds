@@ -14,7 +14,7 @@
  *   inferScopeKind                        the shape implied by an assignment
  *   roleStatedScopeKind / statedScopeKind the Phase 23b UNION discount
  *   resolveScope                          volunteer + roles → one scope object
- *   matchesScope                          the single predicate
+ *   matchesScope / eventInScope           the contact and the sabha predicates
  *
  * firestore.rules mirrors the same logic a third time (ctx(), scopeAllows()).
  * Three copies is not an accident of laziness — the client filters, the rules
@@ -157,6 +157,40 @@ function matchesScope(scope, { area = null, mandal = null } = {}) {
   }
 }
 
+/** The areas an event/schedule spans; `[]` means city-wide. Mirrors eventAreas()
+ *  in src/lib/scope.js. */
+function eventAreas(doc) {
+  if (Array.isArray(doc && doc.areas)) return doc.areas.filter(Boolean);
+  return doc && doc.area ? [doc.area] : [];
+}
+
+/**
+ * eventInScope(scope, doc) — the events/schedules twin of matchesScope().
+ *
+ * PHASE 34 — a sabha now lists several areas (or none). It is in an AREA viewer's
+ * territory when ANY listed area is theirs, and a city-wide sabha (empty list)
+ * belongs to everyone; the mandal axis is unchanged. This is what keeps the
+ * weekly digest's per-head copy showing exactly the schedules that head sees on
+ * the All Area Sabhas screen — both now decide membership the same way. Mirrors
+ * eventInScope() in src/lib/scope.js.
+ */
+function eventInScope(scope, doc) {
+  if (!scope || scope.unrestricted) return true;
+  if (scope.kind === SCOPE_KINDS.NONE) return false;
+
+  const areas = eventAreas(doc);
+  const inArea = areas.length === 0 || areas.some((a) => scope.areas.includes(a));
+  const inMandal = Boolean(doc && doc.mandal) && scope.mandals.includes(doc.mandal);
+
+  switch (scope.kind) {
+    case SCOPE_KINDS.AREA: return inArea;
+    case SCOPE_KINDS.MANDAL: return inMandal;
+    case SCOPE_KINDS.INTERSECT: return inArea && inMandal;
+    case SCOPE_KINDS.UNION:
+    default: return inArea || inMandal;
+  }
+}
+
 module.exports = {
   SCOPE_KINDS,
   MANDAL_GROUPS,
@@ -167,4 +201,6 @@ module.exports = {
   roleStatedScopeKind,
   resolveScope,
   matchesScope,
+  eventAreas,
+  eventInScope,
 };

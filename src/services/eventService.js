@@ -13,14 +13,19 @@ import {
   addDoc, updateDoc, deleteDoc, setDoc, getDoc, getDocs,
 } from '../lib/fsMetered';
 import { db } from '../lib/firebase';
+import { normaliseAreas } from '../lib/scope';
 
-export async function createEvent({ title, date, time, durationMinutes, speaker, mandal, area, createdBy }) {
+export async function createEvent({ title, date, time, durationMinutes, speaker, mandal, areas, area, createdBy }) {
+  // Phase 34: a sabha can span several areas (joint) or none (city-wide). areas[]
+  // is the list; the scalar `area` stays areas[0] for firestore.rules and old readers.
+  const norm = normaliseAreas(areas, area);
   return addDoc(collection(db, 'events'), {
     title, date, time,
     durationMinutes: Number(durationMinutes) || 120,
     speaker: speaker || '',
     mandal: mandal || null,
-    area: area || null,
+    areas: norm.areas,
+    area: norm.area,
     createdBy,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -34,7 +39,18 @@ export async function updateEvent(eventId, data) {
   // `mandal == null` scoping the post-sabha report uses. Normalise here so both
   // paths write the same shape.
   if ('mandal' in patch) patch.mandal = patch.mandal || null;
-  if ('area' in patch) patch.area = patch.area || null;
+  // Keep areas[] and the scalar `area` in step (Phase 34). Either field arriving
+  // rewrites both from the same normalisation, so an edit can never leave a joint
+  // sabha half-updated — and a legacy caller that only sets `area` still gets a
+  // matching one-element areas[].
+  if ('areas' in patch || 'area' in patch) {
+    const norm = normaliseAreas(
+      'areas' in patch ? patch.areas : null,
+      'area' in patch ? patch.area : null,
+    );
+    patch.areas = norm.areas;
+    patch.area = norm.area;
+  }
   return updateDoc(doc(db, 'events', eventId), patch);
 }
 

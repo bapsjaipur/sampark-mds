@@ -35,6 +35,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { toLatin } from './pdfText';
+import { eventAreas, areaLabel } from './scope';
 
 export const NAVY = [15, 23, 42];
 export const NAVY_SOFT = [30, 41, 59];
@@ -150,9 +151,13 @@ export function buildEventAttendanceRows({
  * and always reads ~2%.
  */
 export function computeEventStats({ event, rows = [], individuals = [] }) {
+  const areas = eventAreas(event);
   const eligible = individuals.filter((p) => {
     if (event?.mandal && p.mandal !== event.mandal) return false;
-    if (event?.area && p.area !== event.area) return false;
+    // Phase 34: a joint sabha lists several areas and is aimed at contacts in ANY
+    // of them; a city-wide sabha (empty list) is aimed at everyone. Same rule the
+    // old scalar `event.area` gave, widened to the areas[] list.
+    if (areas.length && !areas.includes(p.area)) return false;
     return true;
   });
 
@@ -208,7 +213,7 @@ export function buildEventCsv({ event, rows }) {
     ['Date', formatEventDate(event?.date)],
     ['Time', formatEventTime(event?.time)],
     ['Mandal', event?.mandal || 'All Mandals'],
-    ['Area', event?.area || 'All Areas'],
+    ['Area', areaLabel(event) || 'All Areas'],
     ['Speaker', event?.speaker || ''],
     ['Present', String(rows.length)],
     ['Generated', new Date().toLocaleString('en-IN')],
@@ -260,7 +265,7 @@ function drawHeroHeader(pdf, event, stats) {
     formatEventDate(event?.date, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' }),
     formatEventTime(event?.time),
     event?.mandal || 'All Mandals',
-    event?.area || 'All Areas',
+    areaLabel(event) || 'All Areas',
   ].filter(Boolean).join('   ·   ');
   pdf.setTextColor(203, 213, 225);
   pdf.text(toLatin(line), M, 33, { maxWidth: INNER_W - 46 });

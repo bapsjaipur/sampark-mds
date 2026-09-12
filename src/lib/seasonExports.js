@@ -17,11 +17,10 @@
 //      has been forwarded twice can still be identified.
 //
 //   2. NOTHING IS SILENTLY DROPPED. The per-sabha table, every mandal, every
-//      area, the full retention series and all five follow-up lists go in,
-//      paginating as far as they need to. The on-screen lists page at 50 for
-//      performance; a printed report that stopped at 50 names would be a report
-//      you cannot act on. Where a list IS capped (see PEOPLE_CAP) the cap is
-//      stated on the page next to the count it was cut from.
+//      area, the full retention series and all five follow-up lists go in IN
+//      FULL, paginating as far as they need to. The on-screen lists page at 50
+//      for performance; a printed report that stopped short would be a report
+//      you cannot act on — so every name on every list is printed, however long.
 //
 // The palette and the header/stat-card/bar-chart primitives are imported from
 // eventExports.js — the per-sabha report is the design this matches, and sharing
@@ -38,10 +37,9 @@ import { RATE_BANDS, LAPSE_MISSES } from './eventAnalytics';
 
 const { W: PAGE_W, M, INNER_W } = PAGE;
 
-// A follow-up list is a call sheet. Past a few hundred names it stops being one
-// and the CSV is the right tool — but the cap is printed rather than assumed, so
-// nobody reads a truncated list as a complete one.
-const PEOPLE_CAP = 300;
+// A follow-up list is a call sheet, and the report prints every name on it. The
+// on-screen lists page at 50 for performance, but a printed sheet you cannot work
+// to the end of is not a call sheet — autoTable paginates as far as needed.
 
 const BAND_RGB = {
   regular: [16, 185, 129],
@@ -291,14 +289,10 @@ function drawGroupTable(pdf, rows, subject, y, headerNote) {
  * not a paragraph — the sheet is meant to be worked down with a phone in hand.
  */
 function drawPeopleTable(pdf, { title, blurb, people, extraCol }, y, headerNote) {
-  const shown = people.slice(0, PEOPLE_CAP);
-  const cut = people.length - shown.length;
   const cursor = sectionTitle(
     pdf, y,
     `${title}  (${people.length})`,
-    cut > 0
-      ? `${blurb}  —  first ${PEOPLE_CAP} of ${people.length} listed here; the CSV has all of them.`
-      : blurb,
+    blurb,
     headerNote,
   );
 
@@ -315,7 +309,7 @@ function drawPeopleTable(pdf, { title, blurb, people, extraCol }, y, headerNote)
     startY: cursor + 3,
     margin: { top: 22, left: M, right: M, bottom: 16 },
     head: [['#', 'Name', 'Mobile', 'Mandal', 'Area', 'Came', extraCol.label, 'Call list']],
-    body: shown.map((p, i) => [
+    body: people.map((p, i) => [
       String(i + 1),
       toLatin(p.name),
       toLatin(p.mobile || '-'),

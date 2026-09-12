@@ -38,7 +38,7 @@ const {
 } = require('./lib/mailer');
 const { buildSabhaCoverageReport } = require('./lib/emailTemplates');
 const { loadSabhaCoverage, DEFAULT_WEEKS_BACK } = require('./lib/sabhaCoverage');
-const { resolveScope, matchesScope } = require('./lib/volunteerScope');
+const { resolveScope, eventInScope } = require('./lib/volunteerScope');
 const { formatDayMonth } = require('./lib/sabhaDates');
 // PHASE 34 — editable cron, see lib/scheduleConfig.js.
 const { schedules } = require('./lib/scheduleConfig');
@@ -156,8 +156,12 @@ async function runSabhaDigest({ now = new Date(), force = false, weeksBack = DEF
         break;
       }
 
-      const mine = data.rows.filter((r) => matchesScope(scope, {
-        area: r.area === '—' ? null : r.area,
+      // eventInScope, not matchesScope: a joint sabha reaches every listed
+      // area's head and a city-wide one reaches all of them — the same rule the
+      // All Area Sabhas screen uses, so the email and the grid agree on "mine".
+      // r.areas is the schedule's area list (city-wide is []); mirrors the row.
+      const mine = data.rows.filter((r) => eventInScope(scope, {
+        areas: r.areas,
         mandal: r.mandal === '—' ? null : r.mandal,
       }));
       if (!mine.length) continue;

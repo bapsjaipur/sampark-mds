@@ -36,7 +36,7 @@
 const admin = require('firebase-admin');
 const {
   toDateStr, parseDateStr, addDays, startOfWeek, formatDayMonth,
-  occurrenceKey, scheduledEventId, occurrencesBetween, describeSchedule,
+  eventAreas, occurrenceKeys, scheduledEventId, occurrencesBetween, describeSchedule,
 } = require('./sabhaDates');
 
 if (!admin.apps.length) admin.initializeApp();
@@ -135,8 +135,11 @@ async function loadSabhaCoverage({ now = new Date(), weeksBack = DEFAULT_WEEKS_B
     const e = { id: d.id, ...d.data() };
     if (!e.date) return;
     eventsById.set(e.id, e);
-    const key = occurrenceKey(e.area, e.mandal, e.date);
-    if (!eventsByKey.has(key)) eventsByKey.set(key, e);
+    // A joint sabha registers under each of its areas, so a schedule listing any
+    // one of them finds it; a city-wide sabha registers under the empty key.
+    for (const key of occurrenceKeys(e, e.mandal, e.date)) {
+      if (!eventsByKey.has(key)) eventsByKey.set(key, e);
+    }
   });
 
   let counts = {};
@@ -178,8 +181,13 @@ async function loadSabhaCoverage({ now = new Date(), weeksBack = DEFAULT_WEEKS_B
     for (const date of dates) {
       const i = weekOf(date);
       if (i < 0 || i >= weeksBack) continue;
-      const event = eventsById.get(scheduledEventId(schedule.id, date))
-        || eventsByKey.get(occurrenceKey(schedule.area, schedule.mandal, date));
+      let event = eventsById.get(scheduledEventId(schedule.id, date));
+      if (!event) {
+        for (const key of occurrenceKeys(schedule, schedule.mandal, date)) {
+          event = eventsByKey.get(key);
+          if (event) break;
+        }
+      }
 
       let status;
       if (!event) status = 'missed';
@@ -205,10 +213,15 @@ async function loadSabhaCoverage({ now = new Date(), weeksBack = DEFAULT_WEEKS_B
     for (let i = filled.length - 1; i >= 0 && filled[i].status !== 'held'; i -= 1) missStreak += 1;
 
     const upcoming = paused ? [] : occurrencesBetween(schedule, nextFrom, nextTo);
+    const areas = eventAreas(schedule);
 
     return {
       scheduleId: schedule.id,
-      area: schedule.area || '—',
+      // areas[] drives scope-matching in the digest; `area` stays a human label
+      // for the email template — "A + B" for a joint sabha, "All areas" for a
+      // city-wide one, "—" for a rule that somehow carries neither.
+      areas,
+      area: areas.length ? areas.join(' + ') : (Array.isArray(schedule.areas) ? 'All areas' : '—'),
       mandal: schedule.mandal || '—',
       title: schedule.title || '',
       cadence: describeSchedule(schedule),

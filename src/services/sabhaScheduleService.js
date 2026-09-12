@@ -16,13 +16,21 @@ import { db } from '../lib/firebase';
 import {
   DEFAULT_WEEKS_AHEAD, eventFromSchedule, pendingOccurrences, scheduledEventId,
 } from '../lib/sabhaSchedule';
+import { normaliseAreas, eventAreas } from '../lib/scope';
 
 const COL = 'sabhaSchedules';
 
 /** '' → null for area/mandal, and numbers coerced, so every write is one shape. */
 function normalise(data) {
   const out = { ...data };
-  if ('area' in out) out.area = out.area || null;
+  // areas[] is the joint/city-wide list (Phase 34); the scalar `area` is kept as
+  // areas[0] for firestore.rules and pre-Phase-34 readers. Either field arriving
+  // rewrites both, so a schedule can never be stored half-updated.
+  if ('areas' in out || 'area' in out) {
+    const norm = normaliseAreas('areas' in out ? out.areas : null, 'area' in out ? out.area : null);
+    out.areas = norm.areas;
+    out.area = norm.area;
+  }
   if ('mandal' in out) out.mandal = out.mandal || null;
   if ('endDate' in out) out.endDate = out.endDate || null;
   if ('dayOfWeek' in out) out.dayOfWeek = Number(out.dayOfWeek);
@@ -117,9 +125,10 @@ export async function generateMissingEvents({
       });
       created += 1;
     } catch (err) {
+      const list = eventAreas(schedule);
       failed.push({
         date,
-        area: schedule.area || '—',
+        area: list.length ? list.join(' + ') : 'All areas',
         mandal: schedule.mandal || '—',
         error: err?.code || err?.message || 'unknown',
       });

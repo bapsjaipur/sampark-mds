@@ -30,6 +30,12 @@
 // documents in the database can never disagree about which Sundays exist.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// eventAreas() is the single client definition of "which areas does this span"
+// (Phase 34). Imported rather than re-declared so a schedule and the coverage
+// grid agree with the rest of the app; its Cloud Function twin (sabhaDates.js)
+// hand-mirrors the same two lines, exactly as it already does for occurrenceKey.
+import { eventAreas } from './scope';
+
 export const WEEKDAYS = [
   { value: 0, label: 'Sunday', short: 'Sun' },
   { value: 1, label: 'Monday', short: 'Mon' },
@@ -111,6 +117,19 @@ export function occurrenceKey(area, mandal, dateStr) {
 }
 
 /**
+ * The occurrenceKey(s) a schedule or event occupies on one date — one per area
+ * it spans, or the single empty-area key for a city-wide sabha. A joint sabha
+ * across two areas therefore matches a hand-made sabha in EITHER of them, so the
+ * generator adopts an existing one instead of putting a second sabha on the same
+ * evening. Accepts a doc ({ areas, area }) or a bare areas[] array.
+ */
+export function occurrenceKeys(areasOrDoc, mandal, dateStr) {
+  const areas = Array.isArray(areasOrDoc) ? areasOrDoc.filter(Boolean) : eventAreas(areasOrDoc);
+  const list = areas.length ? areas : [''];
+  return list.map((a) => occurrenceKey(a, mandal, dateStr));
+}
+
+/**
  * Every date this schedule falls on inside [fromStr, toStr], inclusive.
  *
  * The anchor for a multi-week interval is the schedule's own `startDate`, not
@@ -154,14 +173,19 @@ export function occurrencesBetween(schedule, fromStr, toStr) {
  * anything carrying that marker, and a generated sabha is not an imported one.
  */
 export function eventFromSchedule(schedule, dateStr, createdBy = null) {
+  const areas = eventAreas(schedule);
+  const areaLabel = areas.length ? areas.join(' + ') : 'All areas';
   return {
-    title: schedule.title || `${schedule.mandal || 'Sabha'} — ${schedule.area || ''}`.trim(),
+    title: schedule.title || `${schedule.mandal || 'Sabha'} — ${areaLabel}`.trim(),
     date: dateStr,
     time: schedule.time || '',
     durationMinutes: Number(schedule.durationMinutes) || 120,
     speaker: schedule.speaker || '',
     mandal: schedule.mandal || null,
-    area: schedule.area || null,
+    // areas[] is the joint/city-wide list; the scalar `area` stays areas[0] so
+    // firestore.rules and pre-Phase-34 readers keep seeing a valid single area.
+    areas,
+    area: areas[0] || null,
     scheduleId: schedule.id,
     source: 'schedule',
     createdBy: createdBy || schedule.createdBy || null,
@@ -234,8 +258,11 @@ export function buildSabhaCoverage({
   for (const e of events) {
     if (!e?.date) continue;
     eventsById.set(e.id, e);
-    const key = occurrenceKey(e.area, e.mandal, e.date);
-    if (!eventsByKey.has(key)) eventsByKey.set(key, e);
+    // A joint sabha registers under each of its areas, so a schedule listing any
+    // one of them finds it.
+    for (const key of occurrenceKeys(e, e.mandal, e.date)) {
+      if (!eventsByKey.has(key)) eventsByKey.set(key, e);
+    }
   }
 
   const weekOf = (dateStr) => {
@@ -262,8 +289,13 @@ export function buildSabhaCoverage({
     for (const date of dates) {
       const i = weekOf(date);
       if (i < 0 || i >= weekCount) continue;
-      const event = eventsById.get(scheduledEventId(schedule.id, date))
-        || eventsByKey.get(occurrenceKey(schedule.area, schedule.mandal, date));
+      let event = eventsById.get(scheduledEventId(schedule.id, date));
+      if (!event) {
+        for (const key of occurrenceKeys(schedule, schedule.mandal, date)) {
+          event = eventsByKey.get(key);
+          if (event) break;
+        }
+      }
       const present = event ? (counts[event.id] || 0) : 0;
       const future = date > todayStr;
 
@@ -326,15 +358,20 @@ export function pendingOccurrences({
   const fromStr = toDateStr(today);
   const toStr = toDateStr(addDays(today, weeksAhead * 7));
   const ids = new Set(events.map((e) => e.id));
-  const keys = new Set(events.filter((e) => e?.date).map((e) => occurrenceKey(e.area, e.mandal, e.date)));
+  const keys = new Set();
+  for (const e of events) {
+    if (!e?.date) continue;
+    for (const key of occurrenceKeys(e, e.mandal, e.date)) keys.add(key);
+  }
 
   const out = [];
   for (const schedule of schedules) {
     for (const date of occurrencesBetween(schedule, fromStr, toStr)) {
       if (ids.has(scheduledEventId(schedule.id, date))) continue;
-      // Somebody already created this sabha by hand — adopt theirs rather than
-      // putting a second one on the same evening.
-      if (keys.has(occurrenceKey(schedule.area, schedule.mandal, date))) continue;
+      // Somebody already created this sabha by hand — in ANY of the areas a joint
+      // sabha lists — so adopt theirs rather than putting a second one on the
+      // same evening.
+      if (occurrenceKeys(schedule, schedule.mandal, date).some((key) => keys.has(key))) continue;
       out.push({ schedule, date });
     }
   }

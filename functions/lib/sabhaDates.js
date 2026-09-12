@@ -70,9 +70,33 @@ function formatDayMonth(dateStr) {
   return d ? `${d.getDate()} ${MONTH_SHORT[d.getMonth()]}` : '—';
 }
 
+/**
+ * The areas an event or schedule spans; `[]` means city-wide (every area). The
+ * CommonJS mirror of eventAreas() in src/lib/scope.js — hand-copied for the same
+ * reason occurrenceKey is (ESM bundle vs CommonJS package, no shared build).
+ */
+function eventAreas(doc) {
+  if (Array.isArray(doc && doc.areas)) return doc.areas.filter(Boolean);
+  return doc && doc.area ? [doc.area] : [];
+}
+
 /** area|mandal|date — how a hand-made sabha is matched to a schedule slot. */
 function occurrenceKey(area, mandal, dateStr) {
   return `${area || ''}|${mandal || ''}|${dateStr || ''}`;
+}
+
+/**
+ * The occurrenceKey(s) a schedule or event occupies on one date — one per area
+ * it spans, or the single empty-area key for a city-wide sabha. A joint sabha
+ * across two areas therefore matches a hand-made sabha in EITHER of them, so the
+ * generator adopts an existing one rather than putting a second sabha on the same
+ * evening. Accepts a doc ({ areas, area }) or a bare areas[] array. Mirrors
+ * occurrenceKeys() in src/lib/sabhaSchedule.js.
+ */
+function occurrenceKeys(areasOrDoc, mandal, dateStr) {
+  const areas = Array.isArray(areasOrDoc) ? areasOrDoc.filter(Boolean) : eventAreas(areasOrDoc);
+  const list = areas.length ? areas : [''];
+  return list.map((a) => occurrenceKey(a, mandal, dateStr));
 }
 
 /** Deterministic id of the sabha a schedule produces on one date. */
@@ -121,14 +145,19 @@ function occurrencesBetween(schedule, fromStr, toStr) {
  * the caller's business — the generator adds createdAt/updatedAt.
  */
 function eventFieldsFromSchedule(schedule, dateStr) {
+  const areas = eventAreas(schedule);
+  const areaLabel = areas.length ? areas.join(' + ') : 'All areas';
   return {
-    title: schedule.title || `${schedule.mandal || 'Sabha'} — ${schedule.area || ''}`.trim(),
+    title: schedule.title || `${schedule.mandal || 'Sabha'} — ${areaLabel}`.trim(),
     date: dateStr,
     time: schedule.time || '',
     durationMinutes: Number(schedule.durationMinutes) || 120,
     speaker: schedule.speaker || '',
     mandal: schedule.mandal || null,
-    area: schedule.area || null,
+    // areas[] is the joint/city-wide list; the scalar `area` stays areas[0] so
+    // firestore.rules and pre-Phase-34 readers keep seeing a valid single area.
+    areas,
+    area: areas[0] || null,
     scheduleId: schedule.id,
     // NOT 'history-import' — firestore.rules lets an import_data holder DELETE
     // anything carrying that marker, and a generated sabha is not an imported one.
@@ -154,7 +183,9 @@ module.exports = {
   addDays,
   startOfWeek,
   formatDayMonth,
+  eventAreas,
   occurrenceKey,
+  occurrenceKeys,
   scheduledEventId,
   occurrencesBetween,
   eventFieldsFromSchedule,

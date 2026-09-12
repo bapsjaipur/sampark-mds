@@ -339,6 +339,94 @@ export function matchesScope(scope, { area = null, mandal = null } = {}) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 34 — a sabha can span SEVERAL areas, or none.
+//
+// "there should be also all area recurring sabha, and multiple area combine
+//  sabha option of selecting two areas one time."
+//
+// A joint sabha is ONE event — attendance is marked once — that counts for every
+// area it lists; "all areas" is a city-wide sabha that belongs to no area in
+// particular and so counts for all of them. Both are stored the same way:
+//
+//   areas: ['Vaishali','Malviya']   + area: 'Vaishali'   (joint of two)
+//   areas: []                        + area: null         (city-wide)
+//   legacy: (no areas)               + area: 'X'          (reads as ['X'])
+//
+// The scalar `area` is kept as areas[0] on purpose: firestore.rules' event scope
+// check reads that scalar, and every pre-Phase-34 event already has it. So the
+// server boundary and old documents keep working with no rules change and no
+// migration — the areas[] list is an ADDITION the client understands, never a
+// replacement the database has to be taught about.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The areas an event or schedule spans. `[]` means city-wide (every area). */
+export function eventAreas(doc) {
+  if (Array.isArray(doc?.areas)) return doc.areas.filter(Boolean);
+  return doc?.area ? [doc.area] : [];
+}
+
+/**
+ * A human label for the areas an event/schedule spans: "Vaishali + Malviya" for
+ * a joint sabha, "All areas" for a city-wide one (an explicit empty areas[]),
+ * and '' for a legacy event that never carried an area at all — so old imported
+ * sabhas read exactly as they did before Phase 34 rather than sprouting a label.
+ */
+export function areaLabel(doc) {
+  const list = eventAreas(doc);
+  if (list.length) return list.join(' + ');
+  return Array.isArray(doc?.areas) ? 'All areas' : '';
+}
+
+/**
+ * normaliseAreas(areas, area) → { areas, area }
+ *
+ * The ONE place the areas[]/area pair is built, so no writer ever stores a
+ * half-updated shape. Takes an explicit list (or a lone legacy `area`), trims,
+ * drops blanks and de-dupes, and derives the scalar as areas[0] || null — so a
+ * city-wide sabha comes out as { areas: [], area: null }. Order is preserved:
+ * areas[0] is the value firestore.rules and old readers see, so the caller (the
+ * form) controls which listed area that is.
+ */
+export function normaliseAreas(areas, area = null) {
+  const source = Array.isArray(areas) ? areas : (area ? [area] : []);
+  const cleaned = [...new Set(source.map((a) => String(a || '').trim()).filter(Boolean))];
+  return { areas: cleaned, area: cleaned[0] || null };
+}
+
+/**
+ * eventInScope(scope, doc) — the events/schedules twin of matchesScope().
+ *
+ * An event now lists several areas (or none); it is in an AREA-scoped viewer's
+ * territory when ANY listed area is theirs, and a city-wide sabha (empty list)
+ * belongs to everyone. The mandal axis is unchanged — a sabha carries a single
+ * mandal — and the two axes combine exactly as matchesScope does, so a UNION
+ * viewer matches on either and an INTERSECT viewer needs both.
+ *
+ * This is the CLIENT visibility filter. The server boundary stays
+ * firestore.rules' eventScopeAllows(), which reads the scalar `area` + mandal —
+ * enough for the real events audience (global sees all; mandal-scoped users, who
+ * the events query already narrows by mandal, match on the always-present
+ * mandal). Area-only scopes cannot list events under the existing rules either
+ * way, so no rules change is needed for this to be correct where it is used.
+ */
+export function eventInScope(scope, doc) {
+  if (!scope || scope.unrestricted) return true;
+  if (scope.kind === SCOPE_KINDS.NONE) return false;
+
+  const areas = eventAreas(doc);
+  const inArea = areas.length === 0 || areas.some((a) => scope.areas.includes(a));
+  const inMandal = Boolean(doc?.mandal) && scope.mandals.includes(doc.mandal);
+
+  switch (scope.kind) {
+    case SCOPE_KINDS.AREA: return inArea;
+    case SCOPE_KINDS.MANDAL: return inMandal;
+    case SCOPE_KINDS.INTERSECT: return inArea && inMandal;
+    case SCOPE_KINDS.UNION:
+    default: return inArea || inMandal;
+  }
+}
+
 /**
  * Convenience for the common case of filtering individuals when you already
  * hold the households. Individuals don't carry `area`, so it comes from the

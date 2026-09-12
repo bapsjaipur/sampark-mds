@@ -27,6 +27,7 @@ import { formatEventDate, formatEventTime } from '../../lib/eventExports';
 import RoundReviewPanel from './RoundReviewPanel';
 import { Avatar } from '../ui/Avatar';
 import { cn } from '../../lib/cn';
+import { eventAreas, areaLabel } from '../../lib/scope';
 
 function StatTile({ icon: Icon, label, value, sub, tone = 'slate' }) {
   const TONES = {
@@ -157,15 +158,19 @@ export default function EventDashboard({ event, rows = [], stats, individuals = 
 
   // In-scope contacts with no attendance row for this event.
   const absent = useMemo(() => {
+    // Phase 34: a joint sabha lists several areas (city-wide is []); an in-scope
+    // contact is one in ANY listed area, or everyone when the list is empty —
+    // the same widening computeEventStats applies to the "in scope" denominator.
+    const areas = eventAreas(event);
     const presentIds = new Set(rows.map((r) => r.id));
     return individuals
       .filter((p) => {
         if (event?.mandal && p.mandal !== event.mandal) return false;
-        if (event?.area && p.area !== event.area) return false;
+        if (areas.length && !areas.includes(p.area)) return false;
         return !presentIds.has(p.id);
       })
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  }, [rows, individuals, event?.mandal, event?.area]);
+  }, [rows, individuals, event]);
 
   // Change against the previous sabha in the trend, not the average — "up or
   // down since last time" is the question that gets asked.
@@ -196,7 +201,7 @@ export default function EventDashboard({ event, rows = [], stats, individuals = 
             event?.durationMinutes ? `${event.durationMinutes} min` : null,
             event?.speaker ? `Speaker: ${event.speaker}` : null,
             event?.mandal || 'All Mandals',
-            event?.area || 'All Areas',
+            areaLabel(event) || 'All Areas',
           ].filter(Boolean).join(' · ')}
         </p>
 

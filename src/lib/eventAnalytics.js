@@ -41,6 +41,8 @@
 // below de-duplicates anyway rather than trusting that.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { eventAreas } from './scope';
+
 /** Missing this many sabhas in a row, after having attended, counts as lapsed. */
 export const LAPSE_MISSES = 3;
 
@@ -111,8 +113,15 @@ export function buildSabhaAnalytics({
   // An event's own mandal/area is only meaningful when it was set — most
   // imported sabhas have neither, and filtering them out would empty the page.
   // So a sabha is in scope if it says nothing, or if it says the filtered value.
-  const inScopeEvent = (e) => (!mandal || !e.mandal || e.mandal === mandal)
-    && (!area || !e.area || e.area === area);
+  // Phase 34: a joint sabha lists several areas and counts for each of them, and
+  // a city-wide sabha (empty list) counts for every area filter — same rule the
+  // old scalar `!e.area` gave, widened to the areas[] list.
+  const inScopeEvent = (e) => {
+    if (mandal && e.mandal && e.mandal !== mandal) return false;
+    if (!area) return true;
+    const areas = eventAreas(e);
+    return areas.length === 0 || areas.includes(area);
+  };
 
   const past = events
     .filter((e) => e.date && isEventPast(e, now) && inScopeEvent(e))

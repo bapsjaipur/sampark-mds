@@ -41,7 +41,7 @@ import {
   buildSabhaCoverage, pendingOccurrences, describeSchedule, formatOccurrenceDate,
   SABHA_STATUS, DEFAULT_WEEKS_AHEAD,
 } from '../../lib/sabhaSchedule';
-import { matchesScope, writableAreas, writableMandals } from '../../lib/scope';
+import { eventInScope, areaLabel, writableAreas, writableMandals } from '../../lib/scope';
 import { cn } from '../../lib/cn';
 
 // The grid's colour key. Deliberately strong on red — a missed sabha is the one
@@ -90,10 +90,12 @@ export default function AllAreaSabhas({ events = [], counts = {}, onOpenEvent })
   const allowedMandals = writableMandals(scope);
   const allowedAreas = writableAreas(scope);
 
-  // Same client-side scoping the events subscription applies. A schedule always
-  // carries both axes, so this is exact rather than best-effort.
+  // Same client-side scoping the events subscription applies. A joint schedule
+  // lists several areas and a city-wide one lists none, so eventInScope() is the
+  // right predicate — it credits the row to an area viewer when ANY listed area
+  // is theirs, and shows city-wide rules to everyone.
   const schedules = useMemo(
-    () => allSchedules.filter((s) => matchesScope(scope, { area: s.area, mandal: s.mandal })),
+    () => allSchedules.filter((s) => eventInScope(scope, s)),
     [allSchedules, scope],
   );
 
@@ -137,7 +139,7 @@ export default function AllAreaSabhas({ events = [], counts = {}, onOpenEvent })
 
   async function handleDelete(schedule) {
     const ok = window.confirm(
-      `Delete the ${schedule.mandal} schedule for ${schedule.area}?\n\n`
+      `Delete the ${schedule.mandal} schedule for ${areaLabel(schedule) || 'all areas'}?\n\n`
       + 'Sabhas it already created stay on the calendar with their attendance. '
       + 'Only the recurring rule is removed, so no new ones appear.',
     );
@@ -312,7 +314,7 @@ export default function AllAreaSabhas({ events = [], counts = {}, onOpenEvent })
                 <tr key={row.schedule.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
                   <td className="sticky left-0 z-10 min-w-[190px] bg-white px-3 py-2">
                     <div className="flex items-center gap-1.5">
-                      <p className="truncate text-[13px] font-medium text-slate-800">{row.schedule.area}</p>
+                      <p className="truncate text-[13px] font-medium text-slate-800">{areaLabel(row.schedule) || '—'}</p>
                       {row.schedule.active === false && <Badge tone="slate">Paused</Badge>}
                       {row.needsFollowUp && <Badge tone="red">{row.missStreak} missed</Badge>}
                     </div>
@@ -363,7 +365,7 @@ export default function AllAreaSabhas({ events = [], counts = {}, onOpenEvent })
             {followUps.map((row) => (
               <li key={row.schedule.id} className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg bg-white px-3 py-2">
                 <span className="text-[13px] font-medium text-slate-800">
-                  {row.schedule.area} · {row.schedule.mandal}
+                  {areaLabel(row.schedule) || '—'} · {row.schedule.mandal}
                 </span>
                 <span className="text-[11px] text-slate-400">
                   {row.missStreak} in a row ·{' '}
@@ -386,7 +388,7 @@ export default function AllAreaSabhas({ events = [], counts = {}, onOpenEvent })
               <div key={s.id} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-white p-3">
                 <div className="min-w-0">
                   <p className="flex items-center gap-1.5 truncate text-[13px] font-medium text-slate-800">
-                    {s.area} · {s.mandal}
+                    {areaLabel(s) || '—'} · {s.mandal}
                     {s.active === false && <Badge tone="slate">Paused</Badge>}
                   </p>
                   <p className="mt-0.5 text-[11px] text-slate-400">{describeSchedule(s)}</p>

@@ -36,7 +36,7 @@
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const admin = require('firebase-admin');
 const {
-  toDateStr, occurrenceKey, scheduledEventId, occurrencesBetween, eventFieldsFromSchedule,
+  toDateStr, occurrenceKeys, scheduledEventId, occurrencesBetween, eventFieldsFromSchedule,
 } = require('./lib/sabhaDates');
 // PHASE 34 — editable cron, see lib/scheduleConfig.js.
 const { schedules } = require('./lib/scheduleConfig');
@@ -89,16 +89,21 @@ async function generateUpcomingSabhas({ now = new Date(), weeksAhead = WEEKS_AHE
     .get();
 
   const ids = new Set(eventSnap.docs.map((d) => d.id));
-  const keys = new Set(eventSnap.docs.map((d) => {
+  const keys = new Set();
+  for (const d of eventSnap.docs) {
     const e = d.data();
-    return occurrenceKey(e.area, e.mandal, e.date);
-  }));
+    // A joint sabha registers under EACH of its areas and a city-wide one under
+    // the empty key, so a hand-made sabha in any listed area is found below.
+    for (const key of occurrenceKeys(e, e.mandal, e.date)) keys.add(key);
+  }
 
   const due = [];
   for (const schedule of schedules) {
     for (const date of occurrencesBetween(schedule, fromStr, toStr)) {
       if (ids.has(scheduledEventId(schedule.id, date))) continue;
-      if (keys.has(occurrenceKey(schedule.area, schedule.mandal, date))) continue;
+      // Somebody already created this sabha by hand in ANY of the areas a joint
+      // schedule lists — adopt theirs rather than adding a second that evening.
+      if (occurrenceKeys(schedule, schedule.mandal, date).some((key) => keys.has(key))) continue;
       due.push({ schedule, date });
     }
   }
