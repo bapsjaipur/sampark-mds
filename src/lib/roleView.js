@@ -101,9 +101,15 @@ export function isObserverRole(role) {
 const NAV = {
   calling: {
     to: '/calling', label: 'My Calling', icon: PhoneForwarded,
-    // A volunteer needs edit_contacts to save a status; a read-only role would
-    // reach the screen and fail on every save, so gate on the write permission.
-    anyOf: ['edit_contacts'],
+    // Seeing the batch assigned to you is a READ, so any scoped reader qualifies.
+    // Gating on edit_contacts alone hid "My Calling" from a role that holds
+    // view_assigned_contacts but not edit_contacts (an attendance / observer role
+    // such as SK-YM) even when a batch had been handed to them — the "missing My
+    // Calling tab" report. edit_contacts still qualifies on its own (a write-only
+    // calling role); a role missing the matching read/write simply gets the empty
+    // state or a save toast, not a blank tab. Pairs with canReadBatches() in
+    // firestore.rules, which now also accepts edit_contacts.
+    anyOf: ['edit_contacts', 'view_assigned_contacts', 'view_all_contacts'],
   },
   myContacts: {
     to: '/my-contacts', label: 'My Contacts', icon: PhoneCall,
@@ -112,12 +118,20 @@ const NAV = {
   contacts: {
     to: '/contacts', label: 'All Contacts', icon: Users,
     anyOf: ['view_all_contacts', 'view_assigned_contacts', 'edit_contacts'],
+    // Opt-out: a role with hide_all_contacts (e.g. SK-YM) loses this tab even
+    // though its read permission would otherwise show it. Roles → "Hide the All
+    // Contacts tab". Their calling queue / My Contacts are unaffected.
+    hideIf: 'hide_all_contacts',
   },
   households: {
     to: '/households', label: 'Households', icon: Home,
-    // Historically ungated. Kept deliberately broad so no existing role loses
-    // the link, but narrow enough to exclude a Santo (who holds none of these).
-    anyOf: ['view_households', 'view_all_contacts', 'view_assigned_contacts', 'edit_contacts'],
+    // view_households is the single authoritative control for this tab, so an
+    // admin can hide Households from a role just by unticking it. Every preset
+    // (admin → volunteer, and the Bal Mandal set) carries view_households, so no
+    // standard role loses the link; only a hand-built role that doesn't hold it
+    // drops off — which is exactly the per-role control asked for. A Santo holds
+    // none of these and is excluded as before.
+    anyOf: ['view_households'],
   },
   events: {
     to: '/events', label: 'Events', icon: CalendarDays,
@@ -212,6 +226,10 @@ const HOME_PATHS = {
 
 function allowed(item, permissions, volunteer) {
   if (!item) return false;
+  // Opt-out gate (Phase B): a role holding this permission has the item HIDDEN
+  // even when its read permission would otherwise show it. Checked first so hide
+  // always wins over the grant below. See VISIBILITY_HIDE_PERMISSIONS.
+  if (item.hideIf && has(permissions, item.hideIf)) return false;
   if (item.access === 'balMandal') return canAccessBalMandal(permissions, volunteer);
   if (!item.anyOf) return true;
   return hasAny(permissions, item.anyOf);

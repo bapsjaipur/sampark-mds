@@ -13,13 +13,24 @@ export function useMyBatchQueue() {
   const [batches, setBatches] = useState([]);
   const [individuals, setIndividuals] = useState({}); // id -> individual doc
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [currentIdx, setCurrentIdx] = useState(0);
 
   // Live: which batches are assigned to me.
   useEffect(() => {
     if (!volunteer?.id) { setBatches([]); setLoading(false); return; }
+    setError(null);
     const q = query(collection(db, 'batches'), where('assignedVolunteerId', '==', volunteer.id));
-    const unsub = onSnapshot(q, (snap) => setBatches(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    const unsub = onSnapshot(
+      q,
+      (snap) => setBatches(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      // Without this handler a permission-denied read is swallowed and the queue
+      // just looks empty — the exact symptom of an assigned volunteer who cannot
+      // see their batch (their role has edit_contacts but no view_* permission,
+      // and canReadBatches denied the read). Surface it so callers can tell
+      // "denied" apart from "genuinely no batch".
+      (err) => { setError(err); setBatches([]); setLoading(false); },
+    );
     return unsub;
   }, [volunteer?.id]);
 
@@ -41,9 +52,14 @@ export function useMyBatchQueue() {
     if (individualIds.length === 0) { setIndividuals({}); setLoading(false); return; }
     setLoading(true);
     const unsubs = individualIds.map((id) =>
-      onSnapshot(doc(db, 'individuals', id), (snap) => {
-        setIndividuals((prev) => ({ ...prev, [id]: snap.exists() ? { id: snap.id, ...snap.data() } : null }));
-      })
+      onSnapshot(
+        doc(db, 'individuals', id),
+        (snap) => {
+          setIndividuals((prev) => ({ ...prev, [id]: snap.exists() ? { id: snap.id, ...snap.data() } : null }));
+        },
+        // A denied individual read is the other way this queue can silently empty.
+        (err) => setError(err),
+      )
     );
     setLoading(false);
     return () => unsubs.forEach((u) => u());
@@ -60,5 +76,5 @@ export function useMyBatchQueue() {
   const jumpTo = useCallback((idx) => setCurrentIdx(idx), []);
   const isDone = contacts.length > 0 && currentIdx >= contacts.length;
 
-  return { contacts, current, currentIdx, next, jumpTo, isDone, loading, batches };
+  return { contacts, current, currentIdx, next, jumpTo, isDone, loading, batches, error };
 }

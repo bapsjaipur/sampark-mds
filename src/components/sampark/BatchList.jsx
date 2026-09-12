@@ -40,6 +40,7 @@ import { useToast } from '../../contexts/ToastContext';
 import { describeScope } from '../../lib/scope';
 import BatchContactsEditor from './BatchContactsEditor';
 import { Select } from '../ui/Input';
+import SearchableSelect from '../ui/SearchableSelect';
 import { Card } from '../ui/Card';
 import { cn } from '../../lib/cn';
 
@@ -386,10 +387,14 @@ export default function BatchList({ volunteers, batches = [], loading = false })
             </Select>
           )}
 
-          <Select value={volunteerFilter} onChange={(e) => setVolunteerFilter(e.target.value)} className="min-w-0 sm:w-44">
-            <option value="">Any volunteer</option>
-            {volunteers.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-          </Select>
+          <SearchableSelect
+            value={volunteerFilter}
+            onChange={setVolunteerFilter}
+            emptyOption={{ label: 'Any volunteer' }}
+            searchPlaceholder="Search volunteers…"
+            options={volunteers.map((v) => ({ value: v.id, label: v.name }))}
+            className="min-w-0 sm:w-44"
+          />
         </div>
 
         <button
@@ -532,29 +537,24 @@ export default function BatchList({ volunteers, batches = [], loading = false })
                   // Volunteers whose own area/mandal covers this batch first, in
                   // a labelled group. With 22 volunteers and 8 mandals, scanning
                   // one flat alphabetical list is how a batch ends up with the
-                  // wrong caller.
+                  // wrong caller — and a search box is how you stop scanning at 80.
                   const active = volunteers.filter((v) => v.isActive !== false);
                   const fits = active.filter((v) => volunteerFitsBatch(v, b));
                   const rest = active.filter((v) => !fits.includes(v));
+                  const toOpts = (list) => list.map((v) => ({ value: v.id, label: v.name }));
                   return (
-                    <Select
+                    <SearchableSelect
                       value=""
                       disabled={busy}
-                      onChange={(e) => { const v = e.target.value; e.target.value = ''; handleAssign(b, v); }}
+                      onChange={(v) => handleAssign(b, v)}
+                      placeholder="Assign to a volunteer…"
+                      searchPlaceholder="Search volunteers…"
                       className="sm:w-64"
-                    >
-                      <option value="">Assign to a volunteer…</option>
-                      {fits.length > 0 && (
-                        <optgroup label="Assigned to this area / mandal">
-                          {fits.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-                        </optgroup>
-                      )}
-                      {rest.length > 0 && (
-                        <optgroup label={fits.length > 0 ? 'Other volunteers' : 'All volunteers'}>
-                          {rest.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-                        </optgroup>
-                      )}
-                    </Select>
+                      groups={[
+                        ...(fits.length ? [{ label: 'Assigned to this area / mandal', options: toOpts(fits) }] : []),
+                        ...(rest.length ? [{ label: fits.length ? 'Other volunteers' : 'All volunteers', options: toOpts(rest) }] : []),
+                      ]}
+                    />
                   );
                 })()}
               </div>

@@ -13,7 +13,8 @@ import { useState } from 'react';
 import { ArrowRightLeft, ShieldAlert } from 'lucide-react';
 import { reassignContacts, clearAllBatches } from '../../services/batchService';
 import { useToast } from '../../contexts/ToastContext';
-import { Select, Input, Label } from '../ui/Input';
+import { Input, Label } from '../ui/Input';
+import SearchableSelect from '../ui/SearchableSelect';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 
@@ -83,21 +84,26 @@ export default function BatchAdminTools({ volunteers }) {
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <Label>From</Label>
-            <Select value={from} onChange={(e) => setFrom(e.target.value)}>
-              <option value="">Select a volunteer</option>
-              {volunteers.map((v) => (
-                <option key={v.id} value={v.id}>{v.name}{v.isActive === false ? ' (disabled)' : ''}</option>
-              ))}
-            </Select>
+            <SearchableSelect
+              value={from}
+              onChange={setFrom}
+              placeholder="Select a volunteer"
+              searchPlaceholder="Search volunteers…"
+              options={volunteers.map((v) => ({
+                value: v.id,
+                label: `${v.name}${v.isActive === false ? ' (disabled)' : ''}`,
+              }))}
+            />
           </div>
           <div>
             <Label>To</Label>
-            <Select value={to} onChange={(e) => setTo(e.target.value)}>
-              <option value="">Nobody — leave unassigned</option>
-              {activeVolunteers.filter((v) => v.id !== from).map((v) => (
-                <option key={v.id} value={v.id}>{v.name}</option>
-              ))}
-            </Select>
+            <SearchableSelect
+              value={to}
+              onChange={setTo}
+              emptyOption={{ label: 'Nobody — leave unassigned' }}
+              searchPlaceholder="Search volunteers…"
+              options={activeVolunteers.filter((v) => v.id !== from).map((v) => ({ value: v.id, label: v.name }))}
+            />
           </div>
         </div>
 

@@ -20,7 +20,7 @@
 // only for display (badge text) and for shaping navigation (see lib/roleView.js).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { PERMISSIONS, ALL_PERMISSIONS } from './permissions';
+import { PERMISSIONS, ALL_PERMISSIONS, PRESET_EXCLUDED_PERMISSIONS } from './permissions';
 import { SCOPE_KINDS } from '../lib/scope';
 
 const P = PERMISSIONS;
@@ -59,10 +59,15 @@ export const ROLE_PRESETS = [
     scopeKind: SCOPE_KINDS.GLOBAL,
     description:
       'Full access. Manages volunteers, roles, batches, events, exports, backups and email automation. Ignores area/mandal assignment entirely.',
-    // Spread rather than listed so a newly added permission is granted to Admin
+    // Spread rather than listed so a newly added CAPABILITY is granted to Admin
     // automatically — otherwise every new capability silently locks out Admin
-    // until someone remembers to tick a box.
-    permissions: [...ALL_PERMISSIONS],
+    // until someone remembers to tick a box. Two kinds of permission are the
+    // exception and are filtered out (PRESET_EXCLUDED_PERMISSIONS in permissions.js):
+    // the opt-out visibility flags, which would make the Admin hide its own tabs,
+    // and save_call_outcomes, a strict subset of the edit_contacts the Admin
+    // already holds — including it would enlarge this preset and break
+    // detectRoleKey's exact match against Admin docs already saved in Firestore.
+    permissions: ALL_PERMISSIONS.filter((p) => !PRESET_EXCLUDED_PERMISSIONS.includes(p)),
   },
   {
     key: 'super_moderator',

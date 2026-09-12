@@ -399,12 +399,35 @@ service cloud.firestore {
         individualScopeOk(data, c);
     }
 
-    // On update BOTH versions are checked, so a scoped volunteer cannot move a
-    // contact into — or out of — someone else's area/mandal.
+    // The exact fields a call save may touch, mirroring updateContactField() and
+    // incrementCallCount() in src/services/contactService.js: the outcome itself
+    // (status), the reference/notes, the call counter, plus the updatedAt every
+    // write stamps. affectedKeys().hasOnly() is the whole point of save_call_outcomes
+    // — a write that changes anything else (name, mobile, area, mandal, household)
+    // is NOT an outcome and does not pass this gate, so this narrow grant can never
+    // become a backdoor to edit a contact. Widen this set and the service together.
+    function isCallOutcomeUpdate(oldData, newData) {
+      return newData.diff(oldData).affectedKeys().hasOnly(['status', 'reference', 'callCount', 'updatedAt']);
+    }
+
+    // Two write gates, and they are scoped DIFFERENTLY on purpose:
+    //   edit_contacts / import_data → may rewrite ANY field, so BOTH the old and
+    //     the new version must sit inside the writer's scope. That is what stops a
+    //     scoped editor moving a contact into — or out of — someone else's
+    //     area/mandal.
+    //   save_call_outcomes → may touch ONLY the four outcome fields
+    //     (isCallOutcomeUpdate), so it can neither edit a profile nor move a
+    //     contact between territories. It is deliberately NOT scope-checked: it is
+    //     the "work the batch you were handed" grant, so a scoped caller such as
+    //     SK-YM can record a result on an out-of-area contact in a batch assigned
+    //     to them — covering for an absent volunteer is a normal event, the assign
+    //     dropdown already allows it, and reads are already unscoped. The field
+    //     limit is the whole guard rail: this grant can never become an edit path.
     function canUpdateIndividual(oldData, newData) {
       let c = ctx();
-      return c.perms.hasAny(['edit_contacts', 'import_data']) &&
-        individualScopeOk(oldData, c) && individualScopeOk(newData, c);
+      return (c.perms.hasAny(['edit_contacts', 'import_data']) &&
+          individualScopeOk(oldData, c) && individualScopeOk(newData, c)) ||
+        (c.perms.hasAny(['save_call_outcomes']) && isCallOutcomeUpdate(oldData, newData));
     }
 
     // PHASE 25 — import_data may delete a contact the IMPORT created, so that
@@ -460,7 +483,13 @@ service cloud.firestore {
 
     function canReadBatches() {
       let c = ctx();
-      return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts']);
+      // edit_contacts added in Phase B. "My Calling" is gated on edit_contacts
+      // (roleView.js) and canReadIndividual already accepts edit_contacts, so a
+      // caller who can edit a contact but holds no view_* permission reached the
+      // calling screen yet read ZERO batches — the batch assigned to them
+      // included — and Firestore surfaced that as an empty queue, not an error.
+      // Accepting edit_contacts here matches the individual read and the nav gate.
+      return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts', 'edit_contacts']);
     }
 
     // A batch's area/mandal may be null, which means "spans everything". For a

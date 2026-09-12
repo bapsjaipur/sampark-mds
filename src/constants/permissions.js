@@ -8,6 +8,19 @@ export const PERMISSIONS = {
   VIEW_ALL_CONTACTS: 'view_all_contacts',
   VIEW_ASSIGNED_CONTACTS: 'view_assigned_contacts',
   EDIT_CONTACTS: 'edit_contacts',
+  // Phase B — a NARROW slice of edit_contacts: record a call result (status,
+  // reference, call count) and nothing else. For a role like SK-YM that must save
+  // outcomes from its calling queue but must NOT rename, re-number or re-scope
+  // contacts. firestore.rules enforces the field limit (isCallOutcomeUpdate) and,
+  // BECAUSE of that limit, deliberately does NOT scope-check this path — so the
+  // caller can record a result on any contact in a batch assigned to them,
+  // including one from another area (covering for an absent volunteer). It still
+  // cannot edit a profile or move a contact between territories. edit_contacts is
+  // the strict superset, so any role holding it ignores this. Kept out of every
+  // preset — an admin ticks it per role (see PRESET_EXCLUDED_PERMISSIONS, which
+  // also stops it enlarging the Admin preset and breaking detectRoleKey's exact
+  // match).
+  SAVE_CALL_OUTCOMES: 'save_call_outcomes',
   // Separate delete gate — allows roles like Area Coordinator to edit but not delete
   DELETE_CONTACTS: 'delete_contacts',
   // Bulk delete (checkbox mass-delete) — higher risk, intended for Admin only
@@ -48,12 +61,30 @@ export const PERMISSIONS = {
   // batches, fix their details — without the global MANAGE_USERS power to
   // create accounts or change roles. This is the Moderator's day-to-day need.
   MANAGE_SCOPED_VOLUNTEERS: 'manage_scoped_volunteers',
+  // ── Tab-visibility flags (Phase B) ──────────────────────────────────────────
+  // These are the ONLY permissions that SUBTRACT access instead of granting it:
+  // ticking one HIDES a tab for the role. They exist because those tabs cannot be
+  // gated on a positive read permission without breaking existing roles — every
+  // scoped role already holds view_assigned_contacts, so "show All Contacts to
+  // everyone EXCEPT this one role" is impossible to express positively. Default
+  // off = today's behaviour, so adding them changes nothing until an admin ticks
+  // one. Deliberately kept OUT of the Admin preset (VISIBILITY_HIDE_PERMISSIONS)
+  // so an Admin can never hide its own tabs. Presentation only — read/write is
+  // still decided by the permissions above and by firestore.rules.
+  //
+  // HIDE_ALL_CONTACTS — hide the "All Contacts" tab (e.g. an SK-YM meant to work
+  //   only from their calling queue, not browse the whole scoped roster).
+  HIDE_ALL_CONTACTS: 'hide_all_contacts',
+  // HIDE_PAST_SABHAS — in Events, show only the upcoming sabha for attendance
+  //   marking and hide the "Past" list, so a caller cannot reopen a closed sabha.
+  HIDE_PAST_SABHAS: 'hide_past_sabhas',
 };
 
 export const PERMISSION_LABELS = {
   [PERMISSIONS.VIEW_ALL_CONTACTS]: 'View All Contacts',
   [PERMISSIONS.VIEW_ASSIGNED_CONTACTS]: 'View Assigned Contacts (area/mandal only)',
   [PERMISSIONS.EDIT_CONTACTS]: 'Edit Contacts',
+  [PERMISSIONS.SAVE_CALL_OUTCOMES]: 'Save Call Outcomes (status/notes, not full edit)',
   [PERMISSIONS.DELETE_CONTACTS]: 'Delete Contacts & Households (single)',
   [PERMISSIONS.BULK_DELETE_CONTACTS]: 'Bulk Delete Contacts (checkbox)',
   [PERMISSIONS.VIEW_HOUSEHOLDS]: 'View Households',
@@ -69,6 +100,8 @@ export const PERMISSION_LABELS = {
   [PERMISSIONS.MANAGE_ATTENDANCE]: 'Mark Sabha Attendance',
   [PERMISSIONS.IMPORT_DATA]: 'Import Contacts & History (CSV)',
   [PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS]: 'Manage Volunteers In My Area/Mandal',
+  [PERMISSIONS.HIDE_ALL_CONTACTS]: 'Hide the All Contacts tab',
+  [PERMISSIONS.HIDE_PAST_SABHAS]: 'Hide Past Sabhas (upcoming only)',
 };
 
 // Short column headers for the Roles matrix — PERMISSION_LABELS is written for
@@ -78,6 +111,7 @@ export const PERMISSION_SHORT_LABELS = {
   [PERMISSIONS.VIEW_ALL_CONTACTS]: 'View All',
   [PERMISSIONS.VIEW_ASSIGNED_CONTACTS]: 'View Assigned',
   [PERMISSIONS.EDIT_CONTACTS]: 'Edit',
+  [PERMISSIONS.SAVE_CALL_OUTCOMES]: 'Save Outcomes',
   [PERMISSIONS.DELETE_CONTACTS]: 'Delete',
   [PERMISSIONS.BULK_DELETE_CONTACTS]: 'Bulk Delete',
   [PERMISSIONS.VIEW_HOUSEHOLDS]: 'Households',
@@ -93,6 +127,8 @@ export const PERMISSION_SHORT_LABELS = {
   [PERMISSIONS.MANAGE_ATTENDANCE]: 'Attendance',
   [PERMISSIONS.IMPORT_DATA]: 'Import',
   [PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS]: 'Scoped Users',
+  [PERMISSIONS.HIDE_ALL_CONTACTS]: 'Hide All Contacts',
+  [PERMISSIONS.HIDE_PAST_SABHAS]: 'Hide Past Sabhas',
 };
 
 // Groups for the mobile/card rendering of the Roles matrix — a 15-column
@@ -106,12 +142,18 @@ export const PERMISSION_GROUPS = [
     PERMISSIONS.VIEW_HOUSEHOLDS, PERMISSIONS.EXPORT_DATA, PERMISSIONS.IMPORT_DATA,
   ] },
   { label: 'Calling & Events', permissions: [
+    PERMISSIONS.SAVE_CALL_OUTCOMES,
     PERMISSIONS.GENERATE_BATCHES, PERMISSIONS.ASSIGN_BATCHES,
     PERMISSIONS.MANAGE_EVENTS, PERMISSIONS.MANAGE_ATTENDANCE, PERMISSIONS.VIEW_PADHRAMANI,
   ] },
   { label: 'Administration', permissions: [
     PERMISSIONS.MANAGE_USERS, PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS, PERMISSIONS.MANAGE_ROLES,
     PERMISSIONS.SEND_EMAILS, PERMISSIONS.MANAGE_TEMPLATES,
+  ] },
+  // Opt-out toggles — ticking one HIDES a tab for this role (default off). Kept
+  // in their own group so it reads differently from the grant-access boxes above.
+  { label: 'Tab visibility (ticking HIDES the tab)', permissions: [
+    PERMISSIONS.HIDE_ALL_CONTACTS, PERMISSIONS.HIDE_PAST_SABHAS,
   ] },
 ];
 
@@ -123,6 +165,7 @@ export const PERMISSION_HELP = {
   [PERMISSIONS.VIEW_ALL_CONTACTS]: 'Ignores area/mandal limits entirely — this person sees every contact in Jaipur.',
   [PERMISSIONS.VIEW_ASSIGNED_CONTACTS]: 'Sees only contacts inside their assigned scope. Required for any scoped role; without a read permission the calling queue comes back empty.',
   [PERMISSIONS.EDIT_CONTACTS]: 'Change names, numbers, status and call outcomes. Needs a view permission alongside it.',
+  [PERMISSIONS.SAVE_CALL_OUTCOMES]: 'Lets a caller save the call result — status, reference and call count — WITHOUT the full Edit Contacts power over names and numbers. Works on any contact in their calling queue, including a batch handed to them from another area (it can only ever touch those three fields, so it can never edit a profile or move a contact between areas). Pair it with a view permission (e.g. View Assigned) so their queue loads. A role that already has Edit Contacts does not need this.',
   [PERMISSIONS.DELETE_CONTACTS]: 'Delete one contact or household at a time.',
   [PERMISSIONS.BULK_DELETE_CONTACTS]: 'Tick-many-then-delete. Highest-risk permission in the app — Admin only.',
   [PERMISSIONS.VIEW_HOUSEHOLDS]: 'Open the Households tab and see family groupings.',
@@ -138,6 +181,8 @@ export const PERMISSION_HELP = {
   [PERMISSIONS.MANAGE_ROLES]: 'Edit this screen. Anyone with it can grant themselves anything.',
   [PERMISSIONS.SEND_EMAILS]: 'Run report emails on demand and receive the scheduled ones.',
   [PERMISSIONS.MANAGE_TEMPLATES]: 'Edit the WhatsApp message text, the calling outcome buttons and email settings.',
+  [PERMISSIONS.HIDE_ALL_CONTACTS]: 'Removes the “All Contacts” tab for this role. Their assigned and calling contacts are untouched — this only takes away the browse-everything list. Leave OFF for most roles; tick it for a caller who should only work their queue.',
+  [PERMISSIONS.HIDE_PAST_SABHAS]: 'In Events, shows only the upcoming sabha for attendance marking and hides the list of past sabhas. Tick it for a role that should mark today’s sabha but never reopen an old one.',
 };
 
 // Permissions that hand over effective control of the whole system. Flagged in
@@ -146,6 +191,31 @@ export const DANGEROUS_PERMISSIONS = [
   PERMISSIONS.MANAGE_ROLES,
   PERMISSIONS.MANAGE_USERS,
   PERMISSIONS.BULK_DELETE_CONTACTS,
+];
+
+// The opt-out visibility flags — the only permissions that SUBTRACT access (they
+// hide a tab). They must be kept OUT of any "grant everything" list, or a role
+// meant to have full access (Admin) would end up hiding its own tabs. The Admin
+// preset filters these out with this list; roleView.js reads them via `hideIf`.
+export const VISIBILITY_HIDE_PERMISSIONS = [
+  PERMISSIONS.HIDE_ALL_CONTACTS,
+  PERMISSIONS.HIDE_PAST_SABHAS,
+];
+
+// Permissions deliberately kept OUT of the Admin "everything" preset, for two
+// different reasons:
+//   • the hide flags SUBTRACT access — sweeping them in would make the Admin hide
+//     its own tabs (VISIBILITY_HIDE_PERMISSIONS);
+//   • save_call_outcomes is a strict SUBSET of edit_contacts, which the Admin
+//     already holds, so adding it would be redundant AND would enlarge the Admin
+//     preset's permission set. detectRoleKey() matches that set EXACTLY, so every
+//     Admin role already saved in Firestore (which predates this string) would
+//     suddenly read as "Custom" and the "standard roles missing" banner would
+//     offer to create a duplicate Admin. Excluding it holds the preset at its
+//     current shape, so stored Admin docs keep matching.
+export const PRESET_EXCLUDED_PERMISSIONS = [
+  ...VISIBILITY_HIDE_PERMISSIONS,
+  PERMISSIONS.SAVE_CALL_OUTCOMES,
 ];
 
 export const ALL_PERMISSIONS = Object.values(PERMISSIONS);

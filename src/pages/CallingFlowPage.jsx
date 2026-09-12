@@ -71,7 +71,7 @@ import { cn } from '../lib/cn';
 export default function CallingFlowPage() {
   const { volunteer } = useAuth();
   const { showToast } = useToast();
-  const { contacts, current, currentIdx, next, jumpTo, isDone, loading, batches } = useMyBatchQueue();
+  const { contacts, current, currentIdx, next, jumpTo, isDone, loading, batches, error } = useMyBatchQueue();
   const { settings: templateSettings } = useSettings('messageTemplate');
   // Live outcome vocabulary — an admin renaming or adding an outcome under
   // Admin Tools → Call Outcomes must reach this screen without a redeploy.
@@ -347,6 +347,26 @@ export default function CallingFlowPage() {
   // ── Loading / empty ────────────────────────────────────────────────────────
   if (loading) {
     return <div className="px-6 py-16 text-center text-sm text-slate-400">Loading your batch…</div>;
+  }
+
+  // A denied read is NOT the same as an empty queue. Surfacing it means an
+  // assigned volunteer who still sees nothing knows it is a permission problem,
+  // not a missing assignment — the reason "My Calling" looked empty for some
+  // roles. (Usual cause: a role with edit_contacts but no view_* permission;
+  // canReadBatches now also accepts edit_contacts once the rules are deployed.)
+  if (error) {
+    return (
+      <div className="mx-auto max-w-md px-6 py-16 text-center">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-100">
+          <Phone className="h-6 w-6 text-amber-600" />
+        </div>
+        <p className="font-medium text-slate-700">Couldn’t load your batch</p>
+        <p className="mt-1 text-sm text-slate-400">
+          Your role may be missing a read permission, so the batch assigned to you can’t be shown.
+          Ask an admin to check your role on the Roles screen.
+        </p>
+      </div>
+    );
   }
 
   if (total === 0) {

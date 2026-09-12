@@ -4,6 +4,7 @@ import { getIndividualsByArea, createBatch } from '../../services/batchService';
 import { useAuth } from '../../hooks/usePermissions';
 import { PERMISSIONS, hasPermission } from '../../constants/permissions';
 import { Select, Input } from '../ui/Input';
+import SearchableSelect from '../ui/SearchableSelect';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 
@@ -78,10 +79,14 @@ export default function BatchAssignment({ areas, volunteers }) {
       {!loading && area && candidates.length === 0 && <p className="mt-3 text-xs text-slate-400">No contacts found in this area.</p>}
 
       <div className="mt-3 flex items-center gap-3">
-        <Select value={assignee} onChange={(e) => setAssignee(e.target.value)} className="w-auto">
-          <option value="">Assign to…</option>
-          {volunteers.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-        </Select>
+        <SearchableSelect
+          value={assignee}
+          onChange={setAssignee}
+          placeholder="Assign to…"
+          searchPlaceholder="Search volunteers…"
+          options={volunteers.map((v) => ({ value: v.id, label: v.name }))}
+          className="w-56"
+        />
         <Button variant="primary" onClick={handleCreate} disabled={status === 'saving'}>
           {status === 'saving' ? 'Creating…' : `Create batch (${selected.size})`}
         </Button>

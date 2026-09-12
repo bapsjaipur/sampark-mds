@@ -126,6 +126,11 @@ export default function EventsPage() {
   const { showToast } = useToast();
 
   const canSeeDashboard = permissions.includes('view_all_contacts') || permissions.includes('manage_events');
+  // Opt-out (Phase B): a role with hide_past_sabhas marks only the upcoming sabha
+  // and never sees the Past list (Roles → "Hide Past Sabhas (upcoming only)").
+  // Presentation only — the events/attendance subscriptions are unchanged, so
+  // this adds no Firestore reads.
+  const hidePast = permissions.includes('hide_past_sabhas');
   // PHASE 31 — was a literal `scope.kind === 'mandal'` test, which fell open for
   // anyone whose resolved kind came out INTERSECT (an area AND a mandal assigned)
   // or UNION: they got the unrestricted form and could file a sabha under any
@@ -160,9 +165,13 @@ export default function EventsPage() {
   useEffect(() => {
     if (!selectedEventId && events.length) {
       const upcoming = pickUpcomingEvent(events);
-      setSelectedEventId((upcoming || events[events.length - 1]).id);
+      // With hidePast, never fall back to the newest PAST sabha — a role limited
+      // to upcoming marking must not open a closed one. Leave nothing selected
+      // until an upcoming sabha exists.
+      if (upcoming) setSelectedEventId(upcoming.id);
+      else if (!hidePast) setSelectedEventId(events[events.length - 1].id);
     }
-  }, [events, selectedEventId]);
+  }, [events, selectedEventId, hidePast]);
 
   const selectedEvent = events.find((e) => e.id === selectedEventId) || null;
 
@@ -216,9 +225,11 @@ export default function EventsPage() {
     return {
       upcoming: shown.filter((e) => !isPast(e)),
       // Newest first — nobody scrolls to the bottom for last week's sabha.
-      past: shown.filter(isPast).slice().reverse(),
+      // hidePast blanks the list entirely for roles limited to upcoming marking,
+      // which also collapses the "Past (n)" section and the counters below.
+      past: hidePast ? [] : shown.filter(isPast).slice().reverse(),
     };
-  }, [events, listQuery, listMandal]);
+  }, [events, listQuery, listMandal, hidePast]);
 
   const filtering = Boolean(listQuery.trim() || listMandal);
   const upcomingAll = useMemo(() => events.filter((e) => !isPast(e)).length, [events]);
