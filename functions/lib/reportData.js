@@ -253,7 +253,7 @@ async function countPendingInBatches({ maxIds = 3000 } = {}) {
 // ── Post-sabha attendance report ────────────────────────────────────────────
 
 /**
- * findEventsToReport({ now, lookbackHours, graceMinutes })
+ * findEventsToReport({ now, lookbackHours, graceMinutes, claimField })
  *
  * Events that finished recently and have not been reported yet. Replaces the
  * legacy "AutoEmailed" sheet column with an `emailedAt` field on the event.
@@ -262,8 +262,18 @@ async function countPendingInBatches({ maxIds = 3000 } = {}) {
  * sabha and the last few names land minutes after it ends; mailing at the exact
  * end time reliably under-counts. lookbackHours bounds the catch-up window so a
  * function that was broken for a week doesn't suddenly mail seven old reports.
+ *
+ * PHASE 38 — claimField. There are now TWO independent fan-outs off the same
+ * 15-minute tick: the sanchalak's whole-sabha report (`emailedAt`) and the
+ * per-karyakarta batch follow-up (`skReportsSentAt`, see lib/skReport.js). They
+ * must not share a claim — the karyakarta job legitimately declines to send
+ * while the attendance register is still empty and retries on the next tick, and
+ * if that shared `emailedAt` it would either block the sanchalak's report or,
+ * worse, be permanently consumed by it. One field each, same finder.
  */
-async function findEventsToReport({ now = new Date(), lookbackHours = 24, graceMinutes = 10 } = {}) {
+async function findEventsToReport({
+  now = new Date(), lookbackHours = 24, graceMinutes = 10, claimField = 'emailedAt',
+} = {}) {
   const fromKey = istDateKey(new Date(now.getTime() - (lookbackHours + 48) * 60 * 60 * 1000));
   const toKey = istDateKey(now);
 
@@ -275,7 +285,7 @@ async function findEventsToReport({ now = new Date(), lookbackHours = 24, graceM
   const due = [];
   snap.forEach((d) => {
     const e = { id: d.id, ...d.data() };
-    if (e.emailedAt) return;
+    if (e[claimField]) return;
     const start = istInstant(e.date, e.time);
     if (!start) return;
     const end = new Date(start.getTime() + (Number(e.durationMinutes) || 120) * 60000);
@@ -486,6 +496,8 @@ module.exports = {
   countPendingInBatches,
   findEventsToReport,
   buildPostSabhaReport,
+  // PHASE 38 — reused by lib/skReport.js rather than copied a third time.
+  getDocsByIds,
   buildBirthdayData,
   getMessageTemplates,
   // exported for the jobs and for testing the timezone arithmetic

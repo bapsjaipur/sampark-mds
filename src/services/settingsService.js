@@ -41,6 +41,12 @@ export const DEFAULT_EMAIL_SETTINGS = {
   // "AutoEmailed" sheet column as the idempotency guard.
   autoPostSabhaAdminEnabled: true,
   autoPostSabhaVolunteerEnabled: false,
+  // Phase 38 — one PDF per Sampark Karyakarta after a sabha, covering only the
+  // contacts in the batch they were assigned: who came, who didn't, and what each
+  // absentee had said when called. Off by default because it mails one message
+  // per karyakarta instead of one per sabha, and because it is useless until
+  // reportEmail is filled in on their volunteer record.
+  autoSkBatchReportsEnabled: false,
   // Birthday + anniversary digest at 06:00 IST.
   autoBirthdayEnabled: true,
   // Phase 33 — weekly sabha coverage digest, Monday morning. Reports on

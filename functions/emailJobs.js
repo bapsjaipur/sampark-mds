@@ -30,13 +30,19 @@ const admin = require('firebase-admin');
 const {
   getEmailSettings, resolveReportRecipients, loadMailableVolunteers, queueMail, isDeliverable,
 } = require('./lib/mailer');
-const { buildDailyReport, buildPostSabhaReport, buildBirthdayReport } = require('./lib/emailTemplates');
+const {
+  buildDailyReport, buildPostSabhaReport, buildSkBatchReport, buildBirthdayReport,
+} = require('./lib/emailTemplates');
 const {
   buildDailyStats, findEventsToReport, buildPostSabhaReport: buildPostSabhaData,
   buildBirthdayData, getMessageTemplates,
 } = require('./lib/reportData');
-const { dailyReportPdf, postSabhaPdf, birthdayPdf } = require('./lib/pdfReport');
+const { dailyReportPdf, postSabhaPdf, skBatchPdf, birthdayPdf } = require('./lib/pdfReport');
 const { permissionsForVolunteer, volunteerRoleIds } = require('./lib/callerAccess');
+// PHASE 38 — the per-karyakarta batch follow-up list. Shares the post-sabha tick
+// but nothing else; see runSkBatchReports below.
+const { buildSkBatchReports, MAX_SK_EMAILS_PER_EVENT } = require('./lib/skReport');
+const { ROUND_GROUPS } = require('./lib/roundClassify');
 // PHASE 33 — the weekly sabha coverage digest lives in its own file (it has a
 // schedule of its own and no PDF), but its manual "send now" belongs here with
 // the other three so the admin screen has one callable to talk to.
@@ -268,6 +274,180 @@ async function volunteerEmailsFor(report) {
   return mailable.filter((v) => wanted.has(v.id)).map((v) => v.email);
 }
 
+// ── Per-karyakarta batch follow-up list ─────────────────────────────────────
+
+/**
+ * PHASE 38 — one email per Sampark Karyakarta, covering only their own batch.
+ *
+ * Separate from runPostSabhaReports in every way that matters, and deliberately
+ * so. That job answers a sanchalak's question and mails one identical copy to
+ * everybody with send_emails; this one answers "of the forty people I rang, who
+ * came" and mails a different PDF to each karyakarta. Sharing the tick is a cost
+ * decision — one events range query serves both — not a coupling.
+ *
+ * ITS OWN CLAIM FIELD, `skReportsSentAt`. Reusing `emailedAt` would have broken
+ * both jobs: this one declines to send while the attendance register is empty and
+ * needs to come back on the next tick, and a shared claim would mean either
+ * blocking the sanchalak's report for the same 15 minutes or having it consume
+ * this one permanently. Two fields, one finder — see findEventsToReport.
+ *
+ * WHY THE GRACE PERIOD IS LONGER. The sanchalak's report can go out ten minutes
+ * after a sabha ends and be roughly right; a slightly low headcount is a number
+ * on a dashboard. This one turns "not in the register" into a phone call, so it
+ * waits until the register has plausibly been finished. If it still has not been,
+ * registerUnmarked holds the send and the claim is released.
+ */
+const MAX_SK_ATTEMPTS = 3;
+
+async function claimSkReports(eventId, now) {
+  const ref = db.collection('events').doc(eventId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return false;
+    const e = snap.data();
+    if (e.skReportsSentAt) return false;
+    if ((e.skReportAttempts || 0) >= MAX_SK_ATTEMPTS) {
+      console.error(`[sk-batch] giving up on event ${eventId} after ${e.skReportAttempts} failed attempts.`);
+      return false;
+    }
+    // The attempt counter is NOT incremented here, only on a genuine failure —
+    // see releaseSkReports. An unmarked register is a "come back later", and
+    // counting those would exhaust the three attempts in 45 minutes, long before
+    // anybody had finished marking who turned up.
+    tx.update(ref, { skReportsSentAt: now });
+    return true;
+  });
+}
+
+/**
+ * Hand the event back for a later tick.
+ * @param {boolean} countAttempt true for a real error (bounded retry), false for
+ *   "not ready yet" (retried until the lookback window closes).
+ */
+async function releaseSkReports(eventId, message, countAttempt) {
+  const patch = { skReportsSentAt: null };
+  if (message) patch.skReportError = String(message).slice(0, 500);
+  if (countAttempt) patch.skReportAttempts = admin.firestore.FieldValue.increment(1);
+  await db.collection('events').doc(eventId).update(patch)
+    .catch((err) => console.error(`[sk-batch] could not release event ${eventId}:`, err.message));
+}
+
+async function runSkBatchReports({ now = new Date(), force = false, eventId = null } = {}) {
+  const settings = await getEmailSettings();
+  if (!force && !settings.autoSkBatchReportsEnabled) return { skipped: 'disabled' };
+
+  // Same reasoning as the post-sabha job: the claim is stamped before the message
+  // is built, so a dry-run tick would consume the claim and send nothing, and
+  // there is no screen that re-arms it. Skipping outright is the only honest
+  // reading of "build it but don't send it" for a claimed job.
+  if (!force && settings.dryRun) {
+    console.log('[sk-batch] dry run is on — skipping entirely so that no event is claimed and no list is lost.');
+    return { skipped: 'dry-run', sent: [], checked: 0 };
+  }
+
+  let due;
+  if (eventId) {
+    due = [{ id: eventId }];
+  } else {
+    due = await findEventsToReport({ now, claimField: 'skReportsSentAt', graceMinutes: 25 });
+    if (due.length === 0) return { sent: [], checked: 0 };
+  }
+
+  const out = [];
+  for (const event of due) {
+    /* eslint-disable no-await-in-loop */
+    if (!force) {
+      const owned = await claimSkReports(event.id, now);
+      if (!owned) continue;
+    }
+
+    try {
+      const data = await buildSkBatchReports({ eventId: event.id, now });
+
+      if (data.registerUnmarked) {
+        // Not "nobody came" — nobody has said yet. Hand it back without counting
+        // an attempt; the next tick tries again until the 24h window closes.
+        console.log(`[sk-batch] event ${event.id} has no attendance marked yet — will retry.`);
+        if (!force) await releaseSkReports(event.id, null, false);
+        out.push({ eventId: event.id, skipped: 'register-unmarked' });
+        continue;
+      }
+
+      if (data.reports.length === 0) {
+        // No batch carries this eventId. That will never become true on its own,
+        // so the claim stands and this stops asking.
+        console.log(`[sk-batch] event ${event.id} has no assigned batches (${data.batchCount} batch doc(s) found) — nothing to send.`);
+        out.push({ eventId: event.id, skipped: 'no-assigned-batches' });
+        continue;
+      }
+
+      const undeliverable = data.reports.filter((r) => !r.deliverable);
+      if (undeliverable.length) {
+        // The silent failure this project has hit before: volunteers/{uid} has no
+        // mailbox until somebody fills in reportEmail, and nothing anywhere says
+        // so. Name them in the log so "I never got my list" has an answer.
+        console.warn('[sk-batch] no reportEmail set for: '
+          + undeliverable.map((r) => `${r.volunteerName} (${r.volunteerId})`).join(', '));
+      }
+
+      const deliverable = data.reports.filter((r) => r.deliverable).slice(0, MAX_SK_EMAILS_PER_EVENT);
+      const overflow = data.reports.filter((r) => r.deliverable).length - deliverable.length;
+      if (overflow > 0) {
+        console.warn(`[sk-batch] event ${event.id}: ${overflow} karyakarta(s) over the ${MAX_SK_EMAILS_PER_EVENT}-email cap were not mailed.`);
+      }
+
+      const sent = [];
+      for (const report of deliverable) {
+        const { subject, html, text } = buildSkBatchReport(report, ROUND_GROUPS);
+        const pdf = skBatchPdf(report, ROUND_GROUPS);
+        // One queueMail per karyakarta, never a shared `to` list: two karyakartas
+        // on one message would each receive the other's contacts, which is the
+        // exact thing this report was asked to avoid.
+        const res = await queueMail({
+          to: [report.email],
+          subject,
+          html,
+          text,
+          attachments: pdf ? [pdf] : [],
+          kind: 'post-sabha-sk',
+          meta: {
+            eventId: event.id,
+            title: report.event.title,
+            date: report.event.date,
+            volunteerId: report.volunteerId,
+            called: report.called,
+            attended: report.attended,
+            chase: report.chaseCount,
+          },
+          settings,
+        });
+        sent.push({ volunteerId: report.volunteerId, ...res });
+      }
+
+      if (!force) {
+        await db.collection('events').doc(event.id).update({
+          skReportStatus: `sent-${sent.filter((s) => s.queued).length}`,
+          skReportError: admin.firestore.FieldValue.delete(),
+        }).catch(() => {});
+      }
+
+      out.push({
+        eventId: event.id,
+        karyakartas: sent.length,
+        skippedNoEmail: undeliverable.length,
+        sent,
+      });
+    } catch (err) {
+      console.error(`[sk-batch] event ${event.id} failed:`, err.message);
+      if (!force) await releaseSkReports(event.id, err.message, true);
+      out.push({ eventId: event.id, queued: false, error: err.message });
+    }
+    /* eslint-enable no-await-in-loop */
+  }
+
+  return { sent: out, checked: due.length };
+}
+
 // ── Birthday & anniversary summary ──────────────────────────────────────────
 
 async function runBirthdaySummary({ now = new Date(), force = false } = {}) {
@@ -306,8 +486,24 @@ exports.scheduledDailyReport = onSchedule({ ...SCHEDULE_OPTS, schedule: DAILY_SC
 });
 
 exports.scheduledPostSabhaReports = onSchedule({ ...SCHEDULE_OPTS, schedule: POST_SABHA_SCHEDULE }, async () => {
-  const res = await runPostSabhaReports({ now: new Date() });
+  const now = new Date();
+  const res = await runPostSabhaReports({ now });
   if (res.checked) console.log('[post-sabha] done:', JSON.stringify(res));
+
+  // PHASE 38 — the karyakarta lists ride the same tick. Awaited in sequence, not
+  // in parallel: they claim different fields so there is no race, but running
+  // them together doubles the peak read rate for no gain on a job with 300
+  // seconds of budget and 15 minutes until the next one.
+  //
+  // In its own try so a failure in one fan-out cannot swallow the other — the
+  // sanchalak's report has already been sent by this point and its claim is
+  // committed, so throwing here would only lose the log line.
+  try {
+    const sk = await runSkBatchReports({ now });
+    if (sk.checked) console.log('[sk-batch] done:', JSON.stringify(sk));
+  } catch (err) {
+    console.error('[sk-batch] tick failed:', err);
+  }
 });
 
 exports.scheduledBirthdaySummary = onSchedule({ ...SCHEDULE_OPTS, schedule: BIRTHDAY_SCHEDULE }, async () => {
@@ -394,6 +590,34 @@ exports.sendManualEmail = onCall({ region: REGION, timeoutSeconds: 300, memory: 
         kind: 'birthday-manual', meta: { date: data.dateKey, by: caller.id }, settings,
       });
       return { ok: true, result: res };
+    }
+
+    if (kind === 'skBatch') {
+      if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required for a karyakarta batch report.');
+      if (!override) return { ok: true, result: await runSkBatchReports({ now, force: true, eventId }) };
+      // With an override this sends ONE email to the tester — the list belonging
+      // to the karyakarta with the most follow-up calls, since that is the copy
+      // worth looking at. Fanning a test out to every karyakarta's real inbox is
+      // exactly what "send a test to myself" exists to avoid.
+      const data = await buildSkBatchReports({ eventId, now });
+      if (data.registerUnmarked) {
+        throw new HttpsError('failed-precondition',
+          'No attendance has been marked for this sabha yet, so there is nothing to compare the calls against.');
+      }
+      if (data.reports.length === 0) {
+        throw new HttpsError('failed-precondition',
+          'No batch is assigned to this sabha, so no karyakarta has a calling list for it.');
+      }
+      const report = data.reports[0];
+      const { subject, html, text } = buildSkBatchReport(report, ROUND_GROUPS);
+      const pdf = skBatchPdf(report, ROUND_GROUPS);
+      const res = await queueMail({
+        to: override, subject, html, text, attachments: pdf ? [pdf] : [],
+        kind: 'post-sabha-sk-manual',
+        meta: { eventId, volunteerId: report.volunteerId, by: caller.id },
+        settings,
+      });
+      return { ok: true, result: { ...res, sampleOf: report.volunteerName, karyakartas: data.reports.length } };
     }
 
     if (kind === 'sabhaCoverage') {

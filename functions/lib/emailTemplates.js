@@ -258,6 +258,131 @@ function buildPostSabhaReport(report, opts = {}) {
   return { subject: heading, html, text };
 }
 
+// ── Per-karyakarta post-sabha follow-up list ────────────────────────────────
+
+/**
+ * PHASE 38 — buildSkBatchReport(report, groupDefs)
+ *
+ * The email that carries lib/pdfReport.skBatchPdf. Same principle as the PDF: the
+ * people to ring come first and the people who came come last, because this is a
+ * task and not a summary.
+ *
+ * The body deliberately DUPLICATES the chase lists rather than saying "see the
+ * attachment". A karyakarta reads this on a phone, and the mobile numbers are
+ * tel: links here — which is the whole point, since the next thing they do is
+ * call somebody. The PDF exists so the list survives being scrolled past.
+ *
+ * @param {object} report one entry from lib/skReport.buildSkBatchReports()
+ * @param {Array}  groupDefs ROUND_GROUPS from lib/roundClassify — labels and
+ *   precedence live there, not here.
+ */
+function buildSkBatchReport(report, groupDefs) {
+  const heading = `Your calling list — ${report.event.title}`;
+  const subject = report.chaseCount
+    ? `${heading} · ${report.chaseCount} to call back`
+    : `${heading} · nothing to chase`;
+
+  const parts = [];
+
+  parts.push(`<div style="color:${SLATE};font-size:14px;margin-bottom:14px;">`
+    + `Jai Swaminarayan ${esc(report.volunteerName)},`
+    + `</div>`);
+
+  parts.push(`<div style="color:${MUTED};font-size:13px;line-height:1.6;margin-bottom:14px;">`
+    + `This is only the ${report.called} contact${report.called === 1 ? '' : 's'} in your own `
+    + `batch${report.batchNames.length === 1 ? '' : 'es'} for `
+    + `<strong style="color:${SLATE};">${esc(report.event.title)}</strong> on ${esc(report.event.dateLabel)}`
+    + `${report.event.mandal ? ` · ${esc(report.event.mandal)}` : ''}. `
+    + 'Nobody else\'s contacts are in here.'
+    + '</div>');
+
+  parts.push(tiles([
+    { label: 'You called', value: report.called, tone: SLATE },
+    { label: 'Came', value: report.attended, tone: '#16a34a' },
+    { label: 'Did not come', value: report.absent, tone: report.absent ? '#dc2626' : SLATE },
+    { label: 'To call back', value: report.chaseCount, tone: report.chaseCount ? ORANGE : SLATE },
+  ]));
+
+  if (report.promiseKept !== null) {
+    parts.push(`<div style="color:${MUTED};font-size:13px;margin:-6px 0 4px;">`
+      + `<strong style="color:${SLATE};">${report.promised}</strong> told you they would come and `
+      + `<strong style="color:${SLATE};">${report.counts.kept}</strong> of them did — `
+      + `<strong style="color:${report.promiseKept >= 70 ? '#16a34a' : ORANGE};">${report.promiseKept}%</strong>.`
+      + '</div>');
+  }
+
+  const chase = groupDefs.filter((g) => g.chase && (report.groups[g.key] || []).length);
+  const tally = groupDefs.filter((g) => !g.chase && (report.groups[g.key] || []).length);
+
+  if (!chase.length) {
+    parts.push(`<div style="margin-top:16px;color:#166534;font-size:13px;padding:12px 14px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:8px;">`
+      + 'Everyone you reached did what they said they would. Nothing to call back about this week.'
+      + '</div>');
+  }
+
+  for (const g of chase) {
+    const rows = report.groups[g.key];
+    parts.push(sectionTitle(`${g.label} (${rows.length})`));
+    parts.push(`<div style="color:${MUTED};font-size:12px;margin:-4px 0 8px;">${esc(g.hint)}</div>`);
+    parts.push(table(['Name', 'Mandal · Area', 'What they said', 'Call'],
+      rows.map((r) => [
+        esc(r.name),
+        esc([r.mandal, r.area].filter(Boolean).join(' · ') || '-'),
+        r.said ? statusPill(r.said) : `<span style="color:#94a3b8;font-size:12px;">nothing recorded</span>`,
+        r.mobile
+          ? `<a href="tel:${esc(r.mobile)}" style="display:inline-block;background:#059669;color:#ffffff;text-decoration:none;padding:5px 11px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap;">${esc(r.mobile)}</a>`
+          : '<span style="color:#94a3b8;font-size:12px;">no number</span>',
+      ])));
+  }
+
+  for (const g of tally) {
+    const rows = report.groups[g.key];
+    parts.push(sectionTitle(`${g.label} (${rows.length})`));
+    parts.push(table(['Name', 'Mandal · Area', 'What they said'],
+      rows.map((r) => [
+        esc(r.name),
+        esc([r.mandal, r.area].filter(Boolean).join(' · ') || '-'),
+        r.said ? statusPill(r.said) : `<span style="color:#94a3b8;font-size:12px;">nothing recorded</span>`,
+      ])));
+  }
+
+  if (report.truncated) {
+    parts.push(`<div style="margin-top:12px;color:#854d0e;font-size:12px;padding:10px 12px;border:1px solid #fde68a;background:#fefce8;border-radius:8px;">`
+      + `${report.truncated} more contact${report.truncated === 1 ? '' : 's'} could not fit in this email. `
+      + 'Open My Calling in BAPS Jaipur MDS for the complete list.'
+      + '</div>');
+  }
+
+  const html = shell({
+    title: heading,
+    subtitle: `${report.event.dateLabel}${report.event.time ? ` · ${report.event.time}` : ''}`,
+    bodyHtml: parts.join(''),
+    footerNote: `Your batch${report.batchNames.length === 1 ? '' : 'es'}: ${report.batchNames.join(', ')}. `
+      + 'You are receiving this because these contacts are assigned to you.',
+  });
+
+  const textLines = [
+    heading,
+    `${report.event.title} · ${report.event.dateLabel}`,
+    '',
+    `You called ${report.called} · came ${report.attended} · did not come ${report.absent} · to call back ${report.chaseCount}`,
+    '',
+  ];
+  for (const g of groupDefs) {
+    const rows = report.groups[g.key] || [];
+    if (!rows.length) continue;
+    textLines.push(`${g.label.toUpperCase()} (${rows.length})`);
+    rows.forEach((r) => {
+      textLines.push(`  ${r.name} ${r.mobile || '(no number)'}`
+        + `${r.mandal ? ` · ${r.mandal}` : ''}${r.area ? ` · ${r.area}` : ''}`
+        + ` — said "${r.said || 'nothing'}"`);
+    });
+    textLines.push('');
+  }
+
+  return { subject, html, text: textLines.join('\n') };
+}
+
 // ── Birthday / anniversary summary ──────────────────────────────────────────
 
 function waButton(url, label) {
@@ -561,6 +686,7 @@ function buildSabhaCoverageReport(data, opts = {}) {
 module.exports = {
   buildDailyReport,
   buildPostSabhaReport,
+  buildSkBatchReport,
   buildBirthdayReport,
   buildSabhaCoverageReport,
   statusPill,

@@ -244,10 +244,19 @@ export default function HouseholdDetailPage() {
   const { householdId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { households, updateHousehold, deleteHousehold, deleteHouseholdOnly } = useHouseholds();
+  const { households, loading: householdsLoading, updateHousehold, deleteHousehold, deleteHouseholdOnly } = useHouseholds();
   const { individuals, loading, createIndividual, updateIndividual, deleteIndividual } = useIndividuals(householdId);
   const { showToast } = useToast();
+  const { scope } = useAuth();
   const { identify } = useVolunteerIdentity();
+
+  // Where Back goes. A karyakarta who arrived from a contact's profile is returned
+  // to that profile — landing on the Households tab instead was the reported
+  // "back button" surprise. `fromState` is the profile's own trail, handed back so
+  // its Back still knows the way to My Calling.
+  const backTo = location.state?.from || '/households';
+  const backLabel = location.state?.fromLabel || 'All households';
+  const backState = location.state?.fromState || null;
 
   // PHASE 21 — the sevaks living in this household, deduped. Drives the header
   // tint so a karyakarta's own home reads differently from the homes they call.
@@ -304,11 +313,42 @@ export default function HouseholdDetailPage() {
     }
   }, [individuals.length, household?.id, household?.totalFamilyMembers, loading]);
 
-  if (!household) {
+  /**
+   * Three states, not one hedged sentence.
+   *
+   * This used to read "Household not found, or still loading…" for all of them,
+   * and `loading` was taken from useIndividuals(householdId) — a one-household
+   * query that settles long before useHouseholds finishes its sweep. So on a cold
+   * open or a refresh, EVERYONE including an admin was told the household did not
+   * exist for the first second or two. That is the bug being reported: the message
+   * appears, then "Back to households" works perfectly, which looks like the list
+   * has access the detail page does not.
+   *
+   * Once the list really has loaded, a missing household means one of two things,
+   * and a volunteer deserves to know which: their role covers certain areas and
+   * this address is not in them, or the household is genuinely gone.
+   */
+  if (!household && householdsLoading) {
     return (
       <div className="mx-auto max-w-3xl px-6 py-16 text-center">
-        <p className="text-slate-400">Household not found, or still loading…</p>
-        <Link to="/households" className="mt-2 inline-block text-sm text-orange-600 hover:underline">← Back to households</Link>
+        <p className="text-slate-400">Loading household…</p>
+      </div>
+    );
+  }
+
+  if (!household) {
+    const restricted = !scope?.unrestricted;
+    return (
+      <div className="mx-auto max-w-3xl px-6 py-16 text-center">
+        <p className="font-medium text-slate-700">
+          {restricted ? 'This household isn’t in your area' : 'Household not found'}
+        </p>
+        <p className="mx-auto mt-1 max-w-sm text-sm text-slate-400">
+          {restricted
+            ? 'Your role covers certain areas, and this address isn’t one of them. Ask an admin if you should have it.'
+            : 'It may have been deleted, or the link is out of date.'}
+        </p>
+        <Link to={backTo} state={backState} className="mt-3 inline-block text-sm text-orange-600 hover:underline">← {backLabel}</Link>
       </div>
     );
   }
@@ -370,8 +410,8 @@ export default function HouseholdDetailPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
-      <Link to="/households" className="inline-flex items-center gap-1 text-sm text-slate-400 hover:text-slate-600">
-        <ArrowLeft className="h-3.5 w-3.5" /> All households
+      <Link to={backTo} state={backState} className="inline-flex items-center gap-1 text-sm text-slate-400 hover:text-slate-600">
+        <ArrowLeft className="h-3.5 w-3.5" /> {backLabel}
       </Link>
 
       <Card

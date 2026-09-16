@@ -3,15 +3,36 @@
 // Live (onSnapshot) rather than a one-shot getDoc: the Edit button writes to the
 // same document, and the sabha-attendance panel below is live too, so a
 // one-shot read would leave the header showing stale values right after a save.
+//
+// PHASE 38 — TWO things this page got wrong, both reported as "loopholes".
+//
+//  1. It read individuals/{id} with NO scope check, and firestore.rules permits
+//     that read: canReadIndividual() takes no data argument, so only WRITES are
+//     scoped server-side. Any signed-in volunteer holding a contact id — from a
+//     stale link, a bookmark, or a guess — saw the whole profile: mobile, date of
+//     birth, profession, attendance history. The area/mandal boundary that the
+//     Contacts list has always applied simply stopped at the list. It is applied
+//     here now, at the point the record is actually read.
+//
+//  2. "All contacts" was a hardcoded link to /contacts. A Sampark Karyakarta who
+//     arrived from My Calling was sent to a browse-everything list instead of back
+//     to the queue they were working. Callers now pass `state.from`, so Back
+//     returns where you came from.
+//
+// The client guard is the honest fix for the screen, not for the database: a
+// determined reader can still fetch the document until firestore.rules scopes
+// `individuals` read the way it already scopes write. That change is a separate,
+// deploy-gated step — see the note in firestore.rules.
 import { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, X, Home, Pencil, Phone, MessageCircle } from "lucide-react";
+import { useParams, useLocation, Link } from "react-router-dom";
+import { ArrowLeft, X, Home, Pencil, Phone, MessageCircle, ShieldAlert } from "lucide-react";
 import { doc, getDoc, onSnapshot } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { formatDate } from "../lib/dateHelpers";
 import { buildTelUrl, buildWhatsAppUrl, normalizePhone } from "../lib/whatsapp";
 import { saveContact } from "../services/contactService";
 import { useAuth } from "../hooks/usePermissions";
+import { matchesScope } from "../lib/scope";
 import { useToast } from "../contexts/ToastContext";
 import { useCallOutcomes } from "../hooks/useCallOutcomes";
 import { useSettings } from "../hooks/useSettings";
@@ -64,16 +85,26 @@ function PhotoLightbox({ src, name, onClose }) {
 
 export default function IndividualDetailPage() {
   const { id } = useParams();
-  const { volunteer } = useAuth();
+  const location = useLocation();
+  const { volunteer, scope } = useAuth();
   const { showToast } = useToast();
   const { colorClasses, emoji } = useCallOutcomes();
   const { settings: templateSettings } = useSettings("messageTemplate");
   const { identify } = useVolunteerIdentity();
   const [individual, setIndividual] = useState(null);
   const [household, setHousehold] = useState(null);
+  // Settled, not "truthy": an out-of-area household is a permission-denied read
+  // that leaves `household` null for good. Waiting on the value itself would then
+  // wait forever, and the scope check below would never run.
+  const [householdSettled, setHouseholdSettled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [lightbox, setLightbox] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+
+  // Where Back goes. Whoever linked here says so; /contacts is the fallback for
+  // the pages that link plainly (and for a bookmarked or shared URL).
+  const backTo = location.state?.from || "/contacts";
+  const backLabel = location.state?.fromLabel || "All contacts";
 
   useEffect(() => {
     setLoading(true);
@@ -90,10 +121,12 @@ export default function IndividualDetailPage() {
   // Separate effect keyed on householdId only, so an unrelated edit (a phone
   // number, a status) doesn't refetch the household document.
   useEffect(() => {
-    if (!individual?.householdId) { setHousehold(null); return; }
+    if (!individual?.householdId) { setHousehold(null); setHouseholdSettled(true); return; }
+    setHouseholdSettled(false);
     getDoc(doc(db, "households", individual.householdId))
       .then((snap) => setHousehold(snap.exists() ? { id: snap.id, ...snap.data() } : null))
-      .catch((err) => console.error("Error loading household:", err));
+      .catch((err) => console.error("Error loading household:", err))
+      .finally(() => setHouseholdSettled(true));
   }, [individual?.householdId]);
 
   async function handleSave(payload) {
@@ -112,7 +145,37 @@ export default function IndividualDetailPage() {
     return (
       <div className="mx-auto max-w-2xl px-4 py-10 text-center sm:px-6 sm:py-16">
         <p className="text-slate-400">Contact not found.</p>
-        <Link to="/contacts" className="mt-2 inline-block text-sm text-orange-600 hover:underline">← Back to contacts</Link>
+        <Link to={backTo} className="mt-2 inline-block text-sm text-orange-600 hover:underline">← {backLabel}</Link>
+      </div>
+    );
+  }
+
+  /**
+   * The scope check. A contact's area is their own field when they have one and
+   * the parent household's otherwise — individualScopeArea's rule, inlined here
+   * because this page holds one household rather than a map of them.
+   *
+   * A household member with no denormalised area cannot be judged until that
+   * household has been fetched, so the skeleton stays up until it settles. That
+   * wait is bounded: the fetch resolves or rejects, and either way it settles.
+   */
+  const scopeArea = individual.area || household?.area || null;
+  if (!scopeArea && individual.householdId && !householdSettled) {
+    return <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-16"><div className="h-48 animate-pulse rounded-lg bg-slate-100" /></div>;
+  }
+
+  if (!matchesScope(scope, { area: scopeArea, mandal: individual.mandal || null })) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-10 text-center sm:px-6 sm:py-16">
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
+          <ShieldAlert className="h-5 w-5 text-slate-400" />
+        </div>
+        <p className="font-medium text-slate-700">This contact isn’t in your list</p>
+        <p className="mx-auto mt-1 max-w-sm text-sm text-slate-400">
+          Your role covers certain areas and mandals, and this person isn’t in them.
+          Ask an admin if they should be assigned to you.
+        </p>
+        <Link to={backTo} className="mt-3 inline-block text-sm text-orange-600 hover:underline">← {backLabel}</Link>
       </div>
     );
   }
@@ -129,8 +192,8 @@ export default function IndividualDetailPage() {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6 sm:py-8">
-      <Link to="/contacts" className="inline-flex items-center gap-1 text-sm text-slate-400 hover:text-slate-600">
-        <ArrowLeft className="h-3.5 w-3.5" /> All contacts
+      <Link to={backTo} className="inline-flex items-center gap-1 text-sm text-slate-400 hover:text-slate-600">
+        <ArrowLeft className="h-3.5 w-3.5" /> {backLabel}
       </Link>
 
       <Card className={cn("mt-4 p-4 sm:p-6", sevak && "border-indigo-200 bg-indigo-50/40")}>
@@ -238,6 +301,16 @@ export default function IndividualDetailPage() {
           <div className="mt-6 border-t border-slate-100 pt-4">
             <Link
               to={`/households/${individual.householdId}`}
+              // Carry the trail forward: the household's own Back then returns to
+              // this profile instead of dumping the karyakarta on the Households
+              // tab, which is where the reported "back button" complaint started.
+              // `fromState` is this page's OWN trail, handed back so returning here
+              // still knows the way to My Calling.
+              state={{
+                from: `/contacts/${individual.id}`,
+                fromLabel: individual.name || 'this contact',
+                fromState: location.state || null,
+              }}
               className="inline-flex items-center gap-1.5 text-sm text-orange-600 hover:underline"
             >
               <Home className="h-3.5 w-3.5" /> View household

@@ -194,7 +194,10 @@ export default function AttendanceMarking({ event, individuals = [], present = [
                       <VolunteerBadge volunteer={identify(i)} />
                     </span>
                     <span className="block truncate text-xs text-slate-400">
-                      {i.mobile}{i.mandal ? ` · ${i.mandal}` : ''}
+                      {/* Mandal AND area: two people with the same name in the same
+                          mandal are told apart by area, which is the fastest thing
+                          to confirm out loud while somebody is standing there. */}
+                      {[i.mobile, i.mandal, i.area].filter(Boolean).join(' · ')}
                     </span>
                   </span>
                   <span className={cn('shrink-0 text-xs font-medium', already ? 'text-emerald-600' : 'text-orange-600')}>
@@ -235,7 +238,7 @@ export default function AttendanceMarking({ event, individuals = [], present = [
                         <span className="truncate text-sm font-medium text-slate-900">{person.name}</span>
                         <VolunteerBadge volunteer={sevak} />
                       </p>
-                      <p className="truncate text-xs text-slate-400">{person.mobile}{person.mandal ? ` · ${person.mandal}` : ''}</p>
+                      <p className="truncate text-xs text-slate-400">{[person.mobile, person.mandal, person.area].filter(Boolean).join(' · ')}</p>
                     </div>
                   </div>
                   <Button variant="ghost" size="sm" onClick={() => handleUnmark(person)} className="shrink-0 text-rose-500 hover:bg-rose-50">Undo</Button>

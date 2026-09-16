@@ -82,6 +82,10 @@ const DEFAULT_EMAIL_SETTINGS = {
   autoDailyVolunteerEnabled: false,
   autoPostSabhaAdminEnabled: true,
   autoPostSabhaVolunteerEnabled: false,
+  // PHASE 38 — the per-karyakarta batch follow-up list. Default OFF: it mails one
+  // message per karyakarta rather than one per sabha, so it should be switched on
+  // deliberately once reportEmail is filled in for the SK-YM role.
+  autoSkBatchReportsEnabled: false,
   autoBirthdayEnabled: true,
   // PHASE 33 — the weekly sabha coverage digest.
   autoSabhaDigestEnabled: true,

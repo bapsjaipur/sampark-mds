@@ -71,7 +71,7 @@ import { cn } from '../lib/cn';
 export default function CallingFlowPage() {
   const { volunteer } = useAuth();
   const { showToast } = useToast();
-  const { contacts, current, currentIdx, next, jumpTo, isDone, loading, batches, error } = useMyBatchQueue();
+  const { contacts, current, currentIdx, next, jumpTo, isDone, resumed, loading, batches, error } = useMyBatchQueue();
   const { settings: templateSettings } = useSettings('messageTemplate');
   // Live outcome vocabulary — an admin renaming or adding an outcome under
   // Admin Tools → Call Outcomes must reach this screen without a redeploy.
@@ -96,6 +96,9 @@ export default function CallingFlowPage() {
   const [armClear, setArmClear] = useState(false);
   const [armCall, setArmCall] = useState(false);
   const [undoing, setUndoing] = useState(false);
+  // Say once, quietly, that the screen did not start at contact #1. Without it the
+  // first reaction to landing on name 37 is "where did the first 36 go?".
+  const [resumeNote, setResumeNote] = useState(true);
   const bodyRef = useRef(null);
 
   useEffect(() => {
@@ -108,9 +111,9 @@ export default function CallingFlowPage() {
     if (bodyRef.current) bodyRef.current.scrollTop = 0;
   }, [current?.id]);
 
-  const total = contacts.length;
-  const position = Math.min(currentIdx + 1, total);
-  const progressPct = total ? Math.round((currentIdx / total) * 100) : 0;
+  // The whole assignment, regardless of any filter. Only two things care: the
+  // "no batch assigned" empty state and the end-of-batch congratulations.
+  const batchTotal = contacts.length;
 
   // The outcome as Firestore currently holds it, versus what the chips show. When
   // the second is empty and the first is not, the volunteer has unticked a saved
@@ -191,6 +194,50 @@ export default function CallingFlowPage() {
     return null;
   }, [roundFilter, followUpFilter, round.pending, followUpGroups, contacts]);
 
+  /**
+   * PHASE 38 — the filtered list, and the counters that must agree with it.
+   *
+   * `currentIdx` stays an index into the FULL contacts array: search jumps carry
+   * full-array indices and the saved resume cursor is resolved against it too.
+   * Everything the volunteer reads is derived from the queue instead, because a
+   * filter that says "Call Back" while the header still counts to 84 is the bug
+   * being fixed — with a 40–100 name batch you cannot hold "which of these is
+   * still mine" in your head.
+   */
+  const queueContacts = useMemo(
+    () => (activeQueue ? contacts.filter((c) => activeQueue.ids.has(c.id)) : contacts),
+    [contacts, activeQueue],
+  );
+
+  const total = queueContacts.length;
+
+  const position = useMemo(() => {
+    if (!activeQueue) return Math.min(currentIdx + 1, total);
+    let seen = 0;
+    for (let i = 0; i <= currentIdx && i < contacts.length; i += 1) {
+      if (activeQueue.ids.has(contacts[i].id)) seen += 1;
+    }
+    // The current contact drops out of the set the instant its outcome saves, so
+    // `seen` can come back one short. Either way this is which stop of the
+    // filtered walk we are on, which is all the header claims.
+    return Math.min(Math.max(seen, 1), Math.max(total, 1));
+  }, [activeQueue, contacts, currentIdx, total]);
+
+  const progressPct = total ? Math.round(((isDone ? total : position - 1) / total) * 100) : 0;
+
+  /**
+   * The nearest EARLIER contact still inside the queue, or null when there is
+   * none — which doubles as the Back button's disabled state. Back used to step
+   * to `contacts[currentIdx - 1]` unconditionally, so it escaped an active filter
+   * one name at a time while the chip still claimed to be on.
+   */
+  const prevIdx = useMemo(() => {
+    for (let i = Math.min(currentIdx, contacts.length) - 1; i >= 0; i -= 1) {
+      if (!activeQueue || activeQueue.ids.has(contacts[i].id)) return i;
+    }
+    return null;
+  }, [activeQueue, contacts, currentIdx]);
+
   function clearQueue() {
     setFollowUpFilter(null);
     setRoundFilter(null);
@@ -219,6 +266,7 @@ export default function CallingFlowPage() {
   }
 
   function goToNext() {
+    setResumeNote(false);
     if (activeQueue) {
       const nextIdx = contacts.findIndex((c, idx) => idx > currentIdx && activeQueue.ids.has(c.id));
       if (nextIdx === -1) {
@@ -234,7 +282,8 @@ export default function CallingFlowPage() {
   }
 
   function goToPrev() {
-    if (currentIdx > 0) jumpTo(currentIdx - 1);
+    setResumeNote(false);
+    if (prevIdx !== null) jumpTo(prevIdx);
   }
 
   async function handleSaveAndNext() {
@@ -369,7 +418,7 @@ export default function CallingFlowPage() {
     );
   }
 
-  if (total === 0) {
+  if (batchTotal === 0) {
     return (
       <div className="mx-auto max-w-md px-6 py-16 text-center">
         <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-slate-100">
@@ -390,7 +439,7 @@ export default function CallingFlowPage() {
         <div className="flex items-center gap-2 px-3 pt-2.5">
           <button
             onClick={goToPrev}
-            disabled={currentIdx === 0}
+            disabled={prevIdx === null}
             aria-label="Previous contact"
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 disabled:opacity-30 enabled:hover:bg-slate-100 enabled:hover:text-slate-600"
           >
@@ -402,7 +451,12 @@ export default function CallingFlowPage() {
               <p className="text-[13px] font-semibold text-slate-900">
                 {isDone ? 'Complete' : `${position} of ${total}`}
               </p>
-              <p className="text-[11px] text-slate-400">{doneCount} done</p>
+              {/* With a filter on, the batch-wide done count would contradict the
+                  count beside it. Name the list being walked instead — that is the
+                  question "3 of 12" leaves open. */}
+              <p className="min-w-0 truncate text-[11px] text-slate-400">
+                {activeQueue ? activeQueue.label : `${doneCount} done`}
+              </p>
             </div>
             <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
               <div className="h-full rounded-full bg-orange-500 transition-all" style={{ width: `${progressPct}%` }} />
@@ -445,6 +499,23 @@ export default function CallingFlowPage() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Resumed, not restarted. Dismissible, and gone the moment they move. */}
+        {resumed && resumeNote && !isDone && (
+          <div className="flex items-center gap-1.5 border-t border-amber-100 bg-amber-50/70 px-3 py-1.5 text-[11px] text-amber-800">
+            <RotateCcw className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">
+              Picked up where you left off. Use <ChevronLeft className="inline h-3 w-3" /> for the earlier names.
+            </span>
+            <button
+              onClick={() => setResumeNote(false)}
+              aria-label="Dismiss"
+              className="shrink-0 rounded p-0.5 hover:bg-amber-100"
+            >
+              <X className="h-3 w-3" />
+            </button>
           </div>
         )}
 
@@ -566,7 +637,7 @@ export default function CallingFlowPage() {
           <div className="text-5xl">🎉</div>
           <p className="mt-4 text-lg font-semibold text-slate-900">All done!</p>
           <p className="mt-1 text-sm text-slate-500">
-            You went through all {total} assigned contacts. Great work, Sevak!
+            You went through all {batchTotal} assigned contacts. Great work, Sevak!
           </p>
           <button
             onClick={() => { clearQueue(); jumpTo(0); }}
@@ -594,6 +665,11 @@ export default function CallingFlowPage() {
                 <div className="mt-1.5 flex items-center gap-1.5">
                   <Link
                     to={`/contacts/${current.id}`}
+                    // Tell the profile where it was opened from, so its Back comes
+                    // straight here instead of to the all-contacts list — which is
+                    // a browse-everything screen this karyakarta was never heading
+                    // for. The saved cursor then reopens on this same contact.
+                    state={{ from: '/calling', fromLabel: 'My Calling' }}
                     className="inline-flex h-7 items-center gap-1 rounded-lg border border-slate-200 px-2 text-[11px] font-medium text-slate-500 hover:bg-slate-50"
                   >
                     <ExternalLink className="h-3 w-3" /> Profile
@@ -643,6 +719,7 @@ export default function CallingFlowPage() {
               {current.householdId && (
                 <Link
                   to={`/households/${current.householdId}`}
+                  state={{ from: '/calling', fromLabel: 'My Calling' }}
                   className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2.5 py-1 text-[11px] font-medium text-slate-500 hover:bg-slate-50"
                 >
                   <Home className="h-3 w-3" /> Household

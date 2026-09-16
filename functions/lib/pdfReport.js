@@ -39,6 +39,23 @@ function ascii(value) {
     .trim();
 }
 
+/**
+ * A name that survives ascii(). A record whose name is written entirely in
+ * Devanagari or Gujarati transliterates to the empty string, and a nameless row
+ * on a call list is a row nobody can act on — the reader cannot tell whether the
+ * PDF is broken or the record is. So fall back to the number, which is the thing
+ * the call actually needs, and say where the real spelling is.
+ *
+ * Only a PDF problem: the HTML and plain-text bodies are UTF-8 and show the name
+ * correctly, which is what "see the email" points at.
+ */
+function pdfName(name, mobile) {
+  const safe = ascii(name);
+  if (safe) return safe;
+  const digits = String(mobile || '').replace(/\D/g, '');
+  return digits ? `(name in Hindi) ${digits}` : '(name in Hindi - see the email)';
+}
+
 function header(doc, title, subtitle) {
   doc.setFillColor(...ORANGE);
   doc.rect(0, 0, 210, 22, 'F');
@@ -205,7 +222,7 @@ function postSabhaPdf(report) {
       ['#', 'Name', 'Mandal', 'Mobile', 'Last 12 months'],
       report.present.map((p, i) => [
         String(i + 1),
-        p.name + (p.isFirstTimer ? ' (new)' : ''),
+        pdfName(p.name, p.mobile) + (p.isFirstTimer ? ' (new)' : ''),
         p.mandal || '-',
         p.mobile || '-',
         `${p.attended}/${p.held}`,
@@ -220,7 +237,7 @@ function postSabhaPdf(report) {
       autoTable(doc,
         ['#', 'Name', 'Mandal', 'Mobile', 'Last 12 months'],
         report.regularsAbsent.map((p, i) => [
-          String(i + 1), p.name, p.mandal || '-', p.mobile || '-', `${p.attended}/${p.held}`,
+          String(i + 1), pdfName(p.name, p.mobile), p.mandal || '-', p.mobile || '-', `${p.attended}/${p.held}`,
         ]),
         y);
     }
@@ -230,6 +247,101 @@ function postSabhaPdf(report) {
     return toAttachment(doc, `attendance-${safe || 'sabha'}-${report.event.date}.pdf`);
   } catch (err) {
     console.error('[pdfReport] post-sabha PDF failed, sending email without it:', err.message);
+    return null;
+  }
+}
+
+/**
+ * PHASE 38 — one karyakarta's post-sabha follow-up list.
+ *
+ * skBatchPdf(report) → attachment object, or null on failure.
+ *
+ * THE ORDER OF THE TABLES IS THE FEATURE. "who not come in sabha then he again
+ * call those numbers and ask there reason" — so the people to ring come first,
+ * grouped by what they had said, and the people who came come last as a record.
+ * A PDF that opens with a page of names who already turned up teaches its reader
+ * that there is nothing in it for them.
+ *
+ * "What they said" is printed against every absent name because it is the opener
+ * for the call: "you said you would come" is a different conversation from
+ * "I could not reach you last week".
+ *
+ * @param {object} report one entry from lib/skReport.buildSkBatchReports()
+ * @param {Array}  groupDefs ROUND_GROUPS from lib/roundClassify, so the labels
+ *   and the precedence live in exactly one place.
+ */
+function skBatchPdf(report, groupDefs) {
+  try {
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    header(doc, `${report.volunteerName} - your calling list`,
+      `${report.event.title} - ${report.event.dateLabel}`);
+
+    let y = summaryLine(doc, [
+      { label: 'You called', value: report.called },
+      { label: 'Came', value: report.attended },
+      { label: 'Did not come', value: report.absent },
+      { label: 'To call back', value: report.chaseCount },
+    ], 32);
+
+    if (report.promiseKept !== null) {
+      doc.setFontSize(9);
+      doc.setTextColor(...MUTED);
+      doc.text(ascii(
+        `${report.promised} said they would come, ${report.counts.kept} of them did `
+        + `(${report.promiseKept}%).   Batches: ${report.batchNames.join(', ')}`,
+      ), 14, y);
+      doc.setTextColor(...SLATE);
+      y += 8;
+    }
+
+    // The three chase groups first, then the two tally groups. groupDefs already
+    // holds them in that order.
+    for (const g of groupDefs) {
+      const rows = report.groups[g.key] || [];
+      if (!rows.length) continue;
+
+      // A new group is worth nothing at the very bottom of a page.
+      if (y > 250) { doc.addPage(); y = 20; }
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text(ascii(`${g.pdfLabel} (${rows.length})`), 14, y);
+      y += 4;
+
+      if (g.chase) {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(...MUTED);
+        doc.text(ascii(g.hint), 14, y);
+        doc.setTextColor(...SLATE);
+        y += 3;
+      }
+
+      y = autoTable(doc,
+        ['#', 'Name', 'Mobile', 'Mandal', 'Area', 'What they said'],
+        rows.map((r, i) => [
+          String(i + 1),
+          pdfName(r.name, r.mobile),
+          r.mobile || '-',
+          r.mandal || '-',
+          r.area || '-',
+          r.said || 'nothing recorded',
+        ]),
+        y);
+    }
+
+    if (report.truncated) {
+      doc.setFontSize(8);
+      doc.setTextColor(...MUTED);
+      doc.text(ascii(`${report.truncated} more contact(s) are not listed - open My Calling for the full list.`), 14, y);
+      doc.setTextColor(...SLATE);
+    }
+
+    footer(doc);
+    const safe = ascii(report.volunteerName).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase();
+    return toAttachment(doc, `my-calling-list-${safe || 'karyakarta'}-${report.event.date}.pdf`);
+  } catch (err) {
+    console.error('[pdfReport] SK batch PDF failed, sending email without it:', err.message);
     return null;
   }
 }
@@ -251,7 +363,7 @@ function birthdayPdf(data) {
     y += 3;
     y = autoTable(doc,
       ['Name', 'Turning', 'Mandal', 'Mobile'],
-      data.birthdays.map((p) => [p.name, p.age != null ? String(p.age) : '-', p.mandal || '-', p.mobile || '-']),
+      data.birthdays.map((p) => [pdfName(p.name, p.mobile), p.age != null ? String(p.age) : '-', p.mandal || '-', p.mobile || '-']),
       y);
 
     doc.setFont('helvetica', 'bold');
@@ -260,7 +372,7 @@ function birthdayPdf(data) {
     y += 3;
     autoTable(doc,
       ['Name', 'Years', 'Mandal', 'Mobile'],
-      data.anniversaries.map((p) => [p.name, p.years != null ? String(p.years) : '-', p.mandal || '-', p.mobile || '-']),
+      data.anniversaries.map((p) => [pdfName(p.name, p.mobile), p.years != null ? String(p.years) : '-', p.mandal || '-', p.mobile || '-']),
       y);
 
     footer(doc);
@@ -271,4 +383,4 @@ function birthdayPdf(data) {
   }
 }
 
-module.exports = { dailyReportPdf, postSabhaPdf, birthdayPdf, ascii };
+module.exports = { dailyReportPdf, postSabhaPdf, skBatchPdf, birthdayPdf, ascii, pdfName };

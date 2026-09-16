@@ -74,6 +74,12 @@ const TOGGLES = [
     description: 'Also sends the attendance report to the volunteers who marked people present.',
   },
   {
+    key: 'autoSkBatchReportsEnabled',
+    title: 'Calling list to each Sampark Karyakarta',
+    when: 'With the report above',
+    description: 'One PDF per karyakarta covering only the batch they were given: who came, who did not, and what each absentee had said when called — so the follow-up calls are ready to make. Needs a report email on their volunteer record. Waits until attendance has been marked.',
+  },
+  {
     key: 'autoBirthdayEnabled',
     title: 'Birthday & anniversary summary',
     cronKey: 'scheduleBirthdayCron',
@@ -138,6 +144,8 @@ const KIND_LABELS = {
   'daily-manual': 'Daily report (manual)',
   'post-sabha': 'Post-sabha attendance',
   'post-sabha-manual': 'Post-sabha (manual)',
+  'post-sabha-sk': 'Karyakarta calling list',
+  'post-sabha-sk-manual': 'Karyakarta calling list (manual)',
   birthday: 'Birthday summary',
   'birthday-manual': 'Birthday summary (manual)',
   'sabha-digest': 'Sabha coverage',
@@ -400,6 +408,7 @@ function EmailAutomationInner() {
         autoDailyVolunteerEnabled: !!draft.autoDailyVolunteerEnabled,
         autoPostSabhaAdminEnabled: !!draft.autoPostSabhaAdminEnabled,
         autoPostSabhaVolunteerEnabled: !!draft.autoPostSabhaVolunteerEnabled,
+        autoSkBatchReportsEnabled: !!draft.autoSkBatchReportsEnabled,
         autoBirthdayEnabled: !!draft.autoBirthdayEnabled,
         autoSabhaDigestEnabled: !!draft.autoSabhaDigestEnabled,
         autoSabhaDigestVolunteerEnabled: !!draft.autoSabhaDigestVolunteerEnabled,
@@ -1116,8 +1125,9 @@ function EmailAutomationInner() {
         </h3>
         <p className="mb-3 text-xs text-slate-500">
           Sends the report to the recipients listed above right now, whether or not its schedule is switched on. The
-          per-volunteer copies are not included — that stays a settings decision. There is no button for the post-sabha
-          report: it can only be triggered by the 15-minute check after a sabha has actually finished.
+          per-volunteer copies are not included — that stays a settings decision. There are no buttons for the
+          post-sabha report or the karyakarta calling lists: both need a specific sabha, so they only go out on the
+          15-minute check after one has actually finished and its attendance has been marked.
         </p>
 
         <div className="flex flex-wrap gap-2">
