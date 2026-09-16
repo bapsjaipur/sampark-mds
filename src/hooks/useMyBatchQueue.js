@@ -37,8 +37,23 @@ function writeCursor(key, value) {
 export function useMyBatchQueue() {
   const { volunteer } = useAuth();
   const [batches, setBatches] = useState([]);
-  const [individuals, setIndividuals] = useState({}); // id -> individual doc
-  const [loading, setLoading] = useState(true);
+  const [individuals, setIndividuals] = useState({}); // id -> individual doc | null
+  // PHASE 39 — `loading` used to be its own state, and it lied twice.
+  //
+  //   1. On mount, before the batches query had answered, individualIds was []
+  //      and the individuals effect ran its empty branch — setLoading(false) with
+  //      nothing loaded. The calling screen rendered "no contacts assigned" for a
+  //      beat on every single open, which is the flash a karyakarta reads as their
+  //      batch having been taken away.
+  //   2. The non-empty branch called setLoading(false) synchronously, immediately
+  //      after subscribing and therefore before any contact had arrived. Same empty
+  //      screen, just for a shorter moment.
+  //
+  // Both were ordering bugs in a value that is fully derivable, so it is derived
+  // now and there is no order left to get wrong. `batchesLoaded` is the one bit
+  // that genuinely has to be remembered: "the query answered" and "the answer was
+  // empty" are otherwise the same [].
+  const [batchesLoaded, setBatchesLoaded] = useState(false);
   const [error, setError] = useState(null);
   const [currentIdx, setCurrentIdx] = useState(0);
 
@@ -56,18 +71,22 @@ export function useMyBatchQueue() {
 
   // Live: which batches are assigned to me.
   useEffect(() => {
-    if (!volunteer?.id) { setBatches([]); setLoading(false); return; }
+    if (!volunteer?.id) { setBatches([]); setBatchesLoaded(true); return; }
     setError(null);
+    setBatchesLoaded(false);
     const q = query(collection(db, 'batches'), where('assignedVolunteerId', '==', volunteer.id));
     const unsub = onSnapshot(
       q,
-      (snap) => setBatches(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      (snap) => {
+        setBatches(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setBatchesLoaded(true);
+      },
       // Without this handler a permission-denied read is swallowed and the queue
       // just looks empty — the exact symptom of an assigned volunteer who cannot
       // see their batch (their role has edit_contacts but no view_* permission,
       // and canReadBatches denied the read). Surface it so callers can tell
       // "denied" apart from "genuinely no batch".
-      (err) => { setError(err); setBatches([]); setLoading(false); },
+      (err) => { setError(err); setBatches([]); setBatchesLoaded(true); },
     );
     return unsub;
   }, [volunteer?.id]);
@@ -86,9 +105,13 @@ export function useMyBatchQueue() {
 
   // Live-subscribe to each individual doc so status/reference updates reflect
   // immediately (e.g. if edited elsewhere in the app while calling).
+  //
+  // One listener per contact rather than one chunked `in` query: a 40-name batch
+  // costs 40 reads to attach either way, but afterwards a single outcome being
+  // logged re-delivers ONE document here, where an `in` query re-delivers all 30
+  // in its chunk. Over an evening of calling that is the cheaper shape by far.
   useEffect(() => {
-    if (individualIds.length === 0) { setIndividuals({}); setLoading(false); return; }
-    setLoading(true);
+    if (individualIds.length === 0) { setIndividuals({}); return; }
     const unsubs = individualIds.map((id) =>
       onSnapshot(
         doc(db, 'individuals', id),
@@ -96,12 +119,28 @@ export function useMyBatchQueue() {
           setIndividuals((prev) => ({ ...prev, [id]: snap.exists() ? { id: snap.id, ...snap.data() } : null }));
         },
         // A denied individual read is the other way this queue can silently empty.
-        (err) => setError(err),
+        // The id is still marked resolved, or one unreadable contact would hold the
+        // whole screen on a spinner for ever.
+        (err) => {
+          setError(err);
+          setIndividuals((prev) => (prev[id] === undefined ? { ...prev, [id]: null } : prev));
+        },
       )
     );
-    setLoading(false);
     return () => unsubs.forEach((u) => u());
   }, [individualIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // How many of my ids have ANSWERED — including the ones that came back deleted
+  // or denied, which is the whole reason this is not contacts.length. A deleted
+  // contact never becomes a row, so counting rows meant "finished streaming" was
+  // a condition that could never be met, the restore never settled, and the cursor
+  // was never written again for the rest of the session.
+  const resolvedCount = useMemo(
+    () => individualIds.reduce((n, id) => (individuals[id] !== undefined ? n + 1 : n), 0),
+    [individualIds, individuals],
+  );
+  const streamed = resolvedCount >= individualIds.length;
+  const loading = !batchesLoaded || !streamed;
 
   const contacts = useMemo(
     () => individualIds.map((id) => individuals[id]).filter(Boolean),
@@ -110,23 +149,22 @@ export function useMyBatchQueue() {
 
   // Restore the saved position, once. Each individual arrives on its own snapshot
   // so `contacts` fills in over many commits — the wanted contact may be number 60
-  // and simply not here yet. Keep looking until the queue has finished streaming
-  // (contacts.length reaches individualIds.length), then stop and accept the top.
+  // and simply not here yet. Keep looking until the queue has finished streaming,
+  // then stop and accept the top.
   useEffect(() => {
     if (restoredRef.current) return;
     const wanted = wantedIdRef.current;
     if (!wanted) { restoredRef.current = true; return; }
-    if (contacts.length === 0) return;
     const idx = contacts.findIndex((c) => c.id === wanted);
     if (idx >= 0) {
       setCurrentIdx(idx);
       restoredRef.current = true;
-    } else if (contacts.length >= individualIds.length) {
-      // Everything has arrived and they are not in it — reassigned out of this
+    } else if (streamed) {
+      // Everything has answered and they are not in it — reassigned out of this
       // batch, or deleted. Start at the top rather than wait for a no-show.
       restoredRef.current = true;
     }
-  }, [contacts, individualIds.length]);
+  }, [contacts, streamed]);
 
   // Persist only AFTER the restore has settled, or the first partial queue would
   // save contacts[0] over the very id the restore is still waiting for.
@@ -140,7 +178,11 @@ export function useMyBatchQueue() {
 
   const next = useCallback(() => setCurrentIdx((i) => i + 1), []);
   const jumpTo = useCallback((idx) => setCurrentIdx(idx), []);
-  const isDone = contacts.length > 0 && currentIdx >= contacts.length;
+  // `!loading` matters: while the queue is still streaming, `contacts` is a partial
+  // list, so a restored cursor sitting at #38 of 40 is momentarily past the end of
+  // a list that only holds 12 — and the screen congratulated the karyakarta on
+  // finishing a batch they had not started.
+  const isDone = !loading && contacts.length > 0 && currentIdx >= contacts.length;
 
   // Whether the opening contact came from a saved cursor rather than the top of
   // the batch. The screen says so once, so nobody thinks names went missing.

@@ -45,7 +45,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Phone, MessageCircle, MapPin, FileText, Search, X, ChevronLeft,
   Repeat, PhoneOff, Home, History, Check, SkipForward, Pencil, ExternalLink,
-  CalendarCheck, Clock, Undo2, RotateCcw,
+  CalendarCheck, Clock, Undo2, RotateCcw, AlertCircle,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useMyBatchQueue } from '../hooks/useMyBatchQueue';
@@ -403,7 +403,13 @@ export default function CallingFlowPage() {
   // not a missing assignment — the reason "My Calling" looked empty for some
   // roles. (Usual cause: a role with edit_contacts but no view_* permission;
   // canReadBatches now also accepts edit_contacts once the rules are deployed.)
-  if (error) {
+  //
+  // PHASE 39 — but only when there is nothing to show. useMyBatchQueue sets this
+  // for a denied read on ANY single contact document as well as on the batch query,
+  // so one unreadable contact out of forty used to replace the entire calling
+  // screen with this page and end the karyakarta's evening. If the queue has names
+  // in it, they get the queue and a banner (below) instead.
+  if (error && batchTotal === 0) {
     return (
       <div className="mx-auto max-w-md px-6 py-16 text-center">
         <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-100">
@@ -499,6 +505,20 @@ export default function CallingFlowPage() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* PHASE 39 — a partial read, said out loud rather than hidden. Some of the
+            batch is here and callable; a name that could not be read is simply not
+            in the list, and without this line its absence is indistinguishable from
+            never having been assigned. */}
+        {error && (
+          <div className="flex items-start gap-1.5 border-t border-amber-100 bg-amber-50/70 px-3 py-1.5 text-[11px] text-amber-800">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              Some contacts in your batch couldn’t be loaded and are not shown below. Everything
+              here is safe to call — tell an admin so they can check your role.
+            </span>
           </div>
         )}
 

@@ -16,7 +16,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { X, KeyRound, Clock, Trash2, Check, Eye, AlertTriangle, ShieldAlert, Search, Users, Wifi, Download, FileText, UserPlus } from 'lucide-react';
+import { X, KeyRound, Clock, Trash2, Check, Eye, AlertTriangle, ShieldAlert, Search, Users, Wifi, Download, FileText, UserPlus, Smartphone } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import { RequirePermission } from '../components/RequirePermission';
 import { useAreasAndMandals } from '../hooks/useAreasAndMandals';
@@ -670,6 +670,124 @@ function PendingResetRequests({ volunteers, onApprove, canApprove }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 3.4 — pending mobile-number change requests
+//
+// PHASE 39 — the approval half of the number-change flow.
+//
+// The mobile number is the login: Auth signs in on <mobile>@baps-jaipur-mds.local,
+// so a volunteer editing their own number was editing their own username, with no
+// self-service way back from a typo. The profile screen now records a request
+// instead (functions/updateVolunteerAccount.js) and this is where it is answered.
+//
+// COSTS NOTHING TO SHOW. The request lives on the volunteer document as
+// `mobileChangeRequest`, and this screen is already subscribed to the whole roster
+// through useVolunteers — so unlike PendingResetRequests above there is no second
+// listener, no second collection and no rules change. That is the entire reason
+// the field was chosen over a collection.
+//
+// Both buttons go through the callable, because approving means moving the Auth
+// email as well as the Firestore field and only the Admin SDK can do that.
+// ─────────────────────────────────────────────────────────────────────────────
+function PendingMobileRequests({ volunteers, canApprove, onDone }) {
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState(null);
+
+  const requests = useMemo(
+    () => (volunteers || [])
+      .filter((v) => v?.mobileChangeRequest?.status === 'pending' && v.mobileChangeRequest.mobile)
+      .sort((a, b) => toMillis(b.mobileChangeRequest.requestedAt) - toMillis(a.mobileChangeRequest.requestedAt)),
+    [volunteers],
+  );
+
+  if (!canApprove || (!requests.length && !error)) return null;
+
+  async function resolve(v, decision) {
+    setBusyId(v.id);
+    setError(null);
+    try {
+      const fn = httpsCallable(getFunctions(), 'updateVolunteerAccount');
+      const res = await fn({ volunteerId: v.id, resolveMobileRequest: decision });
+      const moved = res?.data?.contactsRepointed;
+      // The number is denormalised onto every contact assigned to them
+      // (individuals.samparkKaryakartaNumber) and My Contacts queries on it, so the
+      // callable re-points those too. `null` means the login moved but that sweep
+      // failed — say so plainly, because the fix is to press Approve's equivalent
+      // again (type the same number into Mobile and Save) and not to wonder why
+      // their contact list is empty.
+      onDone?.(decision === 'approve'
+        ? `${v.name || 'That volunteer'} now signs in with ${v.mobileChangeRequest.mobile}.`
+          + (moved === null
+            ? ' Their assigned contacts could NOT be moved to the new number — re-enter it in the Mobile field below and Save to retry.'
+            : moved > 0 ? ` ${moved} assigned contact${moved === 1 ? '' : 's'} moved with it.` : '')
+        : `Declined — ${v.name || 'that volunteer'} keeps ${v.mobile}.`);
+    } catch (err) {
+      // A deployed-but-old updateVolunteerAccount does not know the field, so it
+      // silently succeeds at nothing rather than failing — but the not-found /
+      // opaque-internal case is worth naming, because the fallback is real work.
+      setError(isCallableMissing(err)
+        ? 'updateVolunteerAccount has not been redeployed with the approval step yet. '
+          + 'Until it is, type the new number into the Mobile field below and Save — '
+          + 'that path already works. Run: firebase deploy --only functions:updateVolunteerAccount'
+        : (err?.message || 'Could not answer the request.'));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="mb-5 rounded-lg border border-sky-200 bg-sky-50/60">
+      <div className="flex items-center gap-2 border-b border-sky-200 px-3 py-2 sm:px-4">
+        <Smartphone className="h-4 w-4 shrink-0 text-sky-600" />
+        <span className="text-[13px] font-semibold text-sky-900">
+          Login number change requests
+          {requests.length > 0 && (
+            <span className="ml-1.5 rounded-full bg-sky-200 px-1.5 py-0.5 text-[11px] font-semibold text-sky-900">
+              {requests.length}
+            </span>
+          )}
+        </span>
+      </div>
+
+      {error && <div className="border-b border-sky-200 px-3 py-2 text-xs text-rose-700 sm:px-4">{error}</div>}
+
+      {requests.length > 0 && (
+        <>
+          <p className="px-3 pt-2.5 text-xs text-sky-900 sm:px-4">
+            Approving moves the number they sign in with. Check it is really them and that the new
+            number is right — a wrong digit locks them out until you fix it here.
+          </p>
+          <div className="divide-y divide-sky-200/70">
+            {requests.map((v) => {
+              const req = v.mobileChangeRequest;
+              const when = formatLastLogin(req.requestedAt);
+              return (
+                <div key={v.id} className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-slate-900">{v.name || 'Unnamed volunteer'}</div>
+                    <div className="text-xs text-slate-500 tabular-nums">
+                      {v.mobile || 'no number'} → <strong className="text-slate-700">{req.mobile}</strong>
+                      {when ? ` · asked ${when}` : ''}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <Button variant="secondary" size="sm" disabled={busyId === v.id} onClick={() => resolve(v, 'approve')}>
+                      <Check className="h-3.5 w-3.5" /> {busyId === v.id ? 'Saving…' : 'Approve'}
+                    </Button>
+                    <Button variant="ghost" size="sm" disabled={busyId === v.id} onClick={() => resolve(v, 'decline')}>
+                      Decline
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function VolunteerEditorInner() {
   // PHASE 24 — the roster comes from the shared listener (see useVolunteers), so
   // this screen, Roles, Batches, Events and the Admin dashboard bill it once
@@ -838,7 +956,7 @@ function VolunteerEditorInner() {
 
   async function handleSave() {
     if (!selectedId || !draft) return;
-    setSaving(true); setError(null);
+    setSaving(true); setError(null); setNotice(null);
 
     // firestore.rules reads the single `roleRef`, so it is kept pointing at the
     // most senior selected role — rules then enforce a subset of what this screen
@@ -879,7 +997,7 @@ function VolunteerEditorInner() {
     try {
       const functions = getFunctions();
       const updateVolunteerAccount = httpsCallable(functions, 'updateVolunteerAccount');
-      await updateVolunteerAccount({
+      const res = await updateVolunteerAccount({
         volunteerId: selectedId,
         name: draft.name.trim(),
         mobile: draft.mobile.trim(),
@@ -893,6 +1011,20 @@ function VolunteerEditorInner() {
         // PHASE 30 — program assignment
         program: draft.program || 'Yuvak',
       });
+
+      // PHASE 39 — a moved login number is the one edit on this form with a
+      // consequence beyond this document: it rewrites the Auth email AND the
+      // `samparkKaryakartaNumber` copy on every contact assigned to them, which is
+      // the field My Contacts queries on. Saving used to report nothing at all, so
+      // say what happened — silence after a change this wide is what leaves an admin
+      // unsure whether to do it again.
+      const moved = res?.data?.contactsRepointed;
+      if (res?.data?.mobileChanged) {
+        setNotice(`Login number updated to ${draft.mobile.trim()}.`
+          + (moved === null
+            ? ' Their assigned contacts could NOT be moved to it — press Save again to retry.'
+            : moved > 0 ? ` ${moved} assigned contact${moved === 1 ? '' : 's'} moved with it.` : ''));
+      }
 
       // The callable is the intended path — it also syncs the Auth email when the
       // mobile changes. This second, tiny write exists because a Cloud Functions
@@ -1006,6 +1138,14 @@ function VolunteerEditorInner() {
         volunteers={volunteers}
         canApprove={isGlobalUserManager}
         onApprove={(v) => { setNotice(null); setResetTarget(v); }}
+      />
+
+      {/* PHASE 39 — number-change requests. Reads the roster already in memory, so
+          this renders for free and disappears when the queue is empty. */}
+      <PendingMobileRequests
+        volunteers={volunteers}
+        canApprove={isGlobalUserManager}
+        onDone={(message) => setNotice(message)}
       />
 
       {/* Header spans both columns. It used to sit inside the roster column, which
@@ -1248,6 +1388,17 @@ function VolunteerEditorInner() {
               <div>
                 <Label>Mobile</Label>
                 <Input value={draft.mobile} onChange={(e) => setDraft({ ...draft, mobile: e.target.value })} placeholder="10-digit mobile" inputMode="numeric" />
+                {/* PHASE 39 — this field is now the ONLY way the number moves. The
+                    profile screen went read-only because the number IS the login
+                    (Auth signs in on <mobile>@baps-jaipur-mds.local), so a typo
+                    there locked the volunteer out with no way back. Saying it here
+                    stops an admin assuming the volunteer can fix it themselves. */}
+                <p className="mt-1 text-[11px] leading-snug text-slate-400">
+                  This is their login ID. Volunteers can no longer change it themselves — they
+                  send a request, and it appears at the top of this page for approval.
+                  {selectedVolunteer?.mobileChangeRequest?.status === 'pending'
+                    && ` They have asked for ${selectedVolunteer.mobileChangeRequest.mobile}.`}
+                </p>
               </div>
             </div>
 

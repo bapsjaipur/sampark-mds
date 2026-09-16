@@ -296,22 +296,152 @@ function filterEligible(rows, {
 }
 
 /**
- * Every individualId that already sits in some batch.
+ * The `batches` collection in the one shape both callers need.
+ *
+ * This used to be loadAlreadyBatchedIds() and returned only the Set of ids that
+ * already sit in some batch. planTopUps() below needs the DOCUMENTS too — which
+ * batch has room, who holds it, which sabha it belongs to — and reading the
+ * collection a second time to find that out would double the cost of every
+ * preview. So the documents are the return value now and the Set is derived.
  *
  * `batchRows` lets the caller hand over the list it is already subscribed to —
  * BatchesPage keeps a live onSnapshot on `batches` for the Batches tab, so
  * re-reading the collection here charged a second time for rows already in
  * memory. Only when nothing is supplied does this fall back to a read.
  */
-async function loadAlreadyBatchedIds(batchRows) {
-  const set = new Set();
-  if (Array.isArray(batchRows)) {
-    batchRows.forEach((b) => (b?.individualIds || []).forEach((id) => set.add(id)));
-    return set;
+async function loadBatchIndex(batchRows) {
+  let rows = batchRows;
+  if (!Array.isArray(rows)) {
+    const bSnap = await getDocs(collection(db, 'batches'));
+    rows = bSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   }
-  const bSnap = await getDocs(collection(db, 'batches'));
-  bSnap.forEach((d) => (d.data().individualIds || []).forEach((id) => set.add(id)));
-  return set;
+  const batched = new Set();
+  rows.forEach((b) => (b?.individualIds || []).forEach((id) => batched.add(id)));
+  return { rows, batched };
+}
+
+/** Timestamp | Date | string | null → epoch ms, 0 when there is nothing to read. */
+function millisOf(ts) {
+  if (!ts) return 0;
+  if (typeof ts.toMillis === 'function') return ts.toMillis();
+  if (typeof ts.toDate === 'function') return ts.toDate().getTime();
+  const t = new Date(ts).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+// A batch older than this is not "this round" even if it carries no eventId, and
+// must not absorb a new arrival. Legacy batches predate the event stamp entirely,
+// so without this guard somebody added in September could land in a batch cut in
+// March and be counted into a round that closed months ago.
+const TOP_UP_MAX_AGE_DAYS = 45;
+
+/**
+ * Where a mid-week arrival goes — planTopUps({ contacts, batches, size, eventId }).
+ *
+ * WHAT WENT WRONG WITHOUT IT. `skipAlreadyBatched` already made sure a contact
+ * added on Tuesday was picked up by the next Generate run: they are in no batch, so
+ * they are eligible. But the generator only knew how to CREATE batches, so two new
+ * families became "Yuvak Mandal — Batch 37" — a batch of two, unassigned, sitting
+ * below the eleven real ones. Somebody had to notice it and hand it out, and when
+ * nobody did those two were never called, while looking on every screen exactly
+ * like a normal batch. That is the "not assigned into any batches" confusion.
+ *
+ * WHAT HAPPENS INSTEAD. Before cutting anything new, this looks for a batch that
+ * already covers those people and still has room, and appends to it. The
+ * karyakarta already calling that mandal this week simply finds two more names on
+ * their list — which is what they would expect if they had been told by hand.
+ *
+ * THE FOUR TESTS A TARGET MUST PASS, none of them optional:
+ *
+ *   • it must not CONTRADICT the contact. A batch stamped mandal:'Yuvak Mandal'
+ *     may only take Yuvak contacts, or its own field becomes a lie and every
+ *     screen that groups by it reports a mandal the batch does not hold. A NULL
+ *     field is not a contradiction — an area-grouped batch legitimately spans
+ *     mandals, so null means "no claim made", not "no mandal".
+ *   • SAME SABHA. `eventId` must equal the run's exactly. Appending this week's
+ *     arrival to last week's batch drops them into a round that is already being
+ *     reviewed, where roundService would read the blank outcome as a call somebody
+ *     failed to make.
+ *   • ROOM. Never past `batchSize` — the size is the promise made to the volunteer.
+ *   • NOT STALE. See TOP_UP_MAX_AGE_DAYS.
+ *
+ * ORDER OF PREFERENCE: assigned batches first, then the more specific batch, then
+ * the emptiest. Assigned first because the entire point is that somebody rings
+ * these people this week; an unassigned batch with room is usually a remainder
+ * nobody has picked up, and dropping the new arrival there recreates the bug in a
+ * quieter form.
+ *
+ * @returns {{topUps: Array, absorbed: Set<string>}} `absorbed` is what the caller
+ *   must NOT also cut into a new batch — otherwise the contact ends up in two.
+ */
+function planTopUps({ contacts, batches, size, eventId }) {
+  const runEvent = eventId || null;
+  const cutoff = Date.now() - TOP_UP_MAX_AGE_DAYS * 86400000;
+
+  const targets = (batches || [])
+    .filter((b) => b && b.id && (b.eventId || null) === runEvent)
+    .map((b) => ({
+      id: b.id,
+      name: b.name || 'batch',
+      area: b.area || null,
+      mandal: b.mandal || null,
+      assignedVolunteerId: b.assignedVolunteerId || null,
+      ids: Array.isArray(b.individualIds) ? b.individualIds : [],
+      createdAt: millisOf(b.createdAt),
+    }))
+    .filter((t) => t.ids.length < size)
+    // A createdAt of 0 means "no date we can read", which is what a
+    // serverTimestamp() looks like on the writing client's own snapshot for a
+    // moment. Treating unreadable as stale would exclude the batch cut seconds
+    // ago, so only a date we CAN read and that IS old disqualifies a batch.
+    .filter((t) => !t.createdAt || t.createdAt >= cutoff)
+    .sort((a, b) => {
+      const aAssigned = Boolean(a.assignedVolunteerId);
+      const bAssigned = Boolean(b.assignedVolunteerId);
+      if (aAssigned !== bAssigned) return aAssigned ? -1 : 1;
+      const spec = (t) => (t.area ? 1 : 0) + (t.mandal ? 1 : 0);
+      if (spec(a) !== spec(b)) return spec(b) - spec(a);
+      if (a.ids.length !== b.ids.length) return a.ids.length - b.ids.length;
+      return String(a.name).localeCompare(String(b.name));
+    });
+
+  if (!targets.length) return { topUps: [], absorbed: new Set() };
+
+  const room = new Map(targets.map((t) => [t.id, size - t.ids.length]));
+  const adds = new Map();
+  const absorbed = new Set();
+
+  for (const c of contacts) {
+    const area = c._area || null;
+    const mandal = c.mandal || null;
+    const t = targets.find((x) => room.get(x.id) > 0
+      && (x.area === null || x.area === area)
+      && (x.mandal === null || x.mandal === mandal));
+    if (!t) continue;
+    room.set(t.id, room.get(t.id) - 1);
+    if (!adds.has(t.id)) adds.set(t.id, []);
+    adds.get(t.id).push(c.id);
+    absorbed.add(c.id);
+  }
+
+  const topUps = targets.filter((t) => adds.has(t.id)).map((t) => {
+    const add = adds.get(t.id);
+    return {
+      batchId: t.id,
+      batchName: t.name,
+      assignedVolunteerId: t.assignedVolunteerId,
+      add,
+      was: t.ids.length,
+      now: t.ids.length + add.length,
+      // The exact array to write, and the exact count with it — the same reason
+      // editBatchContacts() writes both rather than arrayUnion + increment: the
+      // pair cannot drift. Safe to build from memory because these rows come from
+      // BatchesPage's live onSnapshot, which is as current as a getDoc and free.
+      individualIds: [...t.ids, ...add],
+    };
+  });
+
+  return { topUps, absorbed };
 }
 
 /**
@@ -335,6 +465,16 @@ export async function previewBatchGeneration({
   // "generate batches" means every week bar one.
   onlyCallingPool = true,
   batchRows = null,
+  // PHASE 39 — put a mid-week arrival into a batch somebody is already calling
+  // instead of cutting them a stray batch of two. See planTopUps().
+  //
+  // Gated on skipAlreadyBatched, and not merely as a nicety: with that filter off
+  // the eligible list can contain contacts who ARE already in a batch, and
+  // appending one of those to a batch they are already in would double them up.
+  topUpExisting = true,
+  // Which sabha this run is for. Only used to decide which existing batches belong
+  // to the same round; the preview writes nothing.
+  eventId = null,
 } = {}) {
   // Same guard as generateBatches. The preview ran without one, so an empty
   // selection here used to scan every contact in the database to tell the admin
@@ -343,13 +483,26 @@ export async function previewBatchGeneration({
     throw new Error('Pick at least one area or one mandal to preview batches.');
   }
   const size = Math.max(1, Math.min(500, Number(batchSize) || 40));
+  const canTopUp = Boolean(topUpExisting && skipAlreadyBatched);
   const candidates = await getIndividualsForTarget({ areas, mandals });
-  const alreadyBatched = skipAlreadyBatched ? await loadAlreadyBatchedIds(batchRows) : new Set();
+  const needIndex = skipAlreadyBatched || canTopUp;
+  const { rows: existingBatches, batched: alreadyBatched } = needIndex
+    ? await loadBatchIndex(batchRows)
+    : { rows: [], batched: new Set() };
   const { eligible, skipped } = filterEligible(candidates, {
     onlyUncalled, skipAlreadyBatched, requirePhone, alreadyBatched, onlyCallingPool,
   });
 
-  const groups = groupsFor(eligible, groupBy).map((g) => ({
+  const { topUps, absorbed } = canTopUp
+    ? planTopUps({ contacts: eligible, batches: existingBatches, size, eventId })
+    : { topUps: [], absorbed: new Set() };
+
+  // Only what is left after the existing batches have taken their share gets cut
+  // into new ones — otherwise the preview promises batches the generator will not
+  // create, which is the drift this whole preview exists to prevent.
+  const remaining = absorbed.size ? eligible.filter((c) => !absorbed.has(c.id)) : eligible;
+
+  const groups = groupsFor(remaining, groupBy).map((g) => ({
     key: g.key,
     label: g.label,
     area: g.area,
@@ -365,6 +518,19 @@ export async function previewBatchGeneration({
     skipped,
     groups,
     totalBatches: groups.reduce((n, g) => n + g.batches, 0),
+    // PHASE 39 — which existing batches would grow, and by how much. Named
+    // batch-by-batch rather than totalled so the admin can see that the two new
+    // Yuvak families are going onto a list somebody is already holding, and which
+    // list that is.
+    topUp: topUps.map((t) => ({
+      batchId: t.batchId,
+      batchName: t.batchName,
+      assignedVolunteerId: t.assignedVolunteerId,
+      add: t.add.length,
+      was: t.was,
+      now: t.now,
+    })),
+    topUpContacts: absorbed.size,
     // How many of the candidates are off the follow-up list, regardless of which
     // mode is selected. The generator shows this next to the mode switch so the
     // "Everyone" option can say what it would actually add.
@@ -411,6 +577,12 @@ export async function previewBatchGeneration({
  *     expressible at all. Optional, and null on batches cut before this shipped
  *     — roundService.resolveRoundEvent() falls back to the most recent past event
  *     in the batch's mandal for those.
+ *   • topUpExisting (Phase 39) — a contact added to a mandal mid-week joins a batch
+ *     somebody is already calling, instead of becoming a stray batch of two that
+ *     nobody notices and nobody assigns. See planTopUps() for the four tests a
+ *     target batch has to pass. On by default: in week one there is nothing to top
+ *     up so nothing changes, and from week two the only case it alters is the one
+ *     that was broken.
  *
  * @returns {{created: number, batches: Array, groups: Array, skipped: object, eligible: number}}
  */
@@ -429,6 +601,8 @@ export async function generateBatches({
   batchRows = null,
   eventId = null,
   eventDate = null,
+  // PHASE 39 — see planTopUps() and the note on previewBatchGeneration.
+  topUpExisting = true,
 }) {
   const areaList = Array.isArray(areas) ? areas.filter(Boolean) : (area ? [area] : []);
   const mandalList = Array.isArray(mandals) ? mandals.filter(Boolean) : [];
@@ -437,19 +611,47 @@ export async function generateBatches({
     throw new Error('Pick at least one area or one mandal to generate batches.');
   }
   const size = Math.max(1, Math.min(500, Number(batchSize) || 40));
+  const canTopUp = Boolean(topUpExisting && skipAlreadyBatched);
 
   const candidates = await getIndividualsForTarget({ areas: areaList, mandals: mandalList });
-  const alreadyBatched = skipAlreadyBatched ? await loadAlreadyBatchedIds(batchRows) : new Set();
+  const needIndex = skipAlreadyBatched || canTopUp;
+  const { rows: existingBatches, batched: alreadyBatched } = needIndex
+    ? await loadBatchIndex(batchRows)
+    : { rows: [], batched: new Set() };
   const { eligible, skipped } = filterEligible(candidates, {
     onlyUncalled, skipAlreadyBatched, requirePhone, alreadyBatched, onlyCallingPool,
   });
 
   if (eligible.length === 0) {
-    return { created: 0, batches: [], groups: [], skipped, remainder: 0, eligible: 0 };
+    return { created: 0, batches: [], groups: [], skipped, remainder: 0, eligible: 0, toppedUp: [], toppedUpContacts: 0 };
   }
 
-  const groups = groupsFor(eligible, groupBy);
-  let numbering = await nextBatchNumber();
+  const { topUps, absorbed } = canTopUp
+    ? planTopUps({ contacts: eligible, batches: existingBatches, size, eventId })
+    : { topUps: [], absorbed: new Set() };
+
+  // Absorbed contacts are NOT cut into new batches — they are already going
+  // somewhere. Skipping this filter would put them in two batches, which is the
+  // exact fault skipAlreadyBatched was added to prevent.
+  const remaining = absorbed.size ? eligible.filter((c) => !absorbed.has(c.id)) : eligible;
+
+  // The appends go first. If the run dies halfway, an existing batch that grew by
+  // two is harmless; a new batch holding people who are also being appended
+  // elsewhere is not, and doing the appends first makes that state unreachable.
+  for (const slice of chunk(topUps, WRITE_BATCH_LIMIT)) {
+    const wb = writeBatch(db);
+    for (const t of slice) {
+      wb.update(doc(db, 'batches', t.batchId), {
+        individualIds: t.individualIds,
+        contactCount: t.individualIds.length,
+        updatedAt: serverTimestamp(),
+      });
+    }
+    await wb.commit();
+  }
+
+  const groups = groupsFor(remaining, groupBy);
+  let numbering = groups.length ? await nextBatchNumber() : 0;
   const created = [];
 
   // One flat list of (group, ids) pairs so the write-batching below stays a
@@ -499,7 +701,13 @@ export async function generateBatches({
     eligible: eligible.length,
     // Size of the final, partially-filled batch — worth showing so an admin
     // knows one volunteer will get 7 contacts instead of 40.
-    remainder: eligible.length % size,
+    remainder: remaining.length % size,
+    // PHASE 39 — the appends, so the caller can say "2 contacts joined 2 existing
+    // batches" instead of reporting "0 created" and looking like it did nothing.
+    toppedUp: topUps.map((t) => ({
+      batchId: t.batchId, batchName: t.batchName, add: t.add.length, now: t.now,
+    })),
+    toppedUpContacts: absorbed.size,
   };
 }
 

@@ -15,7 +15,7 @@
 // stamps eventId on every batch in the run and the whole post-sabha review
 // follows from it.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Wand2, Info, Grid3x3, PhoneCall, Users, RotateCcw, Loader2, CalendarCheck } from 'lucide-react';
+import { Wand2, Info, Grid3x3, PhoneCall, Users, RotateCcw, Loader2, CalendarCheck, UserPlus } from 'lucide-react';
 import { generateBatches, previewBatchGeneration, resetCallStatuses, GROUP_BY } from '../../services/batchService';
 import { subscribeToEvents, pickUpcomingEvent } from '../../services/eventService';
 import { useAuth } from '../../hooks/usePermissions';
@@ -83,6 +83,11 @@ export default function BatchGenerator({ areas = [], mandals = [], scoped = fals
   const [onlyUncalled, setOnlyUncalled] = useState(true);
   const [skipAlreadyBatched, setSkipAlreadyBatched] = useState(true);
   const [requirePhone, setRequirePhone] = useState(true);
+  // PHASE 39 — the answer to "a new family joined the mandal on Tuesday".
+  // ON by default. In week one there are no batches to grow so nothing changes;
+  // from week two the only situation it alters is the one that was broken — the
+  // mid-week arrival who used to become a stray batch of two that nobody assigned.
+  const [topUpExisting, setTopUpExisting] = useState(true);
   // Defaults to the follow-up list: that is what "generate batches" means 51
   // weeks out of 52, and defaulting to the sweep would quietly hand every
   // volunteer two and a half times their usual load.
@@ -159,13 +164,15 @@ export default function BatchGenerator({ areas = [], mandals = [], scoped = fals
       requirePhone,
       onlyCallingPool,
       batchRows,
+      topUpExisting,
+      eventId: eventId || null,
     })
       .then((res) => { if (!cancelled) setPreview(res); })
       .catch((err) => !cancelled && showToast({ type: 'error', message: err.message }))
       .finally(() => !cancelled && setPreviewing(false));
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [areaKey, mandalKey, groupBy, batchSize, onlyUncalled, skipAlreadyBatched, requirePhone, onlyCallingPool, hasTarget, refreshKey]);
+  }, [areaKey, mandalKey, groupBy, batchSize, onlyUncalled, skipAlreadyBatched, requirePhone, onlyCallingPool, topUpExisting, eventId, hasTarget, refreshKey]);
 
   // ── Start a new round ─────────────────────────────────────────────────────
   // Clears the outcome on everyone the preview just counted as already called,
@@ -224,14 +231,21 @@ export default function BatchGenerator({ areas = [], mandals = [], scoped = fals
         onlyCallingPool,
         createdBy: volunteer?.id,
         batchRows,
+        topUpExisting,
         eventId: eventId || null,
         eventDate: selectedEvent?.date || null,
       });
       setResult(res);
-      if (res.created === 0) {
+      const grew = res.toppedUpContacts || 0;
+      if (res.created === 0 && grew === 0) {
         showToast({ type: 'info', message: 'Nothing to batch — every eligible contact is already covered.' });
       } else {
-        showToast({ type: 'success', message: `Created ${res.created} batch${res.created === 1 ? '' : 'es'}.` });
+        // Says both halves. Reporting only `created` made a run that put two new
+        // families onto an existing list look like it had done nothing at all.
+        const parts = [];
+        if (res.created) parts.push(`Created ${res.created} batch${res.created === 1 ? '' : 'es'}`);
+        if (grew) parts.push(`added ${grew} contact${grew === 1 ? '' : 's'} to ${res.toppedUp.length} existing batch${res.toppedUp.length === 1 ? '' : 'es'}`);
+        showToast({ type: 'success', message: `${parts.join(' and ')}.` });
       }
     } catch (err) {
       showToast({ type: 'error', message: err.message });
@@ -429,7 +443,29 @@ export default function BatchGenerator({ areas = [], mandals = [], scoped = fals
           <input type="checkbox" checked={requirePhone} onChange={(e) => setRequirePhone(e.target.checked)} className="h-4 w-4 rounded border-slate-300 accent-orange-600" />
           Skip contacts without a 10-digit mobile
         </label>
+        {/* PHASE 39. Disabled with the filter above it because it has nothing to
+            act on without it: "already in another batch" is what identifies a new
+            arrival, and with it off a contact could be appended to a batch they
+            are already in. */}
+        <label className={cn(
+          'flex min-h-[40px] items-center gap-2.5 text-[13px]',
+          skipAlreadyBatched ? 'text-slate-700' : 'cursor-not-allowed text-slate-400',
+        )}>
+          <input
+            type="checkbox"
+            checked={topUpExisting && skipAlreadyBatched}
+            disabled={!skipAlreadyBatched}
+            onChange={(e) => setTopUpExisting(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 accent-orange-600 disabled:opacity-50"
+          />
+          Add new contacts to an existing batch when there is room
+        </label>
       </div>
+      <p className="mt-1 pl-7 text-[11px] leading-snug text-slate-400">
+        Someone added to a mandal after the batches were cut joins a list a karyakarta is already
+        calling, instead of becoming a batch of one that nobody notices. Only batches for the same
+        sabha and the same mandal, and never past {batchSize}.
+      </p>
 
       {previewing && <p className="mt-3 text-xs text-slate-400">Working out the split…</p>}
 
@@ -438,13 +474,48 @@ export default function BatchGenerator({ areas = [], mandals = [], scoped = fals
           <p>
             <strong>{preview.candidates}</strong> contacts matched ·{' '}
             <strong>{preview.eligible}</strong> eligible after filters ·{' '}
-            <strong>{preview.totalBatches}</strong> batch{preview.totalBatches === 1 ? '' : 'es'} of {batchSize}
+            <strong>{preview.totalBatches}</strong> new batch{preview.totalBatches === 1 ? '' : 'es'} of {batchSize}
+            {preview.topUpContacts > 0 && (
+              <> · <strong>{preview.topUpContacts}</strong> joining a batch that already exists</>
+            )}
           </p>
           <p className="mt-1 text-slate-500">
             Skipping {preview.skipped.noPhone} without a mobile, {preview.skipped.alreadyBatched} already
             batched, {preview.skipped.alreadyCalled} already called
             {preview.skipped.notInPool > 0 && `, ${preview.skipped.notInPool} off the follow-up list`}.
           </p>
+
+          {/* ── Which existing batches grow ────────────────────────────────
+              Named one by one rather than totalled, because the thing an admin
+              needs to be able to check is that the two new families are going onto
+              a list somebody is already holding — and which list that is. Silently
+              growing an assigned batch would be worse than the bug it fixes. */}
+          {preview.topUp?.length > 0 && (
+            <div className="mt-2.5 rounded-lg border border-sky-200 bg-sky-50/70 p-2.5">
+              <p className="mb-1.5 flex items-center gap-1 font-medium text-sky-900">
+                <UserPlus className="h-3.5 w-3.5" /> Joining batches that already exist
+              </p>
+              <ul className="divide-y divide-sky-200/60 rounded-md border border-sky-200/70 bg-white">
+                {preview.topUp.map((t) => (
+                  <li key={t.batchId} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+                    <span className="min-w-0 truncate text-slate-700">
+                      {t.batchName}
+                      <span className="text-slate-400">
+                        {t.assignedVolunteerId ? ' · assigned' : ' · not yet assigned'}
+                      </span>
+                    </span>
+                    <span className="shrink-0 whitespace-nowrap tabular-nums text-slate-500">
+                      +{t.add} <span className="text-slate-400">({t.was} → {t.now})</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-[11px] leading-snug text-sky-800">
+                The karyakarta holding an assigned batch will see the extra names on their list the
+                next time they open it. Nothing already called is touched.
+              </p>
+            </div>
+          )}
 
           {/* ── Start a new round ──────────────────────────────────────────
               Sits under the number it acts on. An outcome has no date on it, so
@@ -541,6 +612,12 @@ export default function BatchGenerator({ areas = [], mandals = [], scoped = fals
       {result && (
         <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs text-emerald-800">
           <p className="font-medium">Created {result.created} batch{result.created === 1 ? '' : 'es'} covering {result.eligible} contacts.</p>
+          {result.toppedUpContacts > 0 && (
+            <p className="mt-1 text-emerald-700">
+              {result.toppedUpContacts} of them joined {result.toppedUp.length} batch{result.toppedUp.length === 1 ? '' : 'es'} that
+              already existed: {result.toppedUp.map((t) => `${t.batchName} (+${t.add})`).join(', ')}.
+            </p>
+          )}
           {result.created > 0 && selectedEvent && (
             <p className="mt-1 text-emerald-700">
               Tagged to <strong>{selectedEvent.title || 'Sabha'}</strong> on {selectedEvent.date}. Mark

@@ -96,7 +96,11 @@ function SidebarContent({ collapsed, onNavigate, roleView }) {
 
       <div className={`mt-3 flex items-center gap-2 border-t border-slate-100 px-1 pt-3 ${collapsed ? 'justify-center' : ''}`}>
         <Link to="/profile" className="flex min-w-0 flex-1 items-center gap-2 transition-opacity hover:opacity-80" onClick={onNavigate}>
-          <Avatar name={volunteer?.name} size="sm" />
+          {/* `src` was missing here and on the mobile top bar, so a volunteer who
+              set a profile photo saw it only inside /profile — the one screen where
+              it is least useful. Avatar already falls back to initials when src is
+              empty, so passing it costs nothing. */}
+          <Avatar src={volunteer?.profilePhotoURL} name={volunteer?.name} size="sm" />
           {!collapsed && (
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13px] font-medium text-slate-700">{volunteer?.name || 'Signed in'}</span>
@@ -175,7 +179,7 @@ export default function AppLayout() {
           <p className="text-[13px] font-semibold tracking-tight text-slate-900">BAPS Jaipur MDS</p>
           <div className="ml-auto flex items-center gap-2">
             <RoleBadge roleView={roleView} />
-            <Link to="/profile" aria-label="Profile"><Avatar name={volunteer?.name} size="sm" /></Link>
+            <Link to="/profile" aria-label="Profile"><Avatar src={volunteer?.profilePhotoURL} name={volunteer?.name} size="sm" /></Link>
           </div>
         </div>
       )}
