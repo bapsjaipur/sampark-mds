@@ -4,7 +4,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./hooks/usePermissions";
 import { ToastProvider } from "./contexts/ToastContext";
-import { getRoleView } from "./lib/roleView";
+import { getRoleView, canRunStandardPromotion } from "./lib/roleView";
+import RequireRoute from "./components/RequireRoute";
 import LoginPage from "./pages/LoginPage";
 import PrivacyPolicyPage from "./pages/legal/PrivacyPolicyPage";
 import TermsPage from "./pages/legal/TermsPage";
@@ -57,26 +58,34 @@ export default function App() {
 
             <Route element={<RequireAuth />}>
               <Route element={<AppLayout />}>
+                {/* PHASE 42 — every protected route is now gated to the role's own
+                    nav links (RequireRoute). `/` and `/profile` are the two
+                    intentional exceptions: any signed-in user may reach them.
+                    Non-nav routes carry an explicit `check`; see RequireRoute. */}
                 <Route path="/" element={<DefaultRedirect />} />
-                <Route path="/calling" element={<CallingFlowPage />} />
-                <Route path="/households" element={<HouseholdsPage />} />
-                <Route path="/households/:householdId" element={<HouseholdDetailPage />} />
-                <Route path="/contacts" element={<ContactsPage />} />
-                <Route path="/contacts/:id" element={<IndividualDetailPage />} />
-                <Route path="/padhramani" element={<PadhramaniPage />} />
-                <Route path="/santo-schedule" element={<SantoSchedulePage />} />
-                <Route path="/my-contacts" element={<MyContactsPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
-                <Route path="/events" element={<EventsPage />} />
-                <Route path="/bal-mandal" element={<BalMandalDashboard />} />
-                <Route path="/bal-mandal/promotion" element={<StandardPromotionPage />} />
-                <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
-                <Route path="/admin/batches" element={<BatchesPage />} />
-                <Route path="/reminders" element={<RemindersDashboard />} />
-                <Route path="/admin/roles" element={<RolesManager />} />
-                <Route path="/admin/volunteers" element={<VolunteerEditor />} />
-                <Route path="/admin/areas-mandals" element={<AreasMandalsManager />} />
-                <Route path="/admin/tools" element={<AdminToolsPage />} />
+
+                <Route path="/calling" element={<RequireRoute navPath="/calling"><CallingFlowPage /></RequireRoute>} />
+                <Route path="/households" element={<RequireRoute navPath="/households"><HouseholdsPage /></RequireRoute>} />
+                <Route path="/households/:householdId" element={<RequireRoute check={(p) => p.includes('view_households')}><HouseholdDetailPage /></RequireRoute>} />
+                <Route path="/contacts" element={<RequireRoute navPath="/contacts"><ContactsPage /></RequireRoute>} />
+                {/* Contact card: gated on the read permission but NOT on the
+                    hide_all_contacts opt-out — SK-YM holds that opt-out yet opens
+                    cards straight from its calling queue and My Contacts. */}
+                <Route path="/contacts/:id" element={<RequireRoute check={(p) => ['view_all_contacts', 'view_assigned_contacts', 'edit_contacts'].some((x) => p.includes(x))}><IndividualDetailPage /></RequireRoute>} />
+                <Route path="/padhramani" element={<RequireRoute navPath="/padhramani"><PadhramaniPage /></RequireRoute>} />
+                <Route path="/santo-schedule" element={<RequireRoute navPath="/santo-schedule"><SantoSchedulePage /></RequireRoute>} />
+                <Route path="/my-contacts" element={<RequireRoute navPath="/my-contacts"><MyContactsPage /></RequireRoute>} />
+                <Route path="/events" element={<RequireRoute navPath="/events"><EventsPage /></RequireRoute>} />
+                <Route path="/bal-mandal" element={<RequireRoute navPath="/bal-mandal"><BalMandalDashboard /></RequireRoute>} />
+                <Route path="/bal-mandal/promotion" element={<RequireRoute check={canRunStandardPromotion}><StandardPromotionPage /></RequireRoute>} />
+                <Route path="/admin/dashboard" element={<RequireRoute navPath="/admin/dashboard"><AdminDashboardPage /></RequireRoute>} />
+                <Route path="/admin/batches" element={<RequireRoute navPath="/admin/batches"><BatchesPage /></RequireRoute>} />
+                <Route path="/reminders" element={<RequireRoute navPath="/reminders"><RemindersDashboard /></RequireRoute>} />
+                <Route path="/admin/roles" element={<RequireRoute navPath="/admin/roles"><RolesManager /></RequireRoute>} />
+                <Route path="/admin/volunteers" element={<RequireRoute navPath="/admin/volunteers"><VolunteerEditor /></RequireRoute>} />
+                <Route path="/admin/areas-mandals" element={<RequireRoute navPath="/admin/areas-mandals"><AreasMandalsManager /></RequireRoute>} />
+                <Route path="/admin/tools" element={<RequireRoute navPath="/admin/tools"><AdminToolsPage /></RequireRoute>} />
               </Route>
             </Route>
           </Routes>

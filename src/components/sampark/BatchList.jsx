@@ -37,6 +37,10 @@ import {
 } from '../../services/batchService';
 import { useAuth } from '../../hooks/usePermissions';
 import { useToast } from '../../contexts/ToastContext';
+// PHASE 42 — the per-batch outcome breakdown below reads the LIVE vocabulary,
+// not the seed constant, so an outcome an admin renamed on Admin Tools reads the
+// same here as it does on the calling screen.
+import { useCallOutcomes } from '../../hooks/useCallOutcomes';
 import { describeScope } from '../../lib/scope';
 import BatchContactsEditor from './BatchContactsEditor';
 import { Select } from '../ui/Input';
@@ -161,6 +165,12 @@ export default function BatchList({ volunteers, batches = [], loading = false })
   );
 
   const { perBatch, totals } = useMemo(() => computeBatchStats(scopedBatches, members), [scopedBatches, members]);
+
+  // computeBatchStats already tallies `statusCounts` per batch — it was being
+  // thrown away and only the called/pending total was drawn. No extra reads: the
+  // member documents behind it are the same ones the progress bar is computed
+  // from, fetched once by loadMembers().
+  const outcomeVocab = useCallOutcomes();
 
   // Only values actually present are offered, so the filters can never produce
   // an empty list for a value that doesn't exist in this person's batches.
@@ -515,6 +525,42 @@ export default function BatchList({ volunteers, batches = [], loading = false })
                 <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
                   <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${b.progressPct}%` }} />
                 </div>
+
+                {/* PHASE 42 — WHAT the calls actually produced, per batch.
+                    "28 called · 12 pending" says a batch was worked; it does not
+                    say whether those 28 said yes. Two batches at the same 70%
+                    can mean "nineteen coming" or "nineteen not interested", and
+                    that difference is the entire point of the round — it was
+                    only visible by opening each batch one at a time.
+                    Sorted by count so the dominant outcome leads. */}
+                {b.called > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {Object.entries(b.statusCounts || {})
+                      .sort((x, y) => y[1] - x[1])
+                      .map(([value, count]) => (
+                        <span
+                          key={value}
+                          title={`${outcomeVocab.label(value)} — ${count} of ${b.total}`}
+                          className={cn(
+                            'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium',
+                            outcomeVocab.colorClasses(value),
+                          )}
+                        >
+                          {outcomeVocab.emoji(value) && <span aria-hidden="true">{outcomeVocab.emoji(value)}</span>}
+                          <span className="max-w-[9rem] truncate">{outcomeVocab.label(value)}</span>
+                          <span className="tabular-nums font-semibold">{count}</span>
+                        </span>
+                      ))}
+                    {b.pending > 0 && (
+                      <span
+                        title={`Not called yet — ${b.pending} of ${b.total}`}
+                        className="inline-flex items-center gap-1 rounded-full border border-dashed border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500"
+                      >
+                        Not called <span className="tabular-nums font-semibold">{b.pending}</span>
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">

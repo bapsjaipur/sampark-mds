@@ -14,9 +14,9 @@
 // present in one go.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, UserPlus, Search, X } from 'lucide-react';
+import { CheckCircle2, UserPlus, Search, X, Pencil } from 'lucide-react';
 import { markPresent, unmarkPresent } from '../../services/eventService';
-import { createStandaloneContact } from '../../services/contactService';
+import { createStandaloneContact, saveContact } from '../../services/contactService';
 import { getWindowState } from '../../lib/attendanceWindow';
 import { useAuth } from '../../hooks/usePermissions';
 import { useVolunteerIdentity } from '../../hooks/useVolunteerIdentity';
@@ -45,6 +45,11 @@ export default function AttendanceMarking({ event, individuals = [], present = [
   const { showToast } = useToast();
   const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);
+  // PHASE 42 — the contact whose details are open for editing, or null. Editing
+  // here, rather than sending the karyekar off to Contacts and back, is the whole
+  // point: a wrong mandal or a missing photo is noticed at the door, when the
+  // person is standing there to confirm it.
+  const [editTarget, setEditTarget] = useState(null);
   const [windowState, setWindowState] = useState(() => getWindowState(event));
 
   useEffect(() => {
@@ -124,6 +129,22 @@ export default function AttendanceMarking({ event, individuals = [], present = [
     return true;
   }
 
+  /**
+   * Edit-in-place. `saveContact` returns truthy on success, which is the contract
+   * IndividualForm needs to close itself — so a successful save drops the modal
+   * and lands back on this same attendance list with the row already repainted:
+   * `individuals` is a live onSnapshot up in EventsPage, so the updated name /
+   * photo / mandal flows back down with no extra read and no manual refresh.
+   */
+  async function handleEditSave(payload) {
+    if (!editTarget) return false;
+    const ok = await saveContact({ individualId: editTarget.id, data: payload, volunteerId: volunteer?.id });
+    showToast(ok
+      ? { type: 'success', message: `${payload.name || 'Contact'} updated.` }
+      : { type: 'error', message: 'Couldn’t save changes. Check your permissions.' });
+    return ok;
+  }
+
   return (
     <div className="space-y-4">
       {banner && <div className={`rounded-lg border px-3 py-2 text-sm ${banner.tone}`}>{banner.text}</div>}
@@ -179,31 +200,46 @@ export default function AttendanceMarking({ event, individuals = [], present = [
             {searchResults.map((i) => {
               const already = presentIds.has(i.id);
               return (
-                <button
-                  key={i.id}
-                  onClick={() => !already && handleMark(i)}
-                  disabled={already}
-                  className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-slate-50 disabled:opacity-50"
-                >
-                  <VolunteerRing active={Boolean(identify(i))}>
-                    <Avatar src={i.profilePhotoURL} name={i.name} size="sm" />
-                  </VolunteerRing>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className="truncate text-sm text-slate-800">{i.name}</span>
-                      <VolunteerBadge volunteer={identify(i)} />
+                // A row, not a single button: the Edit control is interactive and
+                // can't be nested inside the mark-present button (invalid, and it
+                // would fire a mark on every edit tap). The mark region keeps the
+                // full-width tap target; Edit sits at the end.
+                <div key={i.id} className="flex items-center hover:bg-slate-50">
+                  <button
+                    onClick={() => !already && handleMark(i)}
+                    disabled={already}
+                    className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2.5 text-left disabled:opacity-50"
+                  >
+                    <VolunteerRing active={Boolean(identify(i))}>
+                      <Avatar src={i.profilePhotoURL} name={i.name} size="sm" />
+                    </VolunteerRing>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate text-sm text-slate-800">{i.name}</span>
+                        <VolunteerBadge volunteer={identify(i)} />
+                      </span>
+                      <span className="block truncate text-xs text-slate-400">
+                        {/* Mandal AND area: two people with the same name in the same
+                            mandal are told apart by area, which is the fastest thing
+                            to confirm out loud while somebody is standing there. */}
+                        {[i.mobile, i.mandal, i.area].filter(Boolean).join(' · ')}
+                      </span>
                     </span>
-                    <span className="block truncate text-xs text-slate-400">
-                      {/* Mandal AND area: two people with the same name in the same
-                          mandal are told apart by area, which is the fastest thing
-                          to confirm out loud while somebody is standing there. */}
-                      {[i.mobile, i.mandal, i.area].filter(Boolean).join(' · ')}
+                    <span className={cn('shrink-0 text-xs font-medium', already ? 'text-emerald-600' : 'text-orange-600')}>
+                      {already ? 'Present' : 'Mark'}
                     </span>
-                  </span>
-                  <span className={cn('shrink-0 text-xs font-medium', already ? 'text-emerald-600' : 'text-orange-600')}>
-                    {already ? 'Present' : 'Mark'}
-                  </span>
-                </button>
+                  </button>
+                  <RequirePermission permission="edit_contacts">
+                    <button
+                      onClick={() => setEditTarget(i)}
+                      aria-label={`Edit ${i.name || 'contact'}`}
+                      title="Edit details"
+                      className="shrink-0 px-3 py-2.5 text-slate-300 hover:text-slate-600"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  </RequirePermission>
+                </div>
               );
             })}
           </div>
@@ -241,7 +277,19 @@ export default function AttendanceMarking({ event, individuals = [], present = [
                       <p className="truncate text-xs text-slate-400">{[person.mobile, person.mandal, person.area].filter(Boolean).join(' · ')}</p>
                     </div>
                   </div>
-                  <Button variant="ghost" size="sm" onClick={() => handleUnmark(person)} className="shrink-0 text-rose-500 hover:bg-rose-50">Undo</Button>
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    <RequirePermission permission="edit_contacts">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditTarget(person)}
+                        className="text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                      >
+                        <Pencil className="h-3.5 w-3.5" /> Edit
+                      </Button>
+                    </RequirePermission>
+                    <Button variant="ghost" size="sm" onClick={() => handleUnmark(person)} className="text-rose-500 hover:bg-rose-50">Undo</Button>
+                  </div>
                 </div>
               );
             })}
@@ -259,6 +307,20 @@ export default function AttendanceMarking({ event, individuals = [], present = [
           initialValues={{ mandal: event?.mandal || '', area: event?.area || '' }}
         />
       </Modal>
+
+      {/* Edit an existing contact without leaving attendance. A successful save
+          returns truthy, so IndividualForm closes itself and we land back here. */}
+      {editTarget && (
+        <Modal open onClose={() => setEditTarget(null)} title={`Edit ${editTarget.name || 'contact'}`} size="lg">
+          <IndividualForm
+            individual={editTarget}
+            onSubmit={handleEditSave}
+            onCancel={() => setEditTarget(null)}
+            withinHousehold={Boolean(editTarget.householdId)}
+            householdArea={editTarget.area || ''}
+          />
+        </Modal>
+      )}
     </div>
   );
 }

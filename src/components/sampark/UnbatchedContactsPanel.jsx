@@ -36,9 +36,31 @@
 // contacts for the selected areas/mandals — the same query the Generate tab runs
 // on every keystroke. `batchRows` comes from the page's existing onSnapshot, so
 // the batch half is free. Nothing runs until Scan is pressed.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 42 — ONE MANDAL AT A TIME, AND IT PICKS THE RIGHT ROUND BY ITSELF.
+//
+// It used to scan every mandal in scope at once. Three things were wrong with
+// that, and all three are the same mistake in different clothes:
+//
+//   • THE ROUNDS ARE NOT IN STEP. Yuvak Mandal's roster is cut on Saturday for
+//     Sunday's sabha; Bal Mandal's a week later for a different one. One `eventId`
+//     therefore fits at most one of them, and every contact in the other mandal
+//     failed the "same sabha" test in planTopUps and became a BRAND-NEW batch —
+//     precisely the outcome this panel exists to prevent.
+//   • THE READS. One scan billed contacts for every mandal in scope, to act on
+//     the handful in one of them.
+//   • THE NUMBER MEANT NOTHING. "23 contacts in no batch" across four mandals is
+//     not a number anybody can act on; "6 in Yuvak Mandal" is.
+//
+// So the mandal is now chosen, the list of mandals is DERIVED FROM THE BATCHES
+// THAT EXIST (not from the mandal master list), it defaults to whichever mandal
+// had a batch cut most recently, and picking one seeds the sabha from that
+// mandal's own newest batch. The default case is now a single press with nothing
+// to configure — which is what "join automatically" has to mean to be used.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { UserPlus, Loader2, ScanSearch, CalendarCheck, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { UserPlus, Loader2, ScanSearch, CalendarCheck, CheckCircle2, AlertTriangle, Layers } from 'lucide-react';
 import { generateBatches, previewBatchGeneration } from '../../services/batchService';
 import { subscribeToEvents, pickUpcomingEvent } from '../../services/eventService';
 import { useAuth } from '../../hooks/usePermissions';
@@ -46,6 +68,20 @@ import { useToast } from '../../contexts/ToastContext';
 import { Label, Select } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
+
+/** Firestore Timestamp | Date | null → milliseconds, 0 when absent. */
+function tsMillis(v) {
+  if (!v) return 0;
+  if (typeof v.toDate === 'function') return v.toDate().getTime();
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+/** "14 Sep" — short enough to sit inside a dropdown option. */
+function shortDate(ms) {
+  if (!ms) return '';
+  return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
 
 /**
  * @param {string[]} areas      areas this person may cut for (already scoped)
@@ -60,6 +96,14 @@ export default function UnbatchedContactsPanel({ areas = [], mandals = [], batch
   const [events, setEvents] = useState([]);
   const [eventId, setEventId] = useState('');
   const seeded = useRef(false);
+
+  // PHASE 42 — which mandal this scan is for. '' until the list below resolves.
+  const [mandal, setMandal] = useState('');
+  const mandalSeeded = useRef(false);
+  const eventSeededFor = useRef(null);
+  // The page rebuilds `mandals` on every render for a scoped caller, so the
+  // memo and effects below key off its contents, not its identity.
+  const mandalsKey = mandals.join('|');
 
   const [scan, setScan] = useState(null);      // null = never scanned
   const [scanning, setScanning] = useState(false);
@@ -91,7 +135,84 @@ export default function UnbatchedContactsPanel({ areas = [], mandals = [], batch
   }, [events, upcoming]);
 
   const selectedEvent = useMemo(() => events.find((e) => e.id === eventId) || null, [events, eventId]);
-  const hasTarget = areas.length > 0 || mandals.length > 0;
+
+  /**
+   * PHASE 42 — the mandals that actually have a roster, newest first.
+   *
+   * Derived from the batches rather than from the mandal master list on purpose:
+   * the question this panel answers is "who is missing from the round that is
+   * being called", and a mandal with no batches is not in a round. Mandals with
+   * none are still offered, in their own group and last — for them the button
+   * cuts a first roster rather than topping one up, which is a different (and
+   * rarer) intent that shouldn't be the default.
+   *
+   * `lastEventId` is what makes the sabha pick itself: it is the round the newest
+   * batch of that mandal was cut for, which is the only round a top-up can join.
+   */
+  const mandalRows = useMemo(() => {
+    const inScope = (m) => !mandals.length || mandals.includes(m);
+    const seen = new Map();
+    (batchRows || []).forEach((b) => {
+      const m = b.mandal || '';
+      if (!m || !inScope(m)) return;
+      const at = tsMillis(b.createdAt);
+      const row = seen.get(m);
+      if (!row) {
+        seen.set(m, { mandal: m, batches: 1, lastAt: at, lastEventId: b.eventId || null });
+        return;
+      }
+      row.batches += 1;
+      if (at >= row.lastAt) { row.lastAt = at; row.lastEventId = b.eventId || null; }
+    });
+    const withBatches = [...seen.values()].sort((a, b) => b.lastAt - a.lastAt);
+    const without = mandals
+      .filter((m) => !seen.has(m))
+      .sort()
+      .map((m) => ({ mandal: m, batches: 0, lastAt: 0, lastEventId: null }));
+    return { withBatches, without };
+    // `mandals` is rebuilt by the page on every render when the caller is scoped,
+    // so the key is the string — otherwise this recomputes forever and the effects
+    // below fire on renders where nothing actually changed.
+  }, [batchRows, mandalsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const selectedMandalRow = useMemo(
+    () => [...mandalRows.withBatches, ...mandalRows.without].find((r) => r.mandal === mandal) || null,
+    [mandalRows, mandal],
+  );
+
+  // Seeded once, to the mandal whose batches were cut most recently — the round
+  // somebody is calling right now. Guarded so a later snapshot (a batch renamed,
+  // a batch deleted) can never drag the choice back off what was picked.
+  useEffect(() => {
+    if (mandalSeeded.current) return;
+    const first = mandalRows.withBatches[0] || mandalRows.without[0];
+    if (!first) return;
+    mandalSeeded.current = true;
+    setMandal(first.mandal);
+  }, [mandalRows]);
+
+  // Choosing a mandal moves the sabha to that mandal's newest batch. planTopUps
+  // only appends to a batch stamped with the SAME eventId, so this is the one
+  // value that makes "add them to the batches already being called" true rather
+  // than "cut them a new batch of their own".
+  //
+  // ONCE PER MANDAL, tracked by name rather than by a boolean: re-running it on
+  // every `batches` snapshot would silently undo a sabha somebody chose by hand,
+  // and the snapshot fires on every assign, rename and top-up. A deleted sabha
+  // leaves the current choice alone rather than blanking it.
+  useEffect(() => {
+    if (!mandal || !events.length || eventSeededFor.current === mandal) return;
+    const row = mandalRows.withBatches.find((r) => r.mandal === mandal);
+    if (!row) return;                       // list hasn't resolved yet — try again
+    eventSeededFor.current = mandal;
+    if (!row.lastEventId || !events.some((e) => e.id === row.lastEventId)) return;
+    setEventId(row.lastEventId);
+  }, [mandal, events, mandalRows]);
+
+  // One mandal, and the areas half stays as the caller's own scope: a mandal
+  // spans areas, and narrowing both axes at once would silently exclude the
+  // contacts this is meant to find.
+  const hasTarget = Boolean(mandal);
 
   // The one options object both the scan and the apply use. Keeping it in a single
   // place is the whole reason the preview can be trusted: the moment the two lists
@@ -107,7 +228,9 @@ export default function UnbatchedContactsPanel({ areas = [], mandals = [], batch
   //                           from the roster, they were removed from it.
   const options = useMemo(() => ({
     areas,
-    mandals,
+    // PHASE 42 — exactly one. See the header: a scan that spans mandals whose
+    // rounds are on different sabhas turns every top-up into a new batch.
+    mandals: mandal ? [mandal] : [],
     batchSize: 40,
     onlyUncalled: false,
     skipAlreadyBatched: true,
@@ -116,7 +239,7 @@ export default function UnbatchedContactsPanel({ areas = [], mandals = [], batch
     topUpExisting: true,
     batchRows,
     eventId: eventId || null,
-  }), [areas, mandals, batchRows, eventId]);
+  }), [areas, mandal, batchRows, eventId]);
 
   async function handleScan() {
     if (!hasTarget) return;
@@ -171,10 +294,58 @@ export default function UnbatchedContactsPanel({ areas = [], mandals = [], batch
       </h3>
       <p className="mb-4 text-xs leading-relaxed text-slate-500">
         Everyone added since the roster was cut sits in no batch and is on nobody’s calling list.
-        This finds them and puts them into the batches already being called — a new batch is only
-        cut for whoever doesn’t fit. Nothing already assigned is renumbered or moved.
+        This finds them, <strong className="font-semibold text-slate-600">one mandal at a time</strong>,
+        and puts them into the batches already being called — a new batch is only cut for whoever
+        doesn’t fit. Nothing already assigned is renumbered or moved.
         {scoped && <> Limited to the areas and mandals assigned to you.</>}
       </p>
+
+      {/* ── Which mandal ─────────────────────────────────────────────────────
+          First, because it decides the sabha below it. Mandals that have a
+          roster lead; the rest are offered but are not the default — for them
+          this button cuts a first roster rather than topping one up. */}
+      <div className="mb-3">
+        <Label>Which mandal?</Label>
+        <Select
+          value={mandal}
+          onChange={(e) => { setMandal(e.target.value); setScan(null); setResult(null); }}
+        >
+          <option value="">Choose a mandal…</option>
+          {mandalRows.withBatches.length > 0 && (
+            <optgroup label="Has batches — newest round first">
+              {mandalRows.withBatches.map((r) => (
+                <option key={r.mandal} value={r.mandal}>
+                  {r.mandal} · {r.batches} batch{r.batches === 1 ? '' : 'es'}
+                  {r.lastAt ? ` · cut ${shortDate(r.lastAt)}` : ''}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {mandalRows.without.length > 0 && (
+            <optgroup label="No batches cut yet">
+              {mandalRows.without.map((r) => <option key={r.mandal} value={r.mandal}>{r.mandal}</option>)}
+            </optgroup>
+          )}
+        </Select>
+        {selectedMandalRow && (
+          <p className="mt-1 flex items-start gap-1.5 text-[11px] leading-snug text-slate-400">
+            <Layers className="mt-px h-3 w-3 shrink-0" />
+            {selectedMandalRow.batches > 0 ? (
+              <>
+                {selectedMandalRow.mandal} has <strong className="font-semibold text-slate-500">{selectedMandalRow.batches}</strong>
+                {' '}batch{selectedMandalRow.batches === 1 ? '' : 'es'}, last cut
+                {' '}{selectedMandalRow.lastAt ? shortDate(selectedMandalRow.lastAt) : 'at an unknown date'} —
+                the sabha below is that round’s, so new contacts join those batches instead of starting new ones.
+              </>
+            ) : (
+              <>
+                {selectedMandalRow.mandal} has no batches yet, so everyone found here becomes a new,
+                unassigned batch. That is Generate’s job — use it there unless you meant to.
+              </>
+            )}
+          </p>
+        )}
+      </div>
 
       <div className="mb-3">
         <Label>Which sabha are they being called for?</Label>
@@ -200,7 +371,9 @@ export default function UnbatchedContactsPanel({ areas = [], mandals = [], batch
 
       <div className="flex flex-wrap gap-2">
         <Button variant="secondary" onClick={handleScan} disabled={!hasTarget || scanning || applying}>
-          {scanning ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking…</> : <><ScanSearch className="h-3.5 w-3.5" /> Check for new contacts</>}
+          {scanning
+            ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking…</>
+            : <><ScanSearch className="h-3.5 w-3.5" /> Check {mandal || 'this mandal'} for new contacts</>}
         </Button>
         {scan && unbatched > 0 && (
           <Button variant="accent" onClick={handleApply} disabled={applying}>
@@ -211,7 +384,9 @@ export default function UnbatchedContactsPanel({ areas = [], mandals = [], batch
 
       {!hasTarget && (
         <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          No areas or mandals are assigned to you, so there is nothing to scan.
+          {mandalRows.withBatches.length === 0 && mandalRows.without.length === 0
+            ? 'No mandals are assigned to you, so there is nothing to scan.'
+            : 'Pick a mandal above to scan it.'}
         </p>
       )}
 

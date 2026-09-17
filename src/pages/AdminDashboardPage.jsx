@@ -40,7 +40,10 @@ const BATCH_SPEC = [{ key: 'batches', source: 'batches', build: () => collection
 
 function AdminDashboardInner() {
   const { scope } = useAuth();
-  const { colorClasses: statusColorClasses } = useCallOutcomes();
+  // `emoji`/`label` join `colorClasses` here for the per-mandal outcome chips
+  // below — the live vocabulary, so an admin-renamed outcome reads the same on
+  // this dashboard as it does on the calling screen and in BatchList.
+  const { colorClasses: statusColorClasses, emoji: statusEmoji, label: statusLabel } = useCallOutcomes();
   const [householdIds, setHouseholdIds] = useState([]);
   const [resetOpen, setResetOpen] = useState(false);
 
@@ -157,6 +160,40 @@ function AdminDashboardInner() {
                   </div>
                   <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-orange-400" style={{ width: `${mpct}%` }} /></div>
                   <p className="mt-1 text-xs text-slate-400">{m.called} called · {m.interested} interested · {mpct}%</p>
+
+                  {/* PHASE 42 — the outcome MIX for this mandal, not just how many
+                      were called. "120 called" says nothing about whether they
+                      said yes; two mandals at the same 70% can be "coming" or "not
+                      interested", and that difference is the whole point of the
+                      round. These are the same chips BatchList draws per batch,
+                      summed to the mandal — statsService already tallies
+                      statusBreakdown per mandal, so no extra read. Sorted by count
+                      so the dominant outcome leads. */}
+                  {m.called > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {Object.entries(m.statusBreakdown || {})
+                        .sort((x, y) => y[1] - x[1])
+                        .map(([value, count]) => (
+                          <span
+                            key={value}
+                            title={`${statusLabel(value)} — ${count} of ${m.total}`}
+                            className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${statusColorClasses(value)}`}
+                          >
+                            {statusEmoji(value) && <span aria-hidden="true">{statusEmoji(value)}</span>}
+                            <span className="max-w-[9rem] truncate">{statusLabel(value)}</span>
+                            <span className="tabular-nums font-semibold">{count}</span>
+                          </span>
+                        ))}
+                      {m.total - m.called > 0 && (
+                        <span
+                          title={`Not called yet — ${m.total - m.called} of ${m.total}`}
+                          className="inline-flex items-center gap-1 rounded-full border border-dashed border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500"
+                        >
+                          Not called <span className="tabular-nums font-semibold">{m.total - m.called}</span>
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </Card>
               );
             })}
