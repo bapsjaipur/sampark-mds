@@ -49,6 +49,17 @@ exports.deleteVolunteerAccount = require('./deleteVolunteerAccount').deleteVolun
 // of resetVolunteerPassword.js for why it was an account-takeover hole.
 exports.resetVolunteerPassword = require('./resetVolunteerPassword').resetVolunteerPassword;
 exports.requestPasswordReset = require('./resetVolunteerPassword').requestPasswordReset;
+// PHASE 41 — the volunteer now types the password they want and their head only
+// approves it, so nobody else ever learns it. Authority is manage_users OR
+// outranking the requester on roles/{id}.rank inside the same area/mandal, and
+// it is decided in the callable because rank is a client-side guard-rail
+// everywhere else. The two Phase 22 callables above stay exported: a cached
+// bundle still calls requestPasswordReset, and an admin typing a password for
+// someone who cannot manage it themselves is still a useful escape hatch.
+exports.submitPasswordChoice = require('./resetVolunteerPassword').submitPasswordChoice;
+exports.listPasswordRequests = require('./resetVolunteerPassword').listPasswordRequests;
+exports.approvePasswordRequest = require('./resetVolunteerPassword').approvePasswordRequest;
+exports.denyPasswordRequest = require('./resetVolunteerPassword').denyPasswordRequest;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PHASE 20 — email automation, ported from Sevak Call's Apps Script triggers.

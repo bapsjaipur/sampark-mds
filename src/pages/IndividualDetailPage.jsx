@@ -250,12 +250,26 @@ export default function IndividualDetailPage() {
             </div>
 
             {/* PHASE 21 — this contact also has a login. Showing what they are
-                responsible for turns "is a sevak" into something actionable. */}
+                responsible for turns "is a sevak" into something actionable.
+                PHASE 39 — and now it is a round trip: the volunteer editor links
+                out to this profile, so this links back to the login. A karyakarta
+                exists in both collections and every question about them used to
+                mean finding them twice, by hand, in two different tabs. */}
             {sevak && (
-              <p className="mt-1.5 text-xs text-indigo-700">
-                Karyakarta login · {sevak.assignedAreas?.length ? sevak.assignedAreas.join(", ") : "no areas assigned"}
-                {sevak.assignedMandals?.length ? ` · ${sevak.assignedMandals.join(", ")}` : ""}
-              </p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <p className="text-xs text-indigo-700">
+                  Karyakarta login · {sevak.assignedAreas?.length ? sevak.assignedAreas.join(", ") : "no areas assigned"}
+                  {sevak.assignedMandals?.length ? ` · ${sevak.assignedMandals.join(", ")}` : ""}
+                </p>
+                <RequirePermission permission="manage_users">
+                  <Link
+                    to={`/admin/volunteers?v=${sevak.id}`}
+                    className="text-xs font-medium text-indigo-600 underline-offset-2 hover:underline"
+                  >
+                    Manage login →
+                  </Link>
+                </RequirePermission>
+              </div>
             )}
           </div>
         </div>

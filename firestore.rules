@@ -832,6 +832,29 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
+    // appSecrets/{doc} (Phase 41): server-only key material.
+    //
+    // Currently one document, `passwordVault`, holding the AES-256 key that
+    // encrypts a password a volunteer has chosen but nobody has approved yet.
+    // admin.auth().updateUser() needs plaintext, so that choice cannot be
+    // hashed — it has to survive, encrypted, until the approval.
+    //
+    // Closed in both directions, like whatsappConfig and googleCalendarTokens:
+    // the key is only ever touched by the password callables through the Admin
+    // SDK, which bypasses these rules. Splitting the key from the ciphertext in
+    // passwordResets is the point — either collection on its own is useless.
+    //
+    // This block is documentation as much as enforcement: Firestore denies any
+    // path no rule matches, so appSecrets is already unreachable from every
+    // client and the password callables work correctly whether or not this has
+    // been deployed yet.
+    // ---------------------------------------------------------------------
+
+    match /appSecrets/{doc} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------------------
     // emailLogs/{id} (Phase 20): one row per report the scheduler tried to
     // send — queued / dry-run / skipped, with the recipient list.
     //

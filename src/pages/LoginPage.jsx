@@ -13,6 +13,20 @@
 // password, and the reply is deliberately the same whether or not the number is
 // registered — otherwise this screen would be a way to test which phone numbers
 // belong to volunteers.
+//
+// PHASE 41 — "Forgot?" now takes the password you WANT.
+//
+// Phase 22 was right that only an approved change may reach the account, and
+// wrong about who should invent the string: an admin typing one means it has to
+// travel back by phone or WhatsApp, and two people end up knowing a password that
+// protects one. So this screen collects the password the volunteer wants,
+// submitPasswordChoice encrypts it server-side, and their head approves it
+// without ever seeing it.
+//
+// The vague reply survives unchanged and still matters most here: the number is
+// typed on a public screen, so "that number isn't registered" would make this a
+// free membership test. Validation errors about what was TYPED (too short, it's
+// your own number) are shown plainly, because those say nothing about who exists.
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -75,6 +89,11 @@ function IconField({ icon: Icon, children }) {
 export default function LoginPage() {
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
+  // Reset mode reuses the password box for the NEW password rather than adding a
+  // third field to a form that is only ever in one of two modes — one box, one
+  // meaning at a time, and `autoComplete` switches with it so the browser doesn't
+  // offer to fill the old password into the new-password field.
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -93,26 +112,44 @@ export default function LoginPage() {
     if (!isValidPhone(cleanPhone)) {
       return setError('Please enter a valid 10-digit mobile number.');
     }
+    if (password.length < 6) {
+      return setError('Choose a password of at least 6 characters.');
+    }
+    if (password !== confirmPassword) {
+      return setError('The two passwords don’t match.');
+    }
+    // Mirrors the server check so the reason is visible before the round trip.
+    // This exact string — the account's own mobile number — is what Phase 22 was
+    // written to close: it is printed on every contact list inside the app.
+    if (password.replace(/\D/g, '') === cleanPhone) {
+      return setError('Your password can’t be your own mobile number — everyone can see it in the app.');
+    }
 
     setResetting(true);
     try {
       const { getFunctions, httpsCallable } = await import('firebase/functions');
-      const requestPasswordReset = httpsCallable(getFunctions(), 'requestPasswordReset');
-      const res = await requestPasswordReset({ phone: cleanPhone });
+      const submit = httpsCallable(getFunctions(), 'submitPasswordChoice');
+      const res = await submit({ phone: cleanPhone, newPassword: password });
       setRequestSent(res?.data?.message
-        || 'If that number belongs to a volunteer, an admin has been asked to reset it.');
+        || 'Your new password is waiting for approval.');
+      setPassword('');
+      setConfirmPassword('');
     } catch (err) {
-      // One message for every failure, deliberately. The obvious special case —
-      // "the function isn't deployed yet" — does NOT arrive as
-      // `functions/not-found`: a missing callable 404s the CORS preflight, the
-      // browser reports a network failure and the SDK turns that into
-      // `functions/internal`. Verified against a project without the function
-      // deployed. So branching on the code would print the wrong reason most of
-      // the time, and either way the person at this screen can do exactly one
+      // Argument errors come back as `invalid-argument` and say something the
+      // person can act on ("too short", "that's your own number"), so those are
+      // shown as-is. Everything else gets one message, deliberately: the obvious
+      // special case — "the function isn't deployed yet" — does NOT arrive as
+      // `functions/not-found`, because a missing callable 404s the CORS
+      // preflight, the browser reports a network failure and the SDK turns that
+      // into `functions/internal`. Verified against a project without the
+      // function deployed. So branching further would print the wrong reason most
+      // of the time, and either way the person at this screen can do exactly one
       // thing about it. No "try again", which only invites twenty more attempts.
-      console.error('[requestPasswordReset]', err?.code, err?.message);
-      setError('Couldn’t file the request from here. Ask an admin — or your sanchalak — '
-        + 'to reset your password for you.');
+      console.error('[submitPasswordChoice]', err?.code, err?.message);
+      setError(err?.code === 'functions/invalid-argument'
+        ? err.message
+        : 'Couldn’t file the request from here. Ask your sanchalak — or the karyalay — '
+          + 'to set a password for you.');
     } finally {
       setResetting(false);
     }
@@ -140,6 +177,10 @@ export default function LoginPage() {
     setResetMode(false);
     setRequestSent(null);
     setError(null);
+    // The box is shared between the two modes, so it has to be emptied on the way
+    // out — otherwise a half-typed new password becomes the sign-in attempt.
+    setPassword('');
+    setConfirmPassword('');
   }
 
   return (
@@ -176,10 +217,12 @@ export default function LoginPage() {
       <main className="relative z-10 flex flex-1 items-center justify-center py-7">
         <div className="w-full max-w-sm rounded-xl border border-slate-100 bg-white p-7 shadow-sm sm:p-8">
           <h1 className="text-center text-[19px] font-semibold tracking-tight text-slate-900">
-            {resetMode ? 'Reset password' : 'Sign In'}
+            {resetMode ? 'Set a new password' : 'Sign In'}
           </h1>
           <p className="mt-1 text-center text-[13px] text-slate-400">
-            {resetMode ? 'Ask an admin to reset your password.' : 'Welcome to BAPS Jaipur MDS Portal'}
+            {resetMode
+              ? 'Choose it yourself — your sanchalak just approves it.'
+              : 'Welcome to BAPS Jaipur MDS Portal'}
           </p>
 
           {requestSent ? (
@@ -188,8 +231,9 @@ export default function LoginPage() {
                 {requestSent}
               </div>
               <p className="text-xs text-slate-400">
-                An admin will set a new password and pass it to you directly. Nothing about your
-                account has changed yet.
+                Nobody sees the password you chose — they only say yes. Until then your old one
+                still works, and if you have forgotten it, ring your sanchalak so they know to
+                approve.
               </p>
               <Button variant="secondary" size="lg" className="w-full" onClick={backToLogin}>
                 Back to sign in
@@ -214,43 +258,56 @@ export default function LoginPage() {
                     className="h-11 pl-9"
                   />
                 </IconField>
-                {resetMode && (
-                  <p className="mt-2 text-xs text-slate-400">
-                    We’ll let an admin know you need a new password. They will send it to you —
-                    your password does not change until then.
-                  </p>
-                )}
               </div>
 
-              {!resetMode && (
-                <IconField icon={Lock}>
-                  <Input
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Password"
-                    aria-label="Password"
-                    autoComplete="current-password"
-                    className="h-11 pl-9 pr-10"
-                  />
-                  {/* tabIndex -1 deliberately. This is the one control that must stay
-                      out of the keyboard path: Tab from the password box goes to
-                      Sign in, not to a visibility toggle nobody reached for. */}
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onClick={() => setShowPassword((v) => !v)}
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 transition-colors hover:text-slate-600"
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </IconField>
+              <IconField icon={Lock}>
+                <Input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={resetMode ? 'New password you want' : 'Password'}
+                  aria-label={resetMode ? 'New password you want' : 'Password'}
+                  autoComplete={resetMode ? 'new-password' : 'current-password'}
+                  className="h-11 pl-9 pr-10"
+                />
+                {/* tabIndex -1 deliberately. This is the one control that must stay
+                    out of the keyboard path: Tab from the password box goes to
+                    Sign in, not to a visibility toggle nobody reached for. */}
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 transition-colors hover:text-slate-600"
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </IconField>
+
+              {resetMode && (
+                <>
+                  <IconField icon={Lock}>
+                    <Input
+                      type={showPassword ? 'text' : 'password'}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Type it again"
+                      aria-label="Confirm new password"
+                      autoComplete="new-password"
+                      className="h-11 pl-9"
+                    />
+                  </IconField>
+                  <p className="text-xs text-slate-400">
+                    At least 6 characters, and not your own mobile number — that one is printed on
+                    every contact list in the app. Your password does not change until your
+                    sanchalak or the karyalay approves it.
+                  </p>
+                </>
               )}
 
               <Button type="submit" variant="accent" size="lg" className="w-full !mt-4" disabled={loading || resetting}>
                 {resetMode
-                  ? (resetting ? 'Sending…' : 'Request a password reset')
+                  ? (resetting ? 'Sending…' : 'Send for approval')
                   : (loading ? 'Signing in…' : 'SIGN IN')}
               </Button>
 

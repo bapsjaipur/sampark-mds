@@ -97,7 +97,11 @@ function BatchesPageInner() {
     // or forbidden. The tab is the answer to that question.
     { key: 'generate', label: 'Generate', show: true },
     { key: 'manual', label: 'Manual', show: canAssign },
-    { key: 'tools', label: 'Tools', show: canAssign },
+    // PHASE 40 — was canAssign only. The tab now also holds "Contacts not in any
+    // batch", which is a generate_batches tool, so an admin who may cut batches
+    // but not hand them out could not reach the one thing they need weekly.
+    // BatchAdminTools shows only the cards the caller's permissions cover.
+    { key: 'tools', label: 'Tools', show: canAssign || canGenerate },
   ].filter((t) => t.show);
 
   const activeTab = TABS.some((t) => t.key === tab) ? tab : 'list';
@@ -135,7 +139,15 @@ function BatchesPageInner() {
           </div>
         ))}
       {activeTab === 'manual' && <BatchAssignment areas={areas} volunteers={volunteers} />}
-      {activeTab === 'tools' && <BatchAdminTools volunteers={volunteers} />}
+      {activeTab === 'tools' && (
+        <BatchAdminTools
+          volunteers={volunteers}
+          areas={areas}
+          mandals={mandals}
+          batchRows={batches}
+          scoped={scoped}
+        />
+      )}
     </>
   );
 }

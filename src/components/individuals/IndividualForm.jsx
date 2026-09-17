@@ -195,6 +195,9 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [mandalTouched, setMandalTouched] = useState(false);
+  // Same guard as mandalTouched, for the same reason: the household's Area arrives
+  // from an async getDoc, and seeding it must never overwrite a choice already made.
+  const [areaTouched, setAreaTouched] = useState(false);
 
   // Seeds the default once, if the scope resolved after this form first rendered.
   // Guarded on `mandalTouched` so it can never fight a choice already made.
@@ -202,6 +205,20 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
     if (isEdit || mandalTouched) return;
     if (defaultMandal && !form.mandal) setForm((prev) => ({ ...prev, mandal: defaultMandal }));
   }, [isEdit, mandalTouched, defaultMandal, form.mandal]);
+
+  // Seeds the household's Area onto a member who has none of their own. The
+  // household document is fetched asynchronously by the page above, so it can land
+  // after this form has already rendered; without this, a member of a household
+  // with an Area would still open showing an empty Area picker and saving would
+  // look like it had blanked something.
+  //
+  // Only when the member's own Area is EMPTY. A contact who already carries an
+  // Area — even one that differs from the household's — keeps it: that difference
+  // is a decision somebody made, not a gap to fill.
+  useEffect(() => {
+    if (areaTouched || !withinHousehold || !householdArea) return;
+    setForm((prev) => (prev.area ? prev : { ...prev, area: householdArea }));
+  }, [areaTouched, withinHousehold, householdArea]);
 
   const update = (field) => (e) => {
     const value = e.target.type === "checkbox" ? e.target.checked : e.target.value;
@@ -213,7 +230,22 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
   // (e.g. an older Mandal doc created before this feature existed).
   const selectedMandal = mandals.find((m) => m.name === form.mandal);
   const fieldsConfig = selectedMandal?.fields || FULL_MEMBER_FIELDS;
-  const showArea = !withinHousehold && fieldsConfig.area;
+  // PHASE 39 — AREA IS ASKED INSIDE A HOUSEHOLD TOO.
+  //
+  // This used to be `!withinHousehold && fieldsConfig.area`, so a contact who
+  // belonged to a household simply had no Area control — the "Murli sahu" report.
+  // The intent was sound (a member should follow their household rather than drift
+  // away from it) but hiding the field achieved the opposite of what it looked
+  // like: the value was never SHOWN, so nobody could tell whether it was set, and
+  // a household with no Area of its own left every member blank and invisible to
+  // batch generation, which groups by Area × Mandal.
+  //
+  // Now the field is always shown when the Mandal asks for one. Inside a household
+  // it is SEEDED from the household and can be overridden per person — the common
+  // case (a son studying in another area, a member filed under the area they
+  // actually attend sabha in) that previously required editing the household and
+  // moving everybody.
+  const showArea = Boolean(fieldsConfig.area);
   const showDob = fieldsConfig.dob;
   const showAnniversary = fieldsConfig.anniversary;
   const showRelation = fieldsConfig.relation;
@@ -251,31 +283,50 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
     e.preventDefault();
     if (!validate()) return;
     setSaving(true);
+    // PHASE 39 — "hidden" must mean NOT ASKED, never DELETED.
+    //
+    // Every line below used to blank its field whenever the Mandal's `fields`
+    // config had it switched off, and `profilePhotoURL` was the only exception —
+    // with a comment giving the exact reason the rule is wrong: an edit made for
+    // an unrelated purpose silently destroys a value nobody was shown and nobody
+    // agreed to lose. A photo was singled out only because Storage cannot get it
+    // back, but two of these fields are load-bearing in a way a photo is not:
+    //
+    //   • `area` — batch generation groups by Area × Mandal, so a blanked Area
+    //     drops the contact out of every future batch for their pair.
+    //   • `samparkKaryakartaNumber` — the join key My Contacts queries on, so
+    //     blanking it removes the contact from their karyakarta's list.
+    //
+    // So on EDIT a hidden field keeps whatever is stored. On CREATE there is
+    // nothing to keep and blank is still correct.
+    const keep = (field) => (isEdit ? individual?.[field] || '' : '');
     const payload = {
       ...form,
       mobile: form.mobile.replace(/\D/g, ""),
-      // Skipped/hidden fields shouldn't linger with stale values.
-      // Inside a household, Area is never asked (the field is hidden) but the
-      // member should still inherit the household's Area rather than saving
-      // blank — that's the 1.1 fix. Standalone: use whatever was picked (if
-      // this Mandal asks for Area at all), else blank.
-      area: withinHousehold ? householdArea : showArea ? form.area : "",
-      subArea: withinHousehold ? "" : showArea ? form.subArea || "" : "",
+      // Inside a household the member INHERITS the household's Area unless they
+      // have been given one of their own — the picker above is seeded from it and
+      // is free to differ. The `|| householdArea` is what stops a blank selection
+      // from writing an empty Area onto a household member, which is exactly the
+      // "members in a household with no Area" pile the integrity scan backfills:
+      // the edit that emptied them looked like a routine phone-number fix.
+      area: showArea
+        ? (withinHousehold ? (form.area || householdArea || keep('area')) : form.area)
+        : (withinHousehold ? (householdArea || keep('area')) : keep('area')),
+      subArea: showArea ? (form.subArea || "") : keep('subArea'),
       address: withinHousehold ? "" : form.address,
-      dob: showDob ? form.dob : "",
-      anniversary: showAnniversary ? form.anniversary : "",
+      dob: showDob ? form.dob : keep('dob'),
+      anniversary: showAnniversary ? form.anniversary : keep('anniversary'),
       relation: withinHousehold && showRelation ? form.relation : "member",
       isPrimary: withinHousehold && showIsPrimary ? form.isPrimary : false,
-      study: showStudy ? form.study : "",
-      profession: showProfession ? form.profession : "",
-      skill: showSkill ? form.skill : "",
-      samparkKaryakartaName: showSamparkKaryakarta ? form.samparkKaryakartaName : "",
-      samparkKaryakartaNumber: showSamparkKaryakarta ? form.samparkKaryakartaNumber.replace(/\D/g, "") : "",
-      // Blanking a hidden field is right for text, but a photo is a Storage
-      // object that can't be recovered from the form. If this Mandal stopped
-      // asking for photos, an unrelated edit (fixing a phone number) would
-      // silently orphan an existing photo — so on edit we keep what's there.
-      profilePhotoURL: showPhoto ? form.profilePhotoURL : isEdit ? individual.profilePhotoURL || "" : "",
+      study: showStudy ? form.study : keep('study'),
+      profession: showProfession ? form.profession : keep('profession'),
+      skill: showSkill ? form.skill : keep('skill'),
+      samparkKaryakartaName: showSamparkKaryakarta ? form.samparkKaryakartaName : keep('samparkKaryakartaName'),
+      samparkKaryakartaNumber: showSamparkKaryakarta
+        ? form.samparkKaryakartaNumber.replace(/\D/g, "")
+        : keep('samparkKaryakartaNumber'),
+      // The original exception, now the rule — see the note above.
+      profilePhotoURL: showPhoto ? form.profilePhotoURL : keep('profilePhotoURL'),
       // photoPending: true only when photo is expected but not yet uploaded
       photoPending: showPhoto && !form.profilePhotoURL ? Boolean(form.photoPending) : false,
       // Always a real boolean. Left as `undefined` Firestore would reject the
@@ -283,9 +334,11 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       // which is right by default but wrong the moment somebody ticks it off.
       callingPool: form.callingPool !== false,
       // PHASE 30 — Bal Mandal fields
-      standard: showStandard ? form.standard : "",
-      hobby: showHobby ? form.hobby : [],
-      hobbyOther: showHobby ? form.hobbyOther : "",
+      standard: showStandard ? form.standard : keep('standard'),
+      // Not `keep()` — this one is an array, and '' would poison a field the Bal
+      // Mandal screens map over.
+      hobby: showHobby ? form.hobby : (isEdit ? individual?.hobby || [] : []),
+      hobbyOther: showHobby ? form.hobbyOther : keep('hobbyOther'),
     };
     if (!isEdit) payload.id = draftId;
     const ok = await onSubmit(payload);
@@ -350,21 +403,73 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       )}
 
       {showArea && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <Label>Area</Label>
-            <AreaSelect value={form.area} onChange={update("area")} className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300" />
-          </div>
-          <div>
-            <Label>Sub-area</Label>
-            <SubAreaSelect
-                areaName={form.area}
-                value={form.subArea}
-                onChange={update("subArea")}
+        <div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <Label>Area</Label>
+              <AreaSelect
+                value={form.area}
+                onChange={(e) => { setAreaTouched(true); update("area")(e); }}
                 className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
-            />
+              />
+            </div>
+            <div>
+              <Label>Sub-area</Label>
+              <SubAreaSelect
+                  areaName={form.area}
+                  value={form.subArea}
+                  onChange={update("subArea")}
+                  className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
+              />
+            </div>
           </div>
+
+          {/* Inside a household, say where the value came from and offer the way
+              back. The Area is the household's until somebody changes it here, and
+              an override that cannot be undone in one tap is an override people
+              are right to be nervous about. */}
+          {withinHousehold && (
+            <p className="mt-1.5 text-xs leading-snug text-slate-400">
+              {householdArea ? (
+                form.area === householdArea ? (
+                  <>From the household — <span className="font-medium text-slate-500">{householdArea}</span>. Change it here to file this person under a different Area.</>
+                ) : (
+                  <>
+                    <span className="font-medium text-amber-600">Different from the household</span>
+                    {' '}(<span className="font-medium text-slate-500">{householdArea}</span>). Batches and reports will use the Area set here.
+                    {' '}
+                    <button
+                      type="button"
+                      onClick={() => { setAreaTouched(true); setForm((f) => ({ ...f, area: householdArea, subArea: "" })); }}
+                      className="font-medium text-orange-600 underline-offset-2 hover:underline"
+                    >
+                      Use the household’s
+                    </button>
+                  </>
+                )
+              ) : (
+                <>This household has no Area of its own yet, so there is nothing to inherit — pick one here, or set it on the household and every member picks it up.</>
+              )}
+            </p>
+          )}
         </div>
+      )}
+
+      {/* PHASE 39 — say WHY the Area picker is not here. A missing field with no
+          explanation reads as a bug. There is now only one reason for it: this
+          Mandal does not ask for Area. (A household member used to be the other
+          reason — that field is shown now, seeded from the household.) */}
+      {!showArea && (
+        <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-snug text-slate-500">
+          <span className="font-medium text-slate-600">Area isn’t asked here.</span>{' '}
+          {form.mandal ? <><span className="font-medium text-slate-600">{form.mandal}</span> doesn’t</> : 'This Mandal doesn’t'}{' '}
+          have Area switched on in Admin → Areas &amp; Mandals. Turn it on there if this Mandal should ask for one.
+          {withinHousehold
+            ? <> Until then this contact follows the household{householdArea ? <> — <span className="font-medium text-slate-600">{householdArea}</span></> : <>, which has no Area set either</>}.</>
+            : isEdit && individual?.area
+              ? <> Their saved Area (<span className="font-medium text-slate-600">{individual.area}</span>) is kept as-is when you save.</>
+              : null}
+        </p>
       )}
 
       {(withinHousehold && (showRelation || showIsPrimary)) && (

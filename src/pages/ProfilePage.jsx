@@ -28,10 +28,27 @@
 // genuinely theirs. Removing the form removes the way anyone here would actually
 // do it, and routes the real need — "I forgot mine" — through the admin. It is
 // not a cryptographic block, and it is not claimed as one.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 41 — the password half is now "you choose it, your head switches it on".
+//
+// Phase 39 left this card as a bell: press it and wait for an admin to invent a
+// password, then remember a string somebody else made up — and the admin knows
+// it too. So the field is back, and what changed is where the plaintext goes:
+// submitPasswordChoice encrypts it and parks it for approval instead of applying
+// it. Nobody in the approval chain ever sees it.
+//
+// The approvals card sits HERE, above the profile, and not behind a nav entry,
+// for a reason worth writing down: who may approve is "someone upper to there
+// role wise" in the same area — a comparison against roles/{id}.rank that the
+// browser cannot do cheaply or trustworthily. So the server answers "is there
+// anything for you?" and the card renders only when the answer is yes. A
+// karyakarta never sees it; a sanchalak sees it the week one of their people is
+// locked out, on a page they already open.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect } from 'react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { LogOut, Lock, ShieldCheck, Clock, X } from 'lucide-react';
+import { LogOut, Lock, ShieldCheck, Clock, X, Eye, EyeOff } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import { signOut } from 'firebase/auth';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -40,6 +57,9 @@ import { useToast } from '../contexts/ToastContext';
 import { Input, Label } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import PhotoUploader from '../components/photo/PhotoUploader';
+import PasswordApprovals, {
+  usePasswordApprovals, MyPasswordRequestNotice,
+} from '../components/volunteers/PasswordApprovals';
 
 export default function ProfilePage() {
   const { volunteer, role } = useAuth();
@@ -56,7 +76,13 @@ export default function ProfilePage() {
   const [mobileBusy, setMobileBusy] = useState(false);
 
   const [pwdBusy, setPwdBusy] = useState(false);
-  const [pwdAsked, setPwdAsked] = useState(false);
+  const [newPwd, setNewPwd] = useState('');
+  const [confirmPwd, setConfirmPwd] = useState('');
+  const [showPwd, setShowPwd] = useState(false);
+
+  // One fetch answers both halves of this screen: what is waiting for me to
+  // approve, and whether my own choice is still waiting for somebody else.
+  const pwApi = usePasswordApprovals();
 
   const pending = volunteer?.mobileChangeRequest?.status === 'pending'
     ? volunteer.mobileChangeRequest
@@ -137,14 +163,34 @@ export default function ProfilePage() {
     }
   }
 
-  async function requestPasswordChange() {
+  async function submitPasswordChoice(e) {
+    e.preventDefault();
+    if (newPwd.length < 6) {
+      return showToast({ type: 'error', message: 'Use at least 6 characters.' });
+    }
+    if (newPwd !== confirmPwd) {
+      return showToast({ type: 'error', message: 'The two passwords don’t match.' });
+    }
+    // Checked here as well as on the server so the person sees WHY before the
+    // round trip. The server check is the one that counts — this is the exact
+    // string that made every account openable from a printed contact list.
+    if (newPwd.replace(/\D/g, '') === (volunteer.mobile || '').replace(/\D/g, '')) {
+      return showToast({
+        type: 'error',
+        message: 'Your password can’t be your own mobile number — everyone can see it in the app.',
+      });
+    }
+
     setPwdBusy(true);
     try {
-      // The callable that the login screen's "Forgot?" uses. It records the ask
-      // and changes nothing — see functions/resetVolunteerPassword.js.
-      await callable('requestPasswordReset')({ phone: volunteer.mobile });
-      setPwdAsked(true);
-      showToast({ type: 'success', message: 'An admin has been asked to set a new password for you.' });
+      await callable('submitPasswordChoice')({ phone: volunteer.mobile, newPassword: newPwd });
+      setNewPwd('');
+      setConfirmPwd('');
+      await pwApi.refresh();      // brings `mine` back as pending
+      showToast({
+        type: 'success',
+        message: 'Sent for approval. Keep using your current password until it is approved.',
+      });
     } catch (err) {
       showToast({ type: 'error', message: err.message || 'Could not send the request.' });
     } finally {
@@ -155,6 +201,10 @@ export default function ProfilePage() {
   return (
     <div className="mx-auto max-w-xl px-4 py-8 space-y-6 sm:px-6 sm:py-12">
       <h1 className="mb-8 text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">My Profile</h1>
+
+      {/* Renders nothing unless the server says this caller outranks somebody who
+          is waiting — so it is invisible to almost everyone, almost always. */}
+      <PasswordApprovals api={pwApi} />
 
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
         {/* Photo Uploader Header */}
@@ -278,24 +328,63 @@ export default function ProfilePage() {
         </form>
       </div>
 
-      {/* ── Password: request, don't set ─────────────────────────────────────── */}
+      {/* ── Password: you choose it, your head switches it on ─────────────────── */}
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
           <ShieldCheck className="h-4 w-4 text-slate-400" /> Password
         </h2>
         <p className="mt-1 text-sm text-slate-500">
-          Your password is set by an admin. Ask for a new one and someone with admin access will
-          set it and pass it to you directly — in person or by phone, never over a message.
+          Choose your own password. It is sent to your sanchalak — or the karyalay — to switch on,
+          and nobody sees what you picked, not even them. Your current password keeps working until
+          they approve it.
         </p>
-        {pwdAsked ? (
-          <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs text-emerald-800">
-            Request sent. Your current password keeps working until the new one is set.
+
+        <MyPasswordRequestNotice mine={pwApi.mine} />
+
+        <form onSubmit={submitPasswordChoice} className="mt-4 space-y-3">
+          <div>
+            <Label>New password</Label>
+            <div className="relative mt-1">
+              <Input
+                type={showPwd ? 'text' : 'password'}
+                value={newPwd}
+                onChange={(e) => setNewPwd(e.target.value)}
+                placeholder="At least 6 characters"
+                autoComplete="new-password"
+                className="pr-10"
+              />
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => setShowPwd((v) => !v)}
+                aria-label={showPwd ? 'Hide password' : 'Show password'}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:text-slate-600"
+              >
+                {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
-        ) : (
-          <Button variant="secondary" className="mt-4" disabled={pwdBusy} onClick={requestPasswordChange}>
-            {pwdBusy ? 'Sending…' : 'Request a new password'}
+          <div>
+            <Label>Confirm new password</Label>
+            <Input
+              type={showPwd ? 'text' : 'password'}
+              value={confirmPwd}
+              onChange={(e) => setConfirmPwd(e.target.value)}
+              placeholder="Type it again"
+              autoComplete="new-password"
+              className="mt-1"
+            />
+          </div>
+          {/* Said out loud because it is the one rule people trip over, and the
+              reason for it is not obvious until you know the mobile number is
+              printed on every contact list in this app. */}
+          <p className="text-xs text-slate-400">
+            Anything except your own mobile number — that one is visible to everybody here.
+          </p>
+          <Button type="submit" variant="accent" disabled={pwdBusy || !newPwd || !confirmPwd}>
+            {pwdBusy ? 'Sending…' : 'Send for approval'}
           </Button>
-        )}
+        </form>
       </div>
     </div>
   );

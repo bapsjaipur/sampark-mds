@@ -11,6 +11,13 @@
 // until someone presses it no query exists at all. Pressing it is free if the
 // Contacts page is already open in this session — both use the same shared
 // listener (see useAllContacts).
+//
+// PHASE 41 — the Duplicates tab is now a MERGE tab (MergeDuplicatesPanel). It
+// used to group on the phone number alone and offer "Delete this one", which
+// read as "delete three of these four people" for the ordinary case of a family
+// sharing a handset, and threw away attendance history even when the duplicate
+// was real. The delete affordance is gone from this screen entirely — deleting a
+// contact is a Contacts-page action, and it is not what any of this needs.
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PartyPopper, MapPin, ScanSearch } from 'lucide-react';
@@ -18,32 +25,11 @@ import { useAllContacts } from '../../hooks/useAllContacts';
 import { useAuth } from '../../hooks/usePermissions';
 import { describeScope, SCOPE_KINDS } from '../../lib/scope';
 import { useToast } from '../../contexts/ToastContext';
-import { findDuplicatePhones, findMissingInfo, findMissingAreaInHousehold } from '../../services/integrityService';
+import { findLikelyDuplicates, findMissingInfo, findMissingAreaInHousehold } from '../../services/integrityService';
 import { backfillMemberAreas } from '../../services/bulkService';
+import MergeDuplicatesPanel from './MergeDuplicatesPanel';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
-
-function DuplicateGroup({ phone, group, onDelete }) {
-  return (
-    <Card className="border-amber-200 bg-amber-50/40 p-4">
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-700">Phone {phone} — {group.length} records</p>
-      <div className="space-y-2">
-        {group.map((ind) => (
-          <div key={ind.id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm">
-            <div>
-              <p className="font-medium text-slate-900">{ind.name}</p>
-              <p className="text-xs text-slate-400">{ind.mandal || 'No Mandal'} · {ind.status || 'Not contacted'} · {ind.householdId ? 'In a household' : 'Standalone'}</p>
-            </div>
-            <div className="flex gap-2">
-              <Link to={ind.householdId ? `/households/${ind.householdId}` : '/contacts'}><Button variant="secondary" size="sm">View</Button></Link>
-              <Button variant="danger" size="sm" onClick={() => onDelete(ind)}>Delete this one</Button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </Card>
-  );
-}
 
 /**
  * The gate. Renders no query — mounting this component is free, which is what
@@ -64,8 +50,8 @@ export default function DataIntegrityTab() {
         <div>
           <p className="text-sm font-medium text-slate-800">Data integrity scan</p>
           <p className="mx-auto mt-1 max-w-md text-xs text-slate-500">
-            Finds duplicate phone numbers, contacts missing a number or Mandal, and household
-            members with no Area.
+            Finds records of the same person entered twice, contacts missing a number or Mandal,
+            and household members with no Area.
             {scoped ? (
               <> It covers <span className="font-medium text-slate-600">{describeScope(scope)}</span> —
               the same contacts you see everywhere else — and any fix it offers touches only those.</>
@@ -85,19 +71,19 @@ export default function DataIntegrityTab() {
 }
 
 function IntegrityReport({ onClose }) {
-  const { contacts, loading, deleteContact } = useAllContacts();
+  const { contacts, loading } = useAllContacts();
   const { showToast } = useToast();
   const [tab, setTab] = useState('duplicates');
   const [backfilling, setBackfilling] = useState(false);
 
-  const duplicates = useMemo(() => findDuplicatePhones(contacts), [contacts]);
+  // Counted here so the tab label can carry a number; MergeDuplicatesPanel runs
+  // the same memo on the same array, which React de-duplicates for free.
+  const dupeCount = useMemo(
+    () => findLikelyDuplicates(contacts).groups.filter((g) => g.confidence !== 'possible').length,
+    [contacts],
+  );
   const missing = useMemo(() => findMissingInfo(contacts), [contacts]);
   const missingArea = useMemo(() => findMissingAreaInHousehold(contacts), [contacts]);
-
-  async function handleDeleteDuplicate(ind) {
-    if (!window.confirm(`Delete "${ind.name}"? Review the other record first — this can't be undone.`)) return;
-    await deleteContact(ind.id);
-  }
 
   async function handleBackfillAreas() {
     if (!window.confirm(`Copy the household's Area onto ${missingArea.length} member(s) currently missing one? This only fills blanks — it never overwrites an area already set.`)) return;
@@ -117,7 +103,7 @@ function IntegrityReport({ onClose }) {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <button onClick={() => setTab('duplicates')} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${tab === 'duplicates' ? 'bg-orange-50 text-orange-700' : 'text-slate-500 hover:bg-slate-50'}`}>Duplicate phones ({duplicates.length})</button>
+        <button onClick={() => setTab('duplicates')} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${tab === 'duplicates' ? 'bg-orange-50 text-orange-700' : 'text-slate-500 hover:bg-slate-50'}`}>Duplicate records ({dupeCount})</button>
         <button onClick={() => setTab('missing')} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${tab === 'missing' ? 'bg-orange-50 text-orange-700' : 'text-slate-500 hover:bg-slate-50'}`}>Missing info ({missing.missingPhone.length + missing.missingMandal.length})</button>
         <button onClick={() => setTab('area')} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${tab === 'area' ? 'bg-orange-50 text-orange-700' : 'text-slate-500 hover:bg-slate-50'}`}>Missing area ({missingArea.length})</button>
         <span className="ml-auto flex items-center gap-3 text-xs text-slate-400">
@@ -126,13 +112,7 @@ function IntegrityReport({ onClose }) {
         </span>
       </div>
 
-      {tab === 'duplicates' && (
-        duplicates.length === 0 ? (
-          <p className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200 py-10 text-sm text-slate-400"><PartyPopper className="h-4 w-4" /> No duplicate phone numbers found.</p>
-        ) : (
-          <div className="space-y-3">{duplicates.map((d) => <DuplicateGroup key={d.phone} phone={d.phone} group={d.group} onDelete={handleDeleteDuplicate} />)}</div>
-        )
-      )}
+      {tab === 'duplicates' && <MergeDuplicatesPanel contacts={contacts} />}
 
       {tab === 'missing' && (
         <div className="space-y-6">

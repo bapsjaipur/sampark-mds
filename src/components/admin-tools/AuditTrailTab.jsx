@@ -99,6 +99,17 @@ const ACTIONS = [
   // single deliberate act, and forty identical rows would bury the rest of the
   // trail. The details text carries the counts and the new size.
   { key: 'batch_contacts_edited',    label: 'Edited batch contacts', tone: 'sky' },
+  // PHASE 41 — the one row that has to survive, because the merge deletes the
+  // duplicate: its own `create_individual` / `call_logged` rows are still in the
+  // trail, still naming an id that no longer resolves to anything. This row is
+  // what explains them. The details text names both records by id and by name.
+  { key: 'merge_individuals',        label: 'Merged duplicate contacts', tone: 'amber' },
+  // PHASE 41 — written by approvePasswordRequest / denyPasswordRequest. The row
+  // records WHO said yes, never the password: the plaintext is decrypted inside
+  // the callable, handed to Auth, and the ciphertext is deleted in the same
+  // write. `details` names the volunteer and, on a denial, the stated reason.
+  { key: 'password_approved',        label: 'Approved a password',  tone: 'emerald' },
+  { key: 'password_denied',          label: 'Denied a password request', tone: 'rose' },
 ];
 
 const ACTION_LABELS = Object.fromEntries(ACTIONS.map((a) => [a.key, a.label]));

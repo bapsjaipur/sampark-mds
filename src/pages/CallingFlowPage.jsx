@@ -41,11 +41,16 @@
 // The call count gets the same treatment: one stray tap on Call used to be
 // permanent. Both are two-tap, because a one-tap undo next to a real outcome on a
 // phone is just a second way to lose it.
+// PHASE 39 — two views of one queue. See src/components/calling/BatchContactList.
+// The card is for calling; the list is for everything a karyakarta needs to know
+// AROUND the calling ("how many left?", "who in this mandal?", "did I mark that
+// one wrong?"). Both read the same in-memory `contacts`, so the toggle costs
+// nothing — no route, no listener, no read.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Phone, MessageCircle, MapPin, FileText, Search, X, ChevronLeft,
   Repeat, PhoneOff, Home, History, Check, SkipForward, Pencil, ExternalLink,
-  CalendarCheck, Clock, Undo2, RotateCcw, AlertCircle,
+  CalendarCheck, Clock, Undo2, RotateCcw, AlertCircle, List,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useMyBatchQueue } from '../hooks/useMyBatchQueue';
@@ -60,6 +65,7 @@ import {
 } from '../services/roundService';
 import { buildWhatsAppUrl, buildTelUrl, normalizePhone } from '../lib/whatsapp';
 import StatusChips from '../components/calling/StatusChips';
+import BatchContactList from '../components/calling/BatchContactList';
 import AttendanceHistoryPanel from '../components/events/AttendanceHistoryPanel';
 import IndividualForm from '../components/individuals/IndividualForm';
 import RequirePermission from '../components/RequirePermission';
@@ -75,7 +81,7 @@ export default function CallingFlowPage() {
   const { settings: templateSettings } = useSettings('messageTemplate');
   // Live outcome vocabulary — an admin renaming or adding an outcome under
   // Admin Tools → Call Outcomes must reach this screen without a redeploy.
-  const { outcomes, followUpGroups, colorClasses: statusColorClasses, emoji } = useCallOutcomes();
+  const { outcomes, followUpGroups, colorClasses: statusColorClasses, emoji, label: statusLabel } = useCallOutcomes();
   // What happened at the sabha these contacts were called for. Costs one read
   // for the event plus one register listener, and only after the sabha is over.
   const round = useRoundReview({ batches, contacts });
@@ -85,6 +91,11 @@ export default function CallingFlowPage() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  // PHASE 39 — 'card' (call one person) or 'list' (see the whole batch). Held in
+  // component state rather than the URL or localStorage on purpose: the card is
+  // where the work happens, so every fresh open should land there and the list
+  // should be a deliberate glance, not a mode you can get stuck in.
+  const [viewMode, setViewMode] = useState('card');
   const [followUpFilter, setFollowUpFilter] = useState(null);
   // Kept separate from followUpFilter rather than folded into it: one is a set of
   // status strings, the other a set of contact ids, and only one can be on.
@@ -224,6 +235,11 @@ export default function CallingFlowPage() {
   }, [activeQueue, contacts, currentIdx, total]);
 
   const progressPct = total ? Math.round(((isDone ? total : position - 1) / total) * 100) : 0;
+
+  // The list view measures the batch, not the walk: there is no "current" row to
+  // be N-th of, and "31 of 84 done" is the number a karyakarta splitting the
+  // calling across a morning and an evening actually wants.
+  const donePct = batchTotal ? Math.round((doneCount / batchTotal) * 100) : 0;
 
   /**
    * The nearest EARLIER contact still inside the queue, or null when there is
@@ -372,11 +388,17 @@ export default function CallingFlowPage() {
 
   // Fired on the Call tap. Does not await and does not block the tel: navigation
   // — a failed count must never stop the volunteer from placing the call.
-  function handleCallTap() {
-    if (!current) return;
+  //
+  // Takes the contact explicitly so the list view's per-row Call button goes down
+  // this same path: a bare tel: link there would place real calls that never
+  // reached callCount or the activity trail, and the karyakarta who preferred the
+  // list would have looked idle in every report.
+  function handleCallTap(contact) {
+    const target = contact || current;
+    if (!target) return;
     incrementCallCount({
-      individualId: current.id,
-      currentCount: current.callCount,
+      individualId: target.id,
+      currentCount: target.callCount,
       volunteerId: volunteer?.id,
     }).catch(() => {});
   }
@@ -443,31 +465,57 @@ export default function CallingFlowPage() {
       {/* ── Sticky header ────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-20 shrink-0 border-b border-slate-100 bg-white/95 backdrop-blur">
         <div className="flex items-center gap-2 px-3 pt-2.5">
-          <button
-            onClick={goToPrev}
-            disabled={prevIdx === null}
-            aria-label="Previous contact"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 disabled:opacity-30 enabled:hover:bg-slate-100 enabled:hover:text-slate-600"
-          >
-            <ChevronLeft className="h-5 w-5" />
-          </button>
+          {/* Back steps the card cursor, which in list view only nudges the "here"
+              marker — a control that appears to do nothing. Rows are the way to
+              move there, so this stands down. */}
+          {viewMode === 'card' && (
+            <button
+              onClick={goToPrev}
+              disabled={prevIdx === null}
+              aria-label="Previous contact"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 disabled:opacity-30 enabled:hover:bg-slate-100 enabled:hover:text-slate-600"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+          )}
 
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline justify-between gap-2">
               <p className="text-[13px] font-semibold text-slate-900">
-                {isDone ? 'Complete' : `${position} of ${total}`}
+                {viewMode === 'list'
+                  ? `${doneCount} of ${batchTotal} done`
+                  : isDone ? 'Complete' : `${position} of ${total}`}
               </p>
               {/* With a filter on, the batch-wide done count would contradict the
                   count beside it. Name the list being walked instead — that is the
                   question "3 of 12" leaves open. */}
               <p className="min-w-0 truncate text-[11px] text-slate-400">
-                {activeQueue ? activeQueue.label : `${doneCount} done`}
+                {activeQueue ? activeQueue.label : viewMode === 'list' ? 'Your list' : `${doneCount} done`}
               </p>
             </div>
             <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-              <div className="h-full rounded-full bg-orange-500 transition-all" style={{ width: `${progressPct}%` }} />
+              <div
+                className="h-full rounded-full bg-orange-500 transition-all"
+                style={{ width: `${viewMode === 'list' ? donePct : progressPct}%` }}
+              />
             </div>
           </div>
+
+          {/* PHASE 39 — the whole batch, or the one contact. Same data either way. */}
+          <button
+            onClick={() => setViewMode((m) => (m === 'list' ? 'card' : 'list'))}
+            aria-pressed={viewMode === 'list'}
+            aria-label={viewMode === 'list' ? 'Back to calling' : 'See my whole list'}
+            title={viewMode === 'list' ? 'Back to calling' : 'See my whole list'}
+            className={cn(
+              'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
+              viewMode === 'list'
+                ? 'bg-orange-100 text-orange-700'
+                : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600',
+            )}
+          >
+            <List className="h-5 w-5" />
+          </button>
 
           <button
             onClick={() => { setSearchOpen((o) => !o); if (searchOpen) setSearch(''); }}
@@ -522,13 +570,22 @@ export default function CallingFlowPage() {
           </div>
         )}
 
-        {/* Resumed, not restarted. Dismissible, and gone the moment they move. */}
+        {/* Resumed, not restarted. Dismissible, and gone the moment they move.
+            PHASE 39 — now it also says how far in they are and offers the list,
+            because the volunteer who calls ten in the morning and the rest at night
+            comes back asking "how many did I do?", not "where is the cursor?". */}
         {resumed && resumeNote && !isDone && (
           <div className="flex items-center gap-1.5 border-t border-amber-100 bg-amber-50/70 px-3 py-1.5 text-[11px] text-amber-800">
             <RotateCcw className="h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0 flex-1 truncate">
-              Picked up where you left off. Use <ChevronLeft className="inline h-3 w-3" /> for the earlier names.
+              Picked up where you left off — {doneCount} of {batchTotal} done.
             </span>
+            <button
+              onClick={() => { setViewMode('list'); setResumeNote(false); }}
+              className="shrink-0 rounded px-1.5 py-0.5 font-semibold underline decoration-amber-300 underline-offset-2 hover:bg-amber-100"
+            >
+              See all
+            </button>
             <button
               onClick={() => setResumeNote(false)}
               aria-label="Dismiss"
@@ -652,19 +709,41 @@ export default function CallingFlowPage() {
       </header>
 
       {/* ── Scroll body ──────────────────────────────────────────────────── */}
-      {isDone || !current ? (
+      {viewMode === 'list' ? (
+        <BatchContactList
+          contacts={queueContacts}
+          allContacts={contacts}
+          currentIdx={currentIdx}
+          // Picking a row is a decision to CALL that person, so it drops straight
+          // back into the card — the list is a way in, not a second place to work.
+          onPick={(idx) => { jumpTo(idx); setResumeNote(false); setViewMode('card'); }}
+          onCall={handleCallTap}
+          label={statusLabel}
+          emoji={emoji}
+          statusClasses={statusColorClasses}
+          filterLabel={activeQueue?.label || null}
+        />
+      ) : isDone || !current ? (
         <div className="flex flex-1 flex-col items-center justify-center px-6 py-16 text-center">
           <div className="text-5xl">🎉</div>
           <p className="mt-4 text-lg font-semibold text-slate-900">All done!</p>
           <p className="mt-1 text-sm text-slate-500">
             You went through all {batchTotal} assigned contacts. Great work, Sevak!
           </p>
-          <button
-            onClick={() => { clearQueue(); jumpTo(0); }}
-            className="mt-6 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
-          >
-            Review the list again
-          </button>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
+            <button
+              onClick={() => setViewMode('list')}
+              className="rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-orange-700"
+            >
+              See my whole list
+            </button>
+            <button
+              onClick={() => { clearQueue(); jumpTo(0); }}
+              className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+            >
+              Start again from the top
+            </button>
+          </div>
         </div>
       ) : (
         <>
@@ -813,7 +892,16 @@ export default function CallingFlowPage() {
             )}
 
             <div className="mt-5">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Outcome</p>
+              <div className="mb-2 flex items-baseline justify-between gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Outcome</p>
+                {/* PHASE 39 — the un-select has always worked (StatusChips toggles
+                    on re-tap); nothing ever SAID so, and the explanation below only
+                    appears once you have already guessed. Shown only while something
+                    is selected, which is the only moment it is true. */}
+                {status && (
+                  <p className="text-[11px] text-slate-400">Tap the same one again to un-select</p>
+                )}
+              </div>
               <StatusChips value={status} onChange={setStatus} size="lg" outcomes={outcomes} />
               {/* Said once, where the mistake happens. Without it, unticking looks
                   like it did nothing — the footer changed, but that is 400px away
@@ -844,7 +932,7 @@ export default function CallingFlowPage() {
             <div className="flex gap-2">
               <ActionLink
                 href={telUrl}
-                onClick={handleCallTap}
+                onClick={() => handleCallTap(current)}
                 className="bg-emerald-600 hover:bg-emerald-700"
                 icon={Phone}
                 label="Call"

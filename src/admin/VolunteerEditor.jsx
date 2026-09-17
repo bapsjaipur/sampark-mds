@@ -13,10 +13,11 @@
 // most senior role, because firestore.rules cannot loop an array doing a get()
 // per element (10 get()/exists() per request, no map/reduce) — so the rules stay
 // a conservative subset of what this screen grants.
-import { useEffect, useMemo, useState } from 'react';
-import { collection, doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { collection, doc, getDoc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { X, KeyRound, Clock, Trash2, Check, Eye, AlertTriangle, ShieldAlert, Search, Users, Wifi, Download, FileText, UserPlus, Smartphone } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { X, KeyRound, Clock, Trash2, Check, Eye, AlertTriangle, ShieldAlert, Search, Users, Wifi, Download, FileText, UserPlus, Smartphone, Link2, ExternalLink, ChevronLeft, ChevronRight } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
 import { RequirePermission } from '../components/RequirePermission';
 import { useAreasAndMandals } from '../hooks/useAreasAndMandals';
@@ -33,6 +34,7 @@ import { resolveScope, describeScope, statedScopeKind, roleStatedScopeKind, infe
 import { DEFAULT_ROLE_RANK, isSantoRole } from '../constants/roleTemplates';
 import { expandLegacyPermissions, isLegacyRole } from '../constants/permissions';
 import { buildVolunteerRows, computeVolunteerStats, exportVolunteerCsv, exportVolunteerPdf } from '../lib/volunteerExports';
+import PasswordApprovals, { usePasswordApprovals } from '../components/volunteers/PasswordApprovals';
 import { cn } from '../lib/cn';
 
 function formatLastLogin(ts) {
@@ -88,6 +90,26 @@ function roleIdsOf(v) {
 }
 
 const DAY = 86400000;
+
+/**
+ * PHASE 39 — how many roster rows render at once.
+ *
+ * HONEST ABOUT WHAT THIS DOES: it does NOT save Firestore reads. useVolunteers()
+ * holds ONE shared listener over the whole `volunteers` collection, shared with
+ * four other screens, so the documents are already in memory before this list
+ * renders — slicing them costs and saves nothing at the quota. (Server-side
+ * paging with limit()/startAfter() WOULD, but it would also break the status
+ * tiles, the coverage warning and the exports, all of which are computed over
+ * everyone, and it re-reads a page every time you go back to it. On ~25
+ * documents that trade is firmly the wrong way round.)
+ *
+ * What it does fix is the screen: every volunteer rendered every keystroke, in a
+ * 420px box you scrolled blind, with the editor stranded below it on a phone.
+ *
+ * 12 rather than 10 or 25: one area's karyakartas almost always fit inside it, so
+ * the common filtered view shows no pager at all.
+ */
+const ROSTER_PAGE_SIZE = 12;
 
 /**
  * PHASE 25 — the roster views, in the same idiom as the Reminders board: the
@@ -291,8 +313,12 @@ function ScopePreview({ selectedRoles, assignedAreas, assignedMandals }) {
 //     picker minutes after visiting Contacts costs nothing at all;
 //   • the spend is metered, so it shows up on the quota tile in Admin Tools;
 //   • there is one "load the contacts" code path in the app instead of two.
-function ContactSearchPicker({ onPick }) {
-  const [q, setQ] = useState('');
+function ContactSearchPicker({ onPick, initialQuery = '', placeholder = 'Search by name or mobile…' }) {
+  // PHASE 39 — seeded. When this is opened to link an EXISTING volunteer to their
+  // own contact record, the answer is nearly always "the contact on the same
+  // phone number", so the caller passes that number and the match is already on
+  // screen before anything is typed.
+  const [q, setQ] = useState(initialQuery);
   const { contacts: allContacts, loading, error } = useAllContacts();
   const loadError = error
     ? (error.message || 'Couldn’t load contacts. Check your permissions.')
@@ -309,7 +335,7 @@ function ContactSearchPicker({ onPick }) {
       <Input
         value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder={loading ? 'Loading contacts…' : 'Search by name or mobile…'}
+        placeholder={loading ? 'Loading contacts…' : placeholder}
         disabled={loading}
       />
       {results.length > 0 && (
@@ -333,6 +359,206 @@ function ContactSearchPicker({ onPick }) {
       {loadError && <p className="text-xs text-rose-500">{loadError}</p>}
       {term && results.length === 0 && !loading && !loadError && (
         <p className="text-xs text-slate-400">No contacts found — try a different search.</p>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 39 — THE OTHER HALF OF A KARYAKARTA.
+//
+// Every volunteer is also a contact: a person in a household, in a mandal, with a
+// birthday, an attendance history and their own sampark karyakarta. The database
+// has always known this — createVolunteerAccount writes `linkedIndividualId` on
+// the volunteer and `volunteerId` back on the individual, and
+// useVolunteerIdentity() resolves the join in both directions to put the sevak
+// badge on contact rows — but this screen never SHOWED it and offered no way to
+// make the link after the fact. So a login created "New person" (which is most of
+// them) stayed permanently detached from the person it belongs to, and answering
+// "which mandal is this karyakarta actually in?" meant going to Contacts and
+// searching for the name by hand.
+//
+// READS. The linked contact is fetched with ONE getDoc, only for the volunteer
+// currently open in the editor, and only when a link exists. The full contacts
+// listener (useAllContacts, ~2.4k documents) is mounted only if the admin taps
+// "Find their contact" — the same on-demand rule the create form follows, so
+// opening Admin → Volunteers still costs the volunteer collection and nothing
+// else.
+//
+// WRITES. Two, and deliberately in this order: the volunteer side first (a
+// manage_users or manage_scoped_volunteers holder can always write it — see the
+// volunteers block in firestore.rules), then the reverse pointer on the
+// individual, best-effort. canUpdateIndividual() needs edit_contacts, which a
+// narrowly-scoped mandal manager may not hold; when that write is refused the
+// link still resolves from the volunteer side, so the feature degrades to "works,
+// but only findable from here" instead of failing outright. It says so rather
+// than reporting a clean success.
+// ─────────────────────────────────────────────────────────────────────────────
+function LinkedContactCard({ volunteer, onNotice }) {
+  // undefined = still fetching · null = no link · 'missing' = link points nowhere
+  const [linked, setLinked] = useState(null);
+  const [picking, setPicking] = useState(false);
+  const [working, setWorking] = useState(false);
+  const [err, setErr] = useState(null);
+  // Which (volunteer, contact) pair has already been fetched. Without this, the
+  // live volunteers listener re-delivers the document the instant we write
+  // linkedIndividualId and the effect spends a second read re-fetching a contact
+  // we are holding in our hand.
+  const fetchedRef = useRef(null);
+
+  const volunteerId = volunteer?.id || null;
+  const linkedId = volunteer?.linkedIndividualId || null;
+
+  useEffect(() => {
+    setPicking(false);
+    setErr(null);
+    if (!volunteerId || !linkedId) {
+      setLinked(null);
+      fetchedRef.current = null;
+      return undefined;
+    }
+    const key = `${volunteerId}:${linkedId}`;
+    if (fetchedRef.current === key) return undefined;
+    fetchedRef.current = key;
+    let alive = true;
+    setLinked(undefined);
+    getDoc(doc(db, 'individuals', linkedId))
+      .then((snap) => {
+        if (!alive) return;
+        setLinked(snap.exists() ? { id: snap.id, ...snap.data() } : 'missing');
+      })
+      // A denied read is indistinguishable from a deleted contact from here, and
+      // both want the same offer: unlink, or link the right one.
+      .catch(() => { if (alive) setLinked('missing'); });
+    return () => { alive = false; };
+  }, [volunteerId, linkedId]);
+
+  async function applyLink(contact) {
+    if (!volunteerId) return;
+    setWorking(true); setErr(null);
+    try {
+      await updateDoc(doc(db, 'volunteers', volunteerId), {
+        linkedIndividualId: contact ? contact.id : null,
+      });
+
+      let reverseRefused = false;
+      const target = contact?.id || linkedId;
+      if (target) {
+        try {
+          await updateDoc(doc(db, 'individuals', target), {
+            // Unlinking clears the pointer on whichever contact held it.
+            volunteerId: contact ? volunteerId : null,
+            updatedAt: serverTimestamp(),
+          });
+        } catch { reverseRefused = true; }
+      }
+
+      fetchedRef.current = contact ? `${volunteerId}:${contact.id}` : null;
+      setLinked(contact || null);
+      setPicking(false);
+      onNotice?.(
+        (contact
+          ? `Linked ${volunteer.name || 'this volunteer'} to ${contact.name || 'the contact'}’s record.`
+          : `Unlinked ${volunteer.name || 'this volunteer'} from their contact record.`)
+        + (reverseRefused
+          ? ' The contact record itself could not be stamped (that needs Edit contacts), so the link is only visible from this screen.'
+          : ''),
+      );
+    } catch (e) {
+      setErr(e?.message || 'Couldn’t save the link.');
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  const heading = (
+    <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+      <Link2 className="h-3 w-3" /> Contact record
+    </p>
+  );
+
+  return (
+    <div className="rounded-lg border border-slate-100 bg-slate-50/50 px-3 py-2.5">
+      {heading}
+
+      {err && <p className="mt-1.5 text-xs text-rose-600">{err}</p>}
+
+      {linked === undefined && (
+        <p className="mt-1.5 text-[13px] text-slate-400">Looking up their contact…</p>
+      )}
+
+      {linked === 'missing' && (
+        <div className="mt-1.5">
+          <p className="text-[13px] font-medium text-amber-800">
+            This login points at a contact that no longer exists, or that you cannot read.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" disabled={working} onClick={() => setPicking(true)}>
+              <Search className="h-3.5 w-3.5" /> Pick the right contact
+            </Button>
+            <Button variant="ghost" size="sm" disabled={working} onClick={() => applyLink(null)}>
+              Clear the link
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {linked && linked !== 'missing' && (
+        <div className="mt-1.5">
+          <div className="flex items-center gap-2.5">
+            <Avatar src={linked.profilePhotoURL} name={linked.name} size="sm" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[13px] font-medium text-slate-900">{linked.name || 'Unnamed contact'}</div>
+              <div className="truncate text-[11px] text-slate-400">
+                {[linked.mobile || 'no number', linked.mandal, linked.area].filter(Boolean).join(' · ')}
+              </div>
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {/* The whole point of the ask: from the volunteer's access settings
+                straight to their person — household, birthday, attendance,
+                calling history — without searching for the name by hand. */}
+            <Link
+              to={`/contacts/${linked.id}`}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:border-orange-200 hover:text-orange-700"
+            >
+              <ExternalLink className="h-3.5 w-3.5" /> Open full profile
+            </Link>
+            <Button variant="ghost" size="sm" disabled={working} onClick={() => applyLink(null)}>
+              {working ? 'Saving…' : 'Unlink'}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {linked === null && !picking && (
+        <div className="mt-1.5">
+          <p className="text-[13px] text-slate-500">
+            Not linked to a contact record yet — so nothing on the Contacts side marks this
+            person as a karyakarta, and their household, mandal and birthday are not reachable
+            from here.
+          </p>
+          <Button variant="secondary" size="sm" className="mt-2" disabled={working} onClick={() => setPicking(true)}>
+            <Search className="h-3.5 w-3.5" /> Find their contact
+          </Button>
+        </div>
+      )}
+
+      {picking && (
+        <div className="mt-2">
+          <ContactSearchPicker
+            initialQuery={volunteer?.mobile || ''}
+            placeholder="Search their name or mobile…"
+            onPick={(c) => applyLink(c)}
+          />
+          <button
+            type="button"
+            onClick={() => setPicking(false)}
+            className="mt-1.5 text-xs font-medium text-slate-400 hover:text-slate-600"
+          >
+            Cancel
+          </button>
+        </div>
       )}
     </div>
   );
@@ -512,163 +738,28 @@ function ResetPasswordModal({ volunteer, onClose }) {
   );
 }
 
-// 3.3 — pending password-reset requests
+// ─────────────────────────────────────────────────────────────────────────────
+// 3.3 — pending password requests
 //
-// PHASE 22 — the approval half of the reset flow.
+// PHASE 41 — this panel used to live here, ~150 lines of it, and it is now the
+// shared PasswordApprovals card (src/components/volunteers/PasswordApprovals.jsx).
 //
-// The login screen's "Forgot?" used to set the account password to the mobile
-// number that had just been typed in, which made every volunteer's account
-// openable by anyone who could read a contact list. It now writes a row here
-// instead and changes nothing. That only helps if an admin can actually SEE the
-// row — a locked-out karyakarta with an invisible request is worse off than
-// before — so this panel is part of the fix, not decoration.
+// Two things forced the move. The first is that it opened a raw
+// onSnapshot(collection(db, 'passwordResets')), which the rules only allow to
+// manage_users — so it had to be hidden behind `canApprove={isGlobalUserManager}`,
+// and the scoped Moderators and Sanchalaks this app deliberately admits to the
+// Volunteers screen could never see a request from their own karyakarta. The
+// second is that approval authority is now "outranks them and shares their
+// territory", which is a comparison against roles/{id}.rank that a browser cannot
+// be trusted to make. Both are answered by listPasswordRequests(), which returns
+// only the rows the caller may act on — so the gate is gone, and a mandal head
+// sees their own people here without the rules being widened for everyone.
 //
-// Approve reuses ResetPasswordModal: the same admin-only callable both sets the
-// password and closes the request server-side, so there is exactly one code path
-// that can change a password. Deny is a plain client write, which the rules allow
-// for a manage_users holder.
-//
-// `canApprove` IS NOT DECORATION — WITHOUT IT THIS PANEL LIES.
-//
-// This screen admits `manage_users` OR `manage_scoped_volunteers`, because Phase
-// 21 deliberately lets a Moderator / Super Moderator fix the karyakartas under
-// them WITHOUT manage_users. The passwordResets rules require manage_users for
-// read, update and delete. So for every scoped manager the listener below was
-// guaranteed to be denied, and the denial branch then told them — falsely — that
-// the rules were not deployed and to run a CLI command they cannot run and that
-// would not have helped. Mounting a listener you know the server will refuse is
-// how a permission boundary turns itself into a bug report.
-//
-// Hiding it loses a scoped manager nothing: approving and denying both require
-// manage_users server-side, so all they could ever have done with the row is
-// look at it.
-function PendingResetRequests({ volunteers, onApprove, canApprove }) {
-  const [requests, setRequests] = useState([]);
-  const [error, setError] = useState(null);
-  const [busyId, setBusyId] = useState(null);
-
-  useEffect(() => {
-    if (!canApprove) return undefined;
-    // No orderBy and no where: requestedAt is a serverTimestamp, so it reads back
-    // as null for a moment on a brand-new document and an orderBy would hide the
-    // newest request — the one that matters most. The collection cannot grow past
-    // one document per volunteer mobile (the function uses the phone as the doc
-    // id and refuses unknown numbers), so reading it whole stays cheap.
-    return onSnapshot(
-      collection(db, 'passwordResets'),
-      (snap) => {
-        setRequests(
-          snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-            .filter((r) => r.status === 'pending')
-            .sort((a, b) => toMillis(b.requestedAt) - toMillis(a.requestedAt)),
-        );
-        setError(null);
-      },
-      // We only get here holding manage_users, so a denial has exactly two
-      // causes and the old message asserted the rarer one as fact. State both.
-      //
-      // The second is the one that looks impossible: firestore.rules can read a
-      // single role document (`roleRef`), while this app unions permissions
-      // across `roleRefs[]`. An admin whose manage_users comes from a role that
-      // is not their primary one passes every check on screen and is refused by
-      // the server — client and rules disagreeing, with only the client visible.
-      (err) => setError(err?.code === 'permission-denied'
-        ? 'Password reset requests could not be read. Either the rules for the '
-          + '"passwordResets" collection have not been deployed yet, or your '
-          + 'manage_users permission comes from a role that is not your primary '
-          + 'one — re-save your volunteer record under Admin → Volunteers to '
-          + 'refresh it. Nobody is locked out either way; requests are still '
-          + 'being recorded.'
-        : (err?.message || 'Could not load password reset requests.')),
-    );
-  }, [canApprove]);
-
-  if (!canApprove) return null;
-
-  async function deny(req) {
-    setBusyId(req.id);
-    try {
-      await updateDoc(doc(db, 'passwordResets', req.id), {
-        status: 'denied',
-        resolvedAt: serverTimestamp(),
-        resolvedBy: auth.currentUser?.uid || null,
-      });
-    } catch (err) {
-      setError(err?.message || 'Could not update the request.');
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  if (!requests.length && !error) return null;
-
-  return (
-    <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50/60">
-      <div className="flex items-center gap-2 border-b border-amber-200 px-3 py-2 sm:px-4">
-        <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600" />
-        <span className="text-[13px] font-semibold text-amber-900">
-          Password reset requests
-          {requests.length > 0 && (
-            <span className="ml-1.5 rounded-full bg-amber-200 px-1.5 py-0.5 text-[11px] font-semibold text-amber-900">
-              {requests.length}
-            </span>
-          )}
-        </span>
-      </div>
-
-      {error && (
-        <div className="border-b border-amber-200 px-3 py-2 text-xs text-rose-700 sm:px-4">{error}</div>
-      )}
-
-      {requests.length > 0 && (
-        <>
-          <p className="px-3 pt-2.5 text-xs text-amber-800 sm:px-4">
-            These volunteers said they are locked out. Confirm it is really them — by phone, or in
-            person — then set a new password and pass it on directly. Nothing changes until you do.
-          </p>
-          <div className="divide-y divide-amber-200/70">
-            {requests.map((req) => {
-              const volunteer = volunteers.find((v) => v.id === req.volunteerId);
-              const when = formatLastLogin(req.requestedAt);
-              return (
-                <div key={req.id} className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:px-4">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-slate-900">
-                      {volunteer?.name || req.volunteerName || 'Unknown volunteer'}
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      {req.mobile || req.id}
-                      {when ? ` · asked ${when}` : ''}
-                      {req.requestCount > 1 ? ` · ${req.requestCount} requests` : ''}
-                    </div>
-                    {!volunteer && (
-                      <div className="mt-0.5 text-xs text-rose-600">
-                        No volunteer record matches this request — it can only be denied.
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 gap-2">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={!volunteer || busyId === req.id}
-                      onClick={() => onApprove(volunteer)}
-                    >
-                      <KeyRound className="h-3.5 w-3.5" /> Set password
-                    </Button>
-                    <Button variant="ghost" size="sm" disabled={busyId === req.id} onClick={() => deny(req)}>
-                      {busyId === req.id ? 'Saving…' : 'Deny'}
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
+// The Set-password modal above stays: an admin typing a password for someone who
+// cannot manage the flow themselves is still the right escape hatch, and it is
+// what `onSetManually` reaches when a pre-Phase-41 request with no password
+// attached turns up in the list.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3.4 — pending mobile-number change requests
@@ -795,6 +886,11 @@ function VolunteerEditorInner() {
   const { volunteers: allVolunteers } = useVolunteers();
   const { permissions, scope } = useAuth();
   const isGlobalUserManager = permissions.includes('manage_users');
+  // PHASE 41 — no `canApprove` gate any more. The callable returns only the rows
+  // this caller outranks, so a scoped Sanchalak on this screen sees their own
+  // karyakartas here instead of the guaranteed permission-denied the old
+  // passwordResets listener handed them.
+  const passwordApi = usePasswordApprovals();
   // PHASE 31 — WHO IS ON MY ROSTER IS A QUESTION FOR THE SCOPE, NOT THE PERMISSION.
   //
   // Visibility used to hang off `isScopedMandalManager`, which requires the
@@ -848,6 +944,10 @@ function VolunteerEditorInner() {
   const [resetTarget, setResetTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  // PHASE 39 — roster paging. See the note on ROSTER_PAGE_SIZE for why this is a
+  // screen fix and not a quota fix.
+  const [page, setPage] = useState(1);
+  const rosterRef = useRef(null);
 
   useEffect(() => {
     const unsubRoles = onSnapshot(collection(db, 'roles'), (snap) => setRoles(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
@@ -911,6 +1011,69 @@ function VolunteerEditorInner() {
 
   const currentView = VIEWS.find((v) => v.key === statusView) || VIEWS[0];
   const visibleRows = useMemo(() => scopedRows.filter(currentView.test), [scopedRows, currentView]);
+
+  /**
+   * PHASE 39 — the page actually shown.
+   *
+   * `safePage` is CLAMPED rather than stored: typing another letter into the
+   * search, tapping a status tile or removing a volunteer can all shrink the list
+   * under the page you are standing on, and a stored-only page would leave you
+   * looking at an empty roster with no obvious way back. Everything downstream —
+   * the tiles, the coverage warning, the CSV and the PDF — still reads
+   * `visibleRows`, so paging changes what you scroll, never what you export.
+   */
+  const pageCount = Math.max(1, Math.ceil(visibleRows.length / ROSTER_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const pagedRows = useMemo(
+    () => visibleRows.slice((safePage - 1) * ROSTER_PAGE_SIZE, safePage * ROSTER_PAGE_SIZE),
+    [visibleRows, safePage],
+  );
+
+  // Any change to what is being filtered starts again at the top. Without this,
+  // searching while on page 3 lands on page 3 of two results — which looks
+  // exactly like "no matches".
+  useEffect(() => { setPage(1); }, [search, filterArea, filterMandal, statusView]);
+
+  /**
+   * PHASE 39 — arriving from a contact profile: /admin/volunteers?v=<volunteerId>
+   *
+   * The other direction of the link LinkedContactCard opens. Read once, after the
+   * roster has actually arrived (the parameter names a volunteer, and matching it
+   * against an empty list would silently drop the request).
+   */
+  const deepLinkedRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkedRef.current || volunteers.length === 0) return;
+    deepLinkedRef.current = true;
+    const wanted = new URLSearchParams(window.location.search).get('v');
+    if (wanted && volunteers.some((v) => v.id === wanted)) setSelectedId(wanted);
+  }, [volunteers]);
+
+  /**
+   * Keep the SELECTED volunteer on the page you are looking at — otherwise a deep
+   * link, or picking someone before narrowing the filter, leaves the editor
+   * showing one person and the roster showing twelve others.
+   *
+   * Keyed on a ref rather than running on every `visibleRows` change: the live
+   * volunteers listener re-delivers on every lastSeenAt heartbeat, and without the
+   * guard that would yank an admin back to page 1 mid-browse, roughly once a
+   * minute, for as long as anyone is online.
+   */
+  const pagedForRef = useRef(null);
+  useEffect(() => {
+    if (!selectedId || pagedForRef.current === selectedId) return;
+    const idx = visibleRows.findIndex((r) => r.id === selectedId);
+    if (idx < 0) return; // filtered out — leave the roster where the admin put it
+    pagedForRef.current = selectedId;
+    setPage(Math.floor(idx / ROSTER_PAGE_SIZE) + 1);
+  }, [selectedId, visibleRows]);
+
+  function goToPage(n) {
+    setPage(Math.min(Math.max(1, n), pageCount));
+    // The list is its own scroll box; without this, Next leaves you halfway down
+    // the new page.
+    rosterRef.current?.scrollTo({ top: 0 });
+  }
 
   // The roster filters offer only what the roster can actually contain — a scoped
   // manager picking a mandal they don't oversee would just empty the list.
@@ -1134,10 +1297,14 @@ function VolunteerEditorInner() {
         </div>
       )}
 
-      <PendingResetRequests
+      <PasswordApprovals
+        api={passwordApi}
         volunteers={volunteers}
-        canApprove={isGlobalUserManager}
-        onApprove={(v) => { setNotice(null); setResetTarget(v); }}
+        showErrors
+        onSetManually={(req) => {
+          const v = volunteers.find((x) => x.id === req.volunteerId);
+          if (v) { setNotice(null); setResetTarget(v); }
+        }}
       />
 
       {/* PHASE 39 — number-change requests. Reads the roster already in memory, so
@@ -1160,26 +1327,39 @@ function VolunteerEditorInner() {
             {visibleRows.length !== allRows.length && ` · ${visibleRows.length} shown`}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-col items-start gap-1 sm:items-end">
           {/* Exports take the FILTERED list on purpose — the useful document is
               usually "the karyakartas of one area", and the filter is printed on
-              both files so the reader knows which list they are holding. */}
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={!visibleRows.length}
-            onClick={() => exportVolunteerCsv({ rows: visibleRows, stats: exportStats, filterLabel })}
-          >
-            <Download className="h-3.5 w-3.5" /> CSV
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={!visibleRows.length}
-            onClick={() => exportVolunteerPdf({ rows: visibleRows, stats: exportStats, filterLabel })}
-          >
-            <FileText className="h-3.5 w-3.5" /> PDF
-          </Button>
+              both files so the reader knows which list they are holding.
+              PHASE 39 — that has always been true and nothing on screen said so,
+              so the count now rides on the buttons: with "Area: Vaishali Nagar"
+              set they read "PDF · 6", and what you are about to download is no
+              longer a guess. */}
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={!visibleRows.length}
+              title={`Download the ${visibleRows.length} volunteer${visibleRows.length === 1 ? '' : 's'} shown${filterLabel ? ` — ${filterLabel}` : ''}`}
+              onClick={() => exportVolunteerCsv({ rows: visibleRows, stats: exportStats, filterLabel })}
+            >
+              <Download className="h-3.5 w-3.5" /> CSV · {visibleRows.length}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={!visibleRows.length}
+              title={`Download the ${visibleRows.length} volunteer${visibleRows.length === 1 ? '' : 's'} shown${filterLabel ? ` — ${filterLabel}` : ''}`}
+              onClick={() => exportVolunteerPdf({ rows: visibleRows, stats: exportStats, filterLabel })}
+            >
+              <FileText className="h-3.5 w-3.5" /> PDF · {visibleRows.length}
+            </Button>
+          </div>
+          {filterLabel && (
+            <p className="max-w-[18rem] text-[11px] leading-snug text-slate-400 sm:text-right">
+              Exports only these {visibleRows.length} · {filterLabel}
+            </p>
+          )}
         </div>
       </div>
 
@@ -1274,8 +1454,8 @@ function VolunteerEditorInner() {
           )}
         </div>
 
-        <div className="max-h-[420px] divide-y divide-slate-50 overflow-y-auto rounded-xl border border-slate-100 md:max-h-[60vh]">
-          {visibleRows.map((r) => (
+        <div ref={rosterRef} className="max-h-[70vh] divide-y divide-slate-50 overflow-y-auto rounded-xl border border-slate-100">
+          {pagedRows.map((r) => (
             <div
               key={r.id}
               className={cn(
@@ -1345,6 +1525,38 @@ function VolunteerEditorInner() {
             </div>
           )}
         </div>
+
+        {/* Only when there is more than one page — a filtered view of six
+            karyakartas should not grow a pager it never needs. */}
+        {pageCount > 1 && (
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <p className="text-[11px] tabular-nums text-slate-400">
+              {(safePage - 1) * ROSTER_PAGE_SIZE + 1}–{Math.min(safePage * ROSTER_PAGE_SIZE, visibleRows.length)}
+              {' of '}{visibleRows.length}
+            </p>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => goToPage(safePage - 1)}
+                disabled={safePage <= 1}
+                aria-label="Previous page"
+                className="rounded-lg border border-slate-200 p-1.5 text-slate-500 transition-colors hover:border-orange-200 hover:text-orange-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:text-slate-500"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+              <span className="min-w-[3.5rem] text-center text-[11px] font-medium tabular-nums text-slate-500">
+                {safePage} / {pageCount}
+              </span>
+              <button
+                onClick={() => goToPage(safePage + 1)}
+                disabled={safePage >= pageCount}
+                aria-label="Next page"
+                className="rounded-lg border border-slate-200 p-1.5 text-slate-500 transition-colors hover:border-orange-200 hover:text-orange-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:text-slate-500"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="md:col-span-2" id="volunteer-editor">
@@ -1379,6 +1591,11 @@ function VolunteerEditorInner() {
             </div>
 
             {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+
+            {/* Directly under the identity, because "who is this person" and "what
+                can they see" are two different questions and this is the answer to
+                the first one. */}
+            <LinkedContactCard volunteer={selectedVolunteer} onNotice={setNotice} />
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
@@ -1421,12 +1638,23 @@ function VolunteerEditorInner() {
 
             <div>
               <Label>Program</Label>
+              {/* PHASE 39 — there were TWO of these, both bound to draft.program,
+                  one here and one under the role picker, labelled differently
+                  ("Yuvak (Youth)" vs "Yuvak Mandal"). Two controls for one field
+                  read as two settings that could disagree. The lower copy is gone.
+
+                  The LABEL is "Yuvak Mandal" — "Youth" was a second name for the
+                  same mandal and reading both made it look like two programs. The
+                  stored VALUE stays 'Yuvak': it is written on every volunteer
+                  document and matched by src/lib/scope.js and the batch/event
+                  filters, so renaming it would orphan the whole roster. Display
+                  name here, data underneath — they are allowed to differ. */}
               <Select
                 value={draft.program || 'Yuvak'}
                 onChange={(e) => setDraft({ ...draft, program: e.target.value })}
               >
-                <option value="Yuvak">Yuvak (Youth)</option>
-                <option value="Bal Mandal">Bal Mandal (Children)</option>
+                <option value="Yuvak">Yuvak Mandal</option>
+                <option value="Bal Mandal">Bal Mandal</option>
               </Select>
               <p className="mt-1 text-xs text-slate-400">
                 Which program this volunteer works with. Determines which contacts and events they can see.
@@ -1454,20 +1682,6 @@ function VolunteerEditorInner() {
               values={draft.roleRefs}
               onChange={(v) => setDraft({ ...draft, roleRefs: v })}
             />
-
-            <div>
-              <Label>Program</Label>
-              <Select
-                value={draft.program || 'Yuvak'}
-                onChange={(e) => setDraft({ ...draft, program: e.target.value })}
-              >
-                <option value="Yuvak">Yuvak Mandal</option>
-                <option value="Bal Mandal">Bal Mandal</option>
-              </Select>
-              <p className="mt-1 text-xs text-slate-400">
-                Determines which program this volunteer manages.
-              </p>
-            </div>
 
             {/* A Santo is city-wide, like an Admin — the two pickers below are not
                 just unnecessary for them, they are actively harmful: an area left
@@ -1543,7 +1757,14 @@ function VolunteerEditorInner() {
       </div>
 
       {resetTarget && (
-        <ResetPasswordModal volunteer={resetTarget} onClose={() => setResetTarget(null)} />
+        // Closing refreshes the approvals card: resetVolunteerPassword closes any
+        // pending row for that volunteer server-side, so without this the row the
+        // admin just acted on would sit there until the page reloads and invite a
+        // second reset. One callable, only when an admin actually opened this.
+        <ResetPasswordModal
+          volunteer={resetTarget}
+          onClose={() => { setResetTarget(null); passwordApi.refresh(); }}
+        />
       )}
 
       <Modal open={Boolean(deleteTarget)} onClose={() => setDeleteTarget(null)} title="Remove volunteer?" size="sm">

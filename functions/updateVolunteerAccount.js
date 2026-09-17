@@ -115,6 +115,13 @@ exports.updateVolunteerAccount = onCall({ region: 'us-central1' }, async (reques
     // PHASE 39 — the request half. `requestedMobile` is what a volunteer asks
     // for; `resolveMobileRequest` is how an admin answers ('approve' | 'decline').
     requestedMobile, resolveMobileRequest,
+    // PHASE 39 — `program` has been SENT by src/admin/VolunteerEditor.jsx since
+    // Phase 30 and was never destructured here, so update() dropped it: the same
+    // silent-drop bug `isActive` had. It only ever persisted because the editor
+    // follows the callable with its own updateDoc. Accepted here so the callable
+    // is the whole truth again and that second write is a fallback rather than
+    // the only thing that works.
+    program,
   } = request.data || {};
 
   if (!volunteerId) throw new HttpsError('invalid-argument', 'volunteerId is required.');
@@ -126,6 +133,13 @@ exports.updateVolunteerAccount = onCall({ region: 'us-central1' }, async (reques
   const SCOPE_KINDS = ['global', 'area', 'mandal', 'intersect', 'union', 'none'];
   if (scopeKind !== undefined && scopeKind !== null && !SCOPE_KINDS.includes(scopeKind)) {
     throw new HttpsError('invalid-argument', `scopeKind must be one of: ${SCOPE_KINDS.join(', ')}.`);
+  }
+
+  // Whitelisted for the same reason as scopeKind: a free-text program would split
+  // the roster into a third, invisible group that no screen filters for.
+  const PROGRAMS = ['Yuvak', 'Bal Mandal'];
+  if (program !== undefined && program !== null && !PROGRAMS.includes(program)) {
+    throw new HttpsError('invalid-argument', `program must be one of: ${PROGRAMS.join(', ')}.`);
   }
 
   const isSelf = request.auth.uid === volunteerId;
@@ -305,6 +319,10 @@ exports.updateVolunteerAccount = onCall({ region: 'us-central1' }, async (reques
       // Null lets it fall through to the role and then to that inference.
       if (scopeKind !== undefined) updateData.scopeKind = scopeKind || null;
       if (isActive !== undefined) updateData.isActive = !!isActive;
+      // Inside the manage_users branch with the rest: which program a volunteer
+      // belongs to decides which contacts and events they are shown, so it is not
+      // a field they may set on themselves.
+      if (program !== undefined) updateData.program = program || 'Yuvak';
     }
 
     await db.collection('volunteers').doc(volunteerId).update(updateData);

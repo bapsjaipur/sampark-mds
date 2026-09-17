@@ -9,19 +9,32 @@
 // that. reassignContacts additionally supports unassigning (target = nobody),
 // which the sheet version could not do — it required a target name and silently
 // did nothing when left blank.
+// PHASE 40 — and a third tool, the one used weekly rather than twice a year:
+// UnbatchedContactsPanel, "who isn't in a batch". It answers the question that
+// used to force a full re-Generate every time a few contacts were added mid-week.
+// It carries its own permission gate (generate_batches) because the other two
+// tools here are assign_batches — cutting batches and handing them out are
+// deliberately separate permissions, and this tab now shows whichever of the
+// three you are actually allowed to use.
 import { useState } from 'react';
 import { ArrowRightLeft, ShieldAlert } from 'lucide-react';
 import { reassignContacts, clearAllBatches } from '../../services/batchService';
+import { usePermissions } from '../../hooks/usePermissions';
+import { PERMISSIONS } from '../../constants/permissions';
 import { useToast } from '../../contexts/ToastContext';
 import { Input, Label } from '../ui/Input';
 import SearchableSelect from '../ui/SearchableSelect';
+import UnbatchedContactsPanel from './UnbatchedContactsPanel';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 
 const CLEAR_PHRASE = 'DELETE ALL BATCHES';
 
-export default function BatchAdminTools({ volunteers }) {
+export default function BatchAdminTools({ volunteers, areas = [], mandals = [], batchRows = null, scoped = false }) {
   const { showToast } = useToast();
+  const { hasPermission } = usePermissions();
+  const canAssign = hasPermission(PERMISSIONS.ASSIGN_BATCHES);
+  const canGenerate = hasPermission(PERMISSIONS.GENERATE_BATCHES);
 
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -72,6 +85,14 @@ export default function BatchAdminTools({ volunteers }) {
 
   return (
     <div className="space-y-4">
+      {/* First, because it is the only one of the three that has a reason to be
+          opened every week. The other two are for a volunteer leaving and for
+          starting the year over. */}
+      {canGenerate && (
+        <UnbatchedContactsPanel areas={areas} mandals={mandals} batchRows={batchRows} scoped={scoped} />
+      )}
+
+      {canAssign && (
       <Card className="p-4">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-slate-900">
           <ArrowRightLeft className="h-4 w-4 text-slate-400" /> Hand over a volunteer's batches
@@ -111,7 +132,9 @@ export default function BatchAdminTools({ volunteers }) {
           {moving ? 'Moving…' : 'Move batches'}
         </Button>
       </Card>
+      )}
 
+      {canAssign && (
       <Card className="border-rose-200 p-4">
         <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-rose-700">
           <ShieldAlert className="h-4 w-4" /> Delete every batch
@@ -132,6 +155,7 @@ export default function BatchAdminTools({ volunteers }) {
           {clearing ? 'Deleting…' : 'Delete all batches'}
         </Button>
       </Card>
+      )}
     </div>
   );
 }
