@@ -30,6 +30,7 @@ import { exportSeasonPdf } from '../../lib/seasonExports';
 import { Select } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { useToast } from '../../contexts/ToastContext';
+import { confirmDialog } from '../ui/ConfirmHost';
 import { usePermissions } from '../../hooks/usePermissions';
 import { PERMISSIONS } from '../../constants/permissions';
 import { setCallingPoolBulk } from '../../services/callingPoolService';
@@ -413,14 +414,14 @@ export default function SabhaAnalytics({ events, byEvent, individuals, mandals =
 
     const verb = inPool ? 'Add' : 'Remove';
     const where = inPool ? 'to the follow-up calling list' : 'from the follow-up calling list';
-    // eslint-disable-next-line no-restricted-globals, no-alert
-    const ok = window.confirm(
-      `${verb} ${targets.length} contact${targets.length === 1 ? '' : 's'} ${where}?\n\n`
-      + (inPool
+    const ok = await confirmDialog({
+      title: `${verb} ${targets.length} contact${targets.length === 1 ? '' : 's'} ${where}?`,
+      message: inPool
         ? 'They will be included when batches are generated for weekly follow-up.'
-        : 'They stay on the roster and keep their history — they just stop being pulled into weekly batches. '
-          + 'A yearly sweep can still reach them: Batches → Generate → "Everyone on the roster".'),
-    );
+        : 'They stay on the roster and keep their history — they just stop being pulled into weekly batches. A yearly sweep can still reach them: Batches → Generate → “Everyone on the roster”.',
+      confirmText: verb,
+      tone: inPool ? 'default' : 'danger',
+    });
     if (!ok) return;
 
     setPoolBusy(key);

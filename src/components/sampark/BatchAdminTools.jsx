@@ -22,6 +22,7 @@ import { reassignContacts, clearAllBatches } from '../../services/batchService';
 import { usePermissions } from '../../hooks/usePermissions';
 import { PERMISSIONS } from '../../constants/permissions';
 import { useToast } from '../../contexts/ToastContext';
+import { confirmDialog } from '../ui/ConfirmHost';
 import { Input, Label } from '../ui/Input';
 import SearchableSelect from '../ui/SearchableSelect';
 import UnbatchedContactsPanel from './UnbatchedContactsPanel';
@@ -49,7 +50,11 @@ export default function BatchAdminTools({ volunteers, areas = [], mandals = [], 
   async function handleReassign() {
     if (!from) return;
     const target = to ? nameOf(to) : 'nobody (they become unassigned)';
-    if (!window.confirm(`Move every batch belonging to ${nameOf(from)} to ${target}?`)) return;
+    const ok = await confirmDialog({
+      title: `Move every batch belonging to ${nameOf(from)} to ${target}?`,
+      confirmText: 'Move batches',
+    });
+    if (!ok) return;
     setMoving(true);
     try {
       const res = await reassignContacts({ fromVolunteerId: from, toVolunteerId: to || null });

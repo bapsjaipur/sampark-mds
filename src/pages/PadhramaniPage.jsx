@@ -21,14 +21,42 @@ import {
 } from "lucide-react";
 import { exportPadhramaniDayPdf, exportBlankFormPdf, exportCampaignPdf } from "../lib/pdfExports";
 import { db } from "../lib/firebase";
+import { getDocs as getDocsMetered } from "../lib/fsMetered";
 import { useAuth } from "../hooks/usePermissions";
 import { useAreasAndMandals } from "../hooks/useAreasAndMandals";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import Modal from "../components/ui/Modal";
 import { useToast } from "../contexts/ToastContext";
+import { confirmDialog } from "../components/ui/ConfirmHost";
 import RequirePermission from "../components/RequirePermission";
 import CampaignSummary from "../components/admin-tools/CampaignSummary";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 43 — READS. Padhramani reads the whole `individuals` collection three
+// ways: the primary-name lookup in each of the two scheduling modals, and the
+// full member-details sweep behind the CSV export. getDocs() is billed on EVERY
+// call even in production — the IndexedDB cache only ever helps listeners — so
+// opening a modal twice cost ~3,100 reads twice over. This memoises the sweep for
+// a short window so the two modals and the export share ONE fetch. The TTL
+// matches the app's other short caches (countCache in useAllContacts, the
+// shared-listener grace window); Padhramani planning targets existing families,
+// so a few minutes' staleness in the members list is immaterial. Metered, so the
+// one fetch it makes shows up on the usage dashboard instead of being invisible.
+// ─────────────────────────────────────────────────────────────────────────────
+let individualsCache = null; // { at:number, rows:Array } | null
+const INDIVIDUALS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+async function loadAllIndividualsCached() {
+  const now = Date.now();
+  if (individualsCache && now - individualsCache.at < INDIVIDUALS_CACHE_TTL_MS) {
+    return individualsCache.rows;
+  }
+  const snap = await getDocsMetered(collection(db, "individuals"));
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  individualsCache = { at: now, rows };
+  return rows;
+}
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -418,7 +446,6 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
 
   useEffect(() => {
     let hhQuery = collection(db, "households");
-    let indQuery = collection(db, "individuals");
 
     if (!isAdmin && currentUser?.assignedAreas?.length > 0) {
       // Scoped queries to bypass firestore.rules permission denied errors
@@ -438,9 +465,9 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
     Promise.all([
       loadVolunteersAndRoles(),
       getDocs(hhQuery),
-      getDocs(indQuery),
+      loadAllIndividualsCached(),
       getDocs(collection(db, "padhramaniEvents")),
-    ]).then(([vols, hhSnap, indSnap, evSnap]) => {
+    ]).then(([vols, hhSnap, individuals, evSnap]) => {
       setVolunteers(vols);
       let hhs = hhSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
@@ -454,8 +481,7 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
       setAllHouseholds(hhs);
       setAllEvents(evSnap.docs.map(d => ({id: d.id, ...d.data()})));
       const names = {};
-      indSnap.docs.forEach((d) => {
-        const ind = d.data();
+      individuals.forEach((ind) => {
         if (!ind.householdId) return;
         if (ind.isPrimary || !names[ind.householdId]) names[ind.householdId] = ind.name;
       });
@@ -722,9 +748,9 @@ function EditHouseholdsModal({ event, onClose }) {
 
     Promise.all([
       getDocs(hhQuery),
-      getDocs(collection(db, "individuals")),
+      loadAllIndividualsCached(),
       getDocs(collection(db, "padhramaniEvents")),
-    ]).then(([hhSnap, indSnap, evSnap]) => {
+    ]).then(([hhSnap, individuals, evSnap]) => {
       let hhs = hhSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
       if (!isAdmin && currentUser?.assignedAreas?.length > 0) {
@@ -736,8 +762,7 @@ function EditHouseholdsModal({ event, onClose }) {
 
       setAllHouseholds(hhs);
       const names = {};
-      indSnap.docs.forEach((d) => {
-        const ind = d.data();
+      individuals.forEach((ind) => {
         if (!ind.householdId) return;
         if (ind.isPrimary || !names[ind.householdId]) names[ind.householdId] = ind.name;
       });
@@ -1078,7 +1103,12 @@ export default function PadhramaniPage() {
   );
 
   async function handleDelete(eventId) {
-    if (!window.confirm("Remove this Padhramani event?")) return;
+    const ok = await confirmDialog({
+      title: "Remove this Padhramani event?",
+      confirmText: "Remove",
+      tone: "danger",
+    });
+    if (!ok) return;
     try {
       await deleteDoc(doc(db, "padhramaniEvents", eventId));
       showToast({ type: "success", message: "Event removed." });
@@ -1114,9 +1144,8 @@ export default function PadhramaniPage() {
   };
 
   const exportCSV = async () => {
-    // 1. Fetch all members once for efficient lookup
-    const indSnap = await getDocs(collection(db, "individuals"));
-    const allIndividuals = indSnap.docs.map(d => ({id: d.id, ...d.data()}));
+    // Members for the household lookup — shared, cached fetch (see loadAllIndividualsCached).
+    const allIndividuals = await loadAllIndividualsCached();
 
     // Create map for householdId -> individualList
     const membersByHH = {};

@@ -28,7 +28,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { resolveScope, SCOPE_KINDS } from '../lib/scope';
 import { DEFAULT_ROLE_RANK } from '../constants/roleTemplates';
@@ -49,8 +49,10 @@ import { getUsage, meterSnapshot, meterWrites } from '../lib/usageMeter';
 // backgrounded tab is not somebody being present, which was the thing being
 // measured. Together that is ~50 writes a day instead of ~160.
 //
-// The same write also carries this device's read/write tally, so the usage
-// dashboard can add up the whole team without a single write of its own.
+// The same beat also carries this device's read/write tally. Both land in a
+// separate presence/{uid} document (see usePresence.js), NOT on the volunteer
+// doc — writing them here used to re-deliver the volunteer's record to every
+// admin screen holding the roster listener, once per beat per person online.
 // ─────────────────────────────────────────────────────────────────────────────
 const HEARTBEAT_MS = 10 * 60 * 1000;
 
@@ -206,12 +208,13 @@ export function PermissionsProvider({ children }) {
 
       // The heartbeat. See the note at the top of the file for the arithmetic.
       // `usage` rides along on a write that was happening anyway, which is how the
-      // usage dashboard can report the whole team's spend for free.
+      // usage dashboard can report the whole team's spend for free. Merge, so a
+      // beat never wipes the lastLoginAt the login stamp wrote.
       const beat = () => {
         if (!auth.currentUser) return;
         if (typeof document !== 'undefined' && document.hidden) return;
         const u = getUsage();
-        updateDoc(doc(db, 'volunteers', user.uid), {
+        setDoc(doc(db, 'presence', user.uid), {
           lastSeenAt: serverTimestamp(),
           usage: {
             day: u.day,
@@ -220,7 +223,7 @@ export function PermissionsProvider({ children }) {
             deletes: u.deletes,
             at: Date.now(),
           },
-        }).then(() => meterWrites(1, 'heartbeat')).catch(() => {});
+        }, { merge: true }).then(() => meterWrites(1, 'heartbeat')).catch(() => {});
       };
       heartbeatInterval = setInterval(beat, HEARTBEAT_MS);
 
@@ -243,11 +246,11 @@ export function PermissionsProvider({ children }) {
           if (!stampedLogin) {
             stampedLogin = true;
             const u = getUsage();
-            updateDoc(doc(db, 'volunteers', user.uid), {
+            setDoc(doc(db, 'presence', user.uid), {
               lastLoginAt: serverTimestamp(),
               lastSeenAt: serverTimestamp(),
               usage: { day: u.day, reads: u.reads, writes: u.writes, deletes: u.deletes, at: Date.now() },
-            }).then(() => meterWrites(1, 'login stamp')).catch(() => {});
+            }, { merge: true }).then(() => meterWrites(1, 'login stamp')).catch(() => {});
           }
 
           if (!vSnap.exists()) {

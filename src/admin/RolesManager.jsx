@@ -42,6 +42,7 @@ import {
 import { SCOPE_KINDS, SCOPE_KIND_META, ALL_SCOPE_KINDS, statedScopeKind, inferScopeKind, roleStatedScopeKind } from '../lib/scope';
 import { Input, Select, Label } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
+import { confirmDialog } from '../components/ui/ConfirmHost';
 import { cn } from '../lib/cn';
 
 function RoleKeyBadge({ permissions }) {
@@ -473,20 +474,24 @@ function MergePanel({ roles, holdersByRole, holdersLoaded, canManageUsers, busy,
     && plan.scopeKind !== statedRoleScopeKind(plan.target)
     && plan.scopeKind !== statedRoleScopeKind(plan.source);
 
-  function confirmAndMerge() {
+  async function confirmAndMerge() {
     if (!plan) return;
     const names = plan.movers.slice(0, 6).map((v) => v.name || v.id).join(', ');
     const more = plan.movers.length > 6 ? ` and ${plan.movers.length - 6} more` : '';
-    if (!window.confirm(
-      `Merge "${plan.source.name}" into "${plan.target.name}"?\n\n`
-      + `"${plan.target.name}" keeps ${plan.permissions.length} permission(s)`
-      + `${plan.gained.length > 0 ? ` — gaining ${plan.gained.length} from "${plan.source.name}"` : ''}.\n`
-      + `Scope: ${scopeLabel(plan.scopeKind)}\n`
-      + `Rank: ${plan.rank}\n`
-      + `Volunteers moved: ${plan.movers.length}${plan.movers.length ? ` (${names}${more})` : ''}\n\n`
-      + `"${plan.source.name}" is then deleted.\n\n`
-      + 'Nobody loses access: the kept role ends up with everything both roles granted.'
-    )) return;
+    const go = await confirmDialog({
+      title: `Merge "${plan.source.name}" into "${plan.target.name}"?`,
+      message:
+        `"${plan.target.name}" keeps ${plan.permissions.length} permission(s)`
+        + `${plan.gained.length > 0 ? ` — gaining ${plan.gained.length} from "${plan.source.name}"` : ''}.\n`
+        + `Scope: ${scopeLabel(plan.scopeKind)}\n`
+        + `Rank: ${plan.rank}\n`
+        + `Volunteers moved: ${plan.movers.length}${plan.movers.length ? ` (${names}${more})` : ''}\n\n`
+        + `"${plan.source.name}" is then deleted.\n\n`
+        + 'Nobody loses access: the kept role ends up with everything both roles granted.',
+      confirmText: 'Merge roles',
+      tone: 'danger',
+    });
+    if (!go) return;
     onMerge(plan).then((ok) => {
       if (ok) { setSourceId(''); setTargetId(''); setScopeOverride(''); }
     });
@@ -1143,11 +1148,13 @@ function RolesManagerInner() {
     const next = current.includes(permission) ? current.filter((p) => p !== permission) : [...current, permission];
 
     if (!current.includes(permission) && DANGEROUS_PERMISSIONS.includes(permission)) {
-      if (!window.confirm(
-        `Grant "${PERMISSION_LABELS[permission]}" to ${role.name}?\n\n`
-        + `${PERMISSION_HELP[permission]}\n\n`
-        + 'Everyone assigned this role gets it immediately.'
-      )) return;
+      const ok = await confirmDialog({
+        title: `Grant "${PERMISSION_LABELS[permission]}" to ${role.name}?`,
+        message: `${PERMISSION_HELP[permission]}\n\nEveryone assigned this role gets it immediately.`,
+        confirmText: 'Grant',
+        tone: 'danger',
+      });
+      if (!ok) return;
     }
 
     setSavingCell(cellKey);
@@ -1232,12 +1239,16 @@ function RolesManagerInner() {
   async function applyPreset(role, presetKey) {
     const preset = getPreset(presetKey);
     if (!preset) return;
-    if (!window.confirm(
-      `Replace all permissions on "${role.name}" with the ${preset.name} preset?\n\n`
-      + `${preset.permissions.length} permission(s) will be set, everything else cleared, and the `
-      + `scope set to "${SCOPE_KIND_META[preset.scopeKind].label}".\n\n`
-      + 'This takes effect immediately for everyone assigned this role.'
-    )) return;
+    const ok = await confirmDialog({
+      title: `Replace all permissions on "${role.name}" with the ${preset.name} preset?`,
+      message:
+        `${preset.permissions.length} permission(s) will be set, everything else cleared, and the `
+        + `scope set to "${SCOPE_KIND_META[preset.scopeKind].label}".\n\n`
+        + 'This takes effect immediately for everyone assigned this role.',
+      confirmText: 'Apply preset',
+      tone: 'danger',
+    });
+    if (!ok) return;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -1432,17 +1443,27 @@ function RolesManagerInner() {
     // access": their roleRef stops resolving and the app renders a blank shell
     // with no explanation, because nothing surfaces error:'role-not-found'.
     if (holders.length > 0) {
-      if (!window.confirm(
-        `"${role.name}" is still assigned to ${holders.length} volunteer(s):\n\n`
-        + `${holders.slice(0, 10).map((v) => `• ${v.name || v.id}`).join('\n')}`
-        + `${holders.length > 10 ? `\n• …and ${holders.length - 10} more` : ''}\n\n`
-        + 'Deleting it now leaves them with a role that no longer exists — they will sign in to a '
-        + 'blank app with no error message.\n\n'
-        + 'If this role is a duplicate, cancel and use "Merge duplicate roles" instead: that moves '
-        + 'everyone across first, then deletes it.\n\nDelete anyway?'
-      )) return;
-    } else if (!window.confirm(`Delete role "${role.name}"? No volunteer is assigned to it.`)) {
-      return;
+      const ok = await confirmDialog({
+        title: `Delete "${role.name}", still assigned to ${holders.length} volunteer(s)?`,
+        message:
+          `${holders.slice(0, 10).map((v) => `• ${v.name || v.id}`).join('\n')}`
+          + `${holders.length > 10 ? `\n• …and ${holders.length - 10} more` : ''}\n\n`
+          + 'Deleting it now leaves them with a role that no longer exists — they will sign in to a '
+          + 'blank app with no error message.\n\n'
+          + 'If this role is a duplicate, cancel and use "Merge duplicate roles" instead: that moves '
+          + 'everyone across first, then deletes it.',
+        confirmText: 'Delete anyway',
+        tone: 'danger',
+      });
+      if (!ok) return;
+    } else {
+      const ok = await confirmDialog({
+        title: `Delete role "${role.name}"?`,
+        message: 'No volunteer is assigned to it.',
+        confirmText: 'Delete',
+        tone: 'danger',
+      });
+      if (!ok) return;
     }
     setError(null);
     try {

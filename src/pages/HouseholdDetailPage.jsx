@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import { ArrowLeft, Pencil, Trash2, Plus, Search, ChevronLeft, ChevronRight, X, Merge, Clock, HeartHandshake, MapPin } from "lucide-react";
-import { collection, query, where, orderBy, onSnapshot, getDocs, writeBatch, serverTimestamp, doc, updateDoc } from "firebase/firestore";
+import { collection, query, where, orderBy, limit, onSnapshot, getDocs, writeBatch, serverTimestamp, doc, updateDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useHouseholds } from "../hooks/useHouseholds";
 import { useIndividuals } from "../hooks/useIndividuals";
@@ -18,6 +18,7 @@ import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Avatar } from "../components/ui/Avatar";
 import { useToast } from "../contexts/ToastContext";
+import { confirmDialog } from "../components/ui/ConfirmHost";
 import { formatDate } from "../lib/dateHelpers";
 import { logActivity } from "../lib/activityLog";
 import { useAuth } from "../hooks/usePermissions";
@@ -135,11 +136,14 @@ function ActivityTimeline({ householdId, memberIds }) {
     const ids = [householdId, ...memberIds].filter(Boolean);
     if (!ids.length) { setLoading(false); return; }
 
-    // Query by householdId in details, plus activity directly on members
+    // Query by householdId in details, plus activity directly on members.
+    // limit() matches the 20 the timeline renders below — no point paying to read
+    // an unbounded history the UI then throws away.
     const q = query(
       collection(db, "activity"),
       where("individualId", "in", ids.slice(0, 10)),
-      orderBy("timestamp", "desc")
+      orderBy("timestamp", "desc"),
+      limit(20)
     );
     const unsub = onSnapshot(q, (snap) => {
       setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -172,16 +176,17 @@ function ActivityTimeline({ householdId, memberIds }) {
 // ── 1.7 Merge Households ──────────────────────────────────────────────────
 function MergeHouseholdModal({ sourceHousehold, onClose }) {
   const [search, setSearch] = useState("");
-  const [allHouseholds, setAllHouseholds] = useState([]);
   const [merging, setMerging] = useState(false);
   const { showToast } = useToast();
   const { volunteer } = useAuth();
-
-  useEffect(() => {
-    getDocs(collection(db, "households")).then((snap) =>
-      setAllHouseholds(snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((h) => h.id !== sourceHousehold.id))
-    );
-  }, [sourceHousehold.id]);
+  // Reuse the shared households listener the page already opened (PHASE 24) instead
+  // of firing a second full sweep — the picker replays it for free, and it is
+  // scoped, so the list can only offer households this volunteer may actually see.
+  const { households } = useHouseholds();
+  const allHouseholds = useMemo(
+    () => households.filter((h) => h.id !== sourceHousehold.id),
+    [households, sourceHousehold.id]
+  );
 
   const candidates = allHouseholds.filter((h) => {
     const q = search.trim().toLowerCase();
@@ -190,7 +195,13 @@ function MergeHouseholdModal({ sourceHousehold, onClose }) {
   });
 
   async function handleMerge(target) {
-    if (!window.confirm(`Move all members from "${sourceHousehold.address || "this household"}" into "${target.address || target.id}"? The source household will be deleted.`)) return;
+    const ok = await confirmDialog({
+      title: "Merge households?",
+      message: `Move all members from “${sourceHousehold.address || "this household"}” into “${target.address || target.id}”? The source household will be deleted.`,
+      confirmText: "Merge",
+      tone: "danger",
+    });
+    if (!ok) return;
     setMerging(true);
     try {
       const membersSnap = await getDocs(query(collection(db, "individuals"), where("householdId", "==", sourceHousehold.id)));

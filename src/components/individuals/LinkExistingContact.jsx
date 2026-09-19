@@ -1,9 +1,8 @@
 // src/components/individuals/LinkExistingContact.jsx
-import { useEffect, useMemo, useState } from 'react';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { useMemo, useState } from 'react';
 import { moveIndividualToHousehold } from '../../services/householdService';
 import { useToast } from '../../contexts/ToastContext';
+import { useAllContacts } from '../../hooks/useAllContacts';
 import { Input, Select, Label } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { Avatar } from '../ui/Avatar';
@@ -16,15 +15,13 @@ const RELATIONS = [
 
 export default function LinkExistingContact({ currentHouseholdId, onLinked, onCancel }) {
   const { showToast } = useToast();
-  const [allIndividuals, setAllIndividuals] = useState([]);
+  // Reuse the shared, scoped contacts listener the page already has open (PHASE 24)
+  // rather than opening a second full individuals sweep just for this search box.
+  const { contacts: allIndividuals } = useAllContacts();
   const [search, setSearch] = useState('');
   const [moving, setMoving] = useState(null);
   // pending = { individual, relation } — shown when user clicks "Move here"
   const [pending, setPending] = useState(null);
-
-  useEffect(() => onSnapshot(query(collection(db, 'individuals'), orderBy('name')), (snap) => {
-    setAllIndividuals(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-  }), []);
 
   const results = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -32,6 +29,7 @@ export default function LinkExistingContact({ currentHouseholdId, onLinked, onCa
     return allIndividuals
       .filter((i) => i.householdId !== currentHouseholdId)
       .filter((i) => i.name?.toLowerCase().includes(q) || i.mobile?.includes(q))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
       .slice(0, 15);
   }, [search, allIndividuals, currentHouseholdId]);
 

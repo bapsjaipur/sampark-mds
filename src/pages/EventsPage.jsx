@@ -48,6 +48,7 @@ import { useAreasAndMandals } from '../hooks/useAreasAndMandals';
 import { useVolunteers } from '../hooks/useVolunteers';
 import { useAuth } from '../hooks/usePermissions';
 import { useToast } from '../contexts/ToastContext';
+import { confirmDialog } from '../components/ui/ConfirmHost';
 import EventForm from '../components/events/EventForm';
 import AttendanceMarking from '../components/events/AttendanceMarking';
 import EventExportButtons from '../components/events/EventExportButtons';
@@ -265,10 +266,15 @@ export default function EventsPage() {
 
   async function handleDelete(event) {
     const marked = attendance.counts[event.id] || 0;
-    const warning = marked > 0
-      ? `Delete "${event.title}"? ${marked} attendance record${marked === 1 ? '' : 's'} will be left orphaned — they stay in the database but stop appearing anywhere. Export the CSV first if you need it.`
-      : `Delete "${event.title}"?`;
-    if (!window.confirm(warning)) return;
+    const ok = await confirmDialog({
+      title: `Delete “${event.title}”?`,
+      message: marked > 0
+        ? `${marked} attendance record${marked === 1 ? '' : 's'} will be left orphaned — they stay in the database but stop appearing anywhere. Export the CSV first if you need it.`
+        : undefined,
+      confirmText: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
     await deleteEvent(event.id);
     if (selectedEventId === event.id) setSelectedEventId(null);
   }

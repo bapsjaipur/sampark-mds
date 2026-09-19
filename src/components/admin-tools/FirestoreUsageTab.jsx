@@ -13,7 +13,7 @@
 //   THIS DEVICE  — live, exact, updated as you click. Counted by src/lib/usageMeter
 //                  from the instrumented queries.
 //   THE TEAM     — every volunteer's own tally, which their heartbeat writes onto
-//                  their volunteer document every ten minutes. So it lags by up to
+//                  their presence document every ten minutes. So it lags by up to
 //                  ten minutes per person, and someone who closed the app mid-cycle
 //                  is short by whatever they spent after their last beat.
 //
@@ -33,6 +33,8 @@ import {
 } from '../../lib/usageMeter';
 import { sharedStores } from '../../lib/sharedQuery';
 import { useVolunteers } from '../../hooks/useVolunteers';
+import { usePresence } from '../../hooks/usePresence';
+import { confirmDialog } from '../ui/ConfirmHost';
 import { useAuth } from '../../hooks/usePermissions';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -73,6 +75,9 @@ export default function FirestoreUsageTab() {
   const [usage, setUsage] = useState(getUsage);
   const [stores, setStores] = useState(() => sharedStores());
   const { volunteers } = useVolunteers();
+  // PHASE 25 — each volunteer's own tally now rides on presence/{uid}, written by
+  // the heartbeat, instead of the volunteer doc. The roster still supplies names.
+  const { byId: presenceById } = usePresence();
   const { volunteer } = useAuth();
   const myId = volunteer?.id || null;
 
@@ -93,7 +98,7 @@ export default function FirestoreUsageTab() {
   // make the day look lost before it started.
   const team = useMemo(() => {
     const rows = volunteers
-      .map((v) => ({ id: v.id, name: v.name || v.mobile || v.id, u: v.usage }))
+      .map((v) => ({ id: v.id, name: v.name || v.mobile || v.id, u: presenceById.get(v.id)?.usage }))
       .filter((r) => (r.id === myId) || (r.u && r.u.day === today))
       .map((r) => {
         // This device's own row comes from the live meter rather than from its last
@@ -117,7 +122,7 @@ export default function FirestoreUsageTab() {
       reporting: rows.length,
       silent: Math.max(0, volunteers.length - rows.length),
     };
-  }, [volunteers, today, myId, usage]);
+  }, [volunteers, today, myId, usage, presenceById]);
 
   const sources = useMemo(() => Object.entries(usage.bySource || {})
     .map(([name, v]) => ({ name, ...v }))
@@ -144,8 +149,13 @@ export default function FirestoreUsageTab() {
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => {
-              if (window.confirm('Reset this device’s counter to zero? It only clears the local tally — it does not give you more quota.')) resetUsage();
+            onClick={async () => {
+              const ok = await confirmDialog({
+                title: 'Reset this device’s counter to zero?',
+                message: 'It only clears the local tally — it does not give you more quota.',
+                confirmText: 'Reset',
+              });
+              if (ok) resetUsage();
             }}
           >
             <RotateCcw className="h-3.5 w-3.5" /> Reset counter

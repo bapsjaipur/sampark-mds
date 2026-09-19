@@ -38,6 +38,7 @@ import { useAuth } from '../../hooks/usePermissions';
 import { useSettings } from '../../hooks/useSettings';
 import { useVolunteerIdentity } from '../../hooks/useVolunteerIdentity';
 import { useToast } from '../../contexts/ToastContext';
+import { confirmDialog } from '../ui/ConfirmHost';
 import {
   buildWhatsAppUrl,
   buildTelUrl,
@@ -387,7 +388,13 @@ export default function RemindersDashboard() {
   }
 
   async function disconnectGoogle() {
-    if (!window.confirm('Disconnect Google Calendar? Events already added stay in your calendar; future changes just stop syncing.')) return;
+    const ok = await confirmDialog({
+      title: 'Disconnect Google Calendar?',
+      message: 'Events already added stay in your calendar; future changes just stop syncing.',
+      confirmText: 'Disconnect',
+      tone: 'danger',
+    });
+    if (!ok) return;
     setGcalBusy(true);
     try {
       await disconnectGoogleCalendar();

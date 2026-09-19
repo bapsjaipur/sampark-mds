@@ -17,7 +17,7 @@
 // The hamburger drawer is kept, but it is no longer the ONLY way to navigate on
 // a phone — a bottom tab bar carries the 4 destinations that role uses most,
 // within thumb reach, plus a Menu button for the rest.
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { NavLink, Link, Outlet, Navigate, useLocation } from 'react-router-dom';
 import { signOut } from 'firebase/auth';
 import { LogOut, Menu, X, ChevronsLeft, ChevronsRight, MoreHorizontal } from 'lucide-react';
@@ -213,7 +213,13 @@ export default function AppLayout() {
           padding clears the mobile tab bar; without it the last row of any list
           sits permanently underneath it and can't be tapped. */}
       <main className={cn('min-w-0 transition-all', collapsed ? 'md:pl-16' : 'md:pl-56', !immersive && 'pb-14 md:pb-0')}>
-        <Outlet />
+        {/* PHASE 43 — the boundary for React.lazy() route chunks. It sits INSIDE
+            the shell (sidebar + tab bar already rendered above/below), so a page
+            arriving on its own chunk shows this line rather than blanking the
+            whole screen the way a top-level Suspense would. */}
+        <Suspense fallback={<div className="p-6 text-sm text-slate-400">Loading…</div>}>
+          <Outlet />
+        </Suspense>
       </main>
 
       {!immersive && <BottomTabBar roleView={roleView} onOpenMenu={() => setMobileOpen(true)} />}

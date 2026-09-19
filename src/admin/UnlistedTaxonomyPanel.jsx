@@ -57,6 +57,7 @@ import {
 // had better show up on the usage dashboard.
 import { getDocs, addDoc } from '../lib/fsMetered';
 import { auth, db } from '../lib/firebase';
+import { confirmDialog } from '../components/ui/ConfirmHost';
 import { logActivity } from '../lib/activityLog';
 import {
   TAXONOMY_TARGETS, describeTaxonomyError, describeUsage, renameTaxonomyValue,
@@ -290,13 +291,16 @@ export function UnlistedTaxonomyPanel({ kind, rows = [], onDone }) {
   async function handleMerge(orphan) {
     const target = mergeInto[orphan.value] || orphan.sameAs || '';
     if (!target) return;
-    const go = window.confirm(
-      `Move every record from “${orphan.value}” onto ${copy.one} “${target}”?\n\n`
-      + `This rewrites ${describeUsage(orphan)}.\n\n`
-      + `“${orphan.value}” is not in the ${copy.one} list, so there is nothing to delete — `
-      + `once the records are moved the name simply stops existing.\n\n`
-      + 'This cannot be undone. Leave this page open until it finishes.',
-    );
+    const go = await confirmDialog({
+      title: `Move every record from “${orphan.value}” onto ${copy.one} “${target}”?`,
+      message:
+        `This rewrites ${describeUsage(orphan)}.\n\n`
+        + `“${orphan.value}” is not in the ${copy.one} list, so there is nothing to delete — `
+        + `once the records are moved the name simply stops existing.\n\n`
+        + 'This cannot be undone. Leave this page open until it finishes.',
+      confirmText: 'Move records',
+      tone: 'danger',
+    });
     if (!go) return;
 
     setError(null);

@@ -37,6 +37,7 @@ import {
 } from '../../services/batchService';
 import { useAuth } from '../../hooks/usePermissions';
 import { useToast } from '../../contexts/ToastContext';
+import { confirmDialog } from '../ui/ConfirmHost';
 // PHASE 42 — the per-batch outcome breakdown below reads the LIVE vocabulary,
 // not the seed constant, so an outcome an admin renamed on Admin Tools reads the
 // same here as it does on the calling screen.
@@ -240,9 +241,15 @@ export default function BatchList({ volunteers, batches = [], loading = false })
 
   async function handleAssign(batch, volunteerId) {
     if (!volunteerId) return;
-    if (resetOnAssign && !window.confirm(
-      `"Clear call history" is on.\n\nAssigning "${batch.name}" to ${volunteerName(volunteerId)} will ERASE the status and reference of all ${batch.total} contacts in it. This cannot be undone.\n\nContinue?`
-    )) return;
+    if (resetOnAssign) {
+      const ok = await confirmDialog({
+        title: `Assign “${batch.name}” with call history cleared?`,
+        message: `“Clear call history” is on. Assigning to ${volunteerName(volunteerId)} will ERASE the status and reference of all ${batch.total} contacts in it. This cannot be undone.`,
+        confirmText: 'Assign & clear',
+        tone: 'danger',
+      });
+      if (!ok) return;
+    }
 
     setBusyId(batch.id);
     try {
@@ -276,9 +283,13 @@ export default function BatchList({ volunteers, batches = [], loading = false })
   }
 
   async function handleDelete(batch) {
-    if (!window.confirm(
-      `Delete "${batch.name}"?\n\nThe ${batch.total} contacts in it keep their status and history — only the assignment is removed.`
-    )) return;
+    const ok = await confirmDialog({
+      title: `Delete “${batch.name}”?`,
+      message: `The ${batch.total} contacts in it keep their status and history — only the assignment is removed.`,
+      confirmText: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
     setBusyId(batch.id);
     try {
       await deleteBatch(batch.id);

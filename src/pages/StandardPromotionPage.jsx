@@ -21,6 +21,7 @@ import { useAreasAndMandals } from '../hooks/useAreasAndMandals';
 import { canRunStandardPromotion } from '../lib/roleView';
 import { matchesScope, writableAreas, writableMandals } from '../lib/scope';
 import { useToast } from '../contexts/ToastContext';
+import { confirmDialog } from '../components/ui/ConfirmHost';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -196,11 +197,13 @@ export default function StandardPromotionPage() {
   }, [contacts]);
 
   async function executePromotion() {
-    if (!window.confirm(
-      `This will promote ${promotionPlan.totalStudents} students and transfer ${promotionPlan.transferCount} to Yuvak Mandal. Continue?`
-    )) {
-      return;
-    }
+    const ok = await confirmDialog({
+      title: 'Run standard promotion?',
+      message: `This will promote ${promotionPlan.totalStudents} students and transfer ${promotionPlan.transferCount} to Yuvak Mandal.`,
+      confirmText: 'Promote',
+      tone: 'danger',
+    });
+    if (!ok) return;
 
     setExecuting(true);
 

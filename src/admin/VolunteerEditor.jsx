@@ -23,6 +23,7 @@ import { RequirePermission } from '../components/RequirePermission';
 import { useAreasAndMandals } from '../hooks/useAreasAndMandals';
 import { useAllContacts } from '../hooks/useAllContacts';
 import { useVolunteers } from '../hooks/useVolunteers';
+import { usePresence } from '../hooks/usePresence';
 import { useAuth } from '../hooks/usePermissions';
 import { isValidPhone } from '../lib/authHelpers';
 import { Input, Select, Label } from '../components/ui/Input';
@@ -883,7 +884,24 @@ function VolunteerEditorInner() {
   // PHASE 24 — the roster comes from the shared listener (see useVolunteers), so
   // this screen, Roles, Batches, Events and the Admin dashboard bill it once
   // between them instead of once each.
-  const { volunteers: allVolunteers } = useVolunteers();
+  const { volunteers: rawVolunteers } = useVolunteers();
+  // PHASE 25 — the roster's live fields (lastSeenAt / lastLoginAt / usage) now live
+  // in the presence collection, not on the volunteer doc. Merge them back on so
+  // buildVolunteerRows() and the "online now" dot read exactly what they always
+  // did. Opening this listener here (and on the usage tab) is the only place that
+  // pays for heartbeat churn now; the other roster screens no longer do. Falls back
+  // to any value still on the volunteer doc when presence has not reported yet.
+  const { byId: presenceById } = usePresence();
+  const allVolunteers = useMemo(() => rawVolunteers.map((v) => {
+    const p = presenceById.get(v.id);
+    if (!p) return v;
+    return {
+      ...v,
+      lastSeenAt: p.lastSeenAt ?? v.lastSeenAt,
+      lastLoginAt: p.lastLoginAt ?? v.lastLoginAt,
+      usage: p.usage ?? v.usage,
+    };
+  }), [rawVolunteers, presenceById]);
   const { permissions, scope } = useAuth();
   const isGlobalUserManager = permissions.includes('manage_users');
   // PHASE 41 — no `canApprove` gate any more. The callable returns only the rows

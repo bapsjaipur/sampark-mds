@@ -25,6 +25,7 @@ import { useAllContacts } from '../../hooks/useAllContacts';
 import { useAuth } from '../../hooks/usePermissions';
 import { describeScope, SCOPE_KINDS } from '../../lib/scope';
 import { useToast } from '../../contexts/ToastContext';
+import { confirmDialog } from '../ui/ConfirmHost';
 import { findLikelyDuplicates, findMissingInfo, findMissingAreaInHousehold } from '../../services/integrityService';
 import { backfillMemberAreas } from '../../services/bulkService';
 import MergeDuplicatesPanel from './MergeDuplicatesPanel';
@@ -86,7 +87,12 @@ function IntegrityReport({ onClose }) {
   const missingArea = useMemo(() => findMissingAreaInHousehold(contacts), [contacts]);
 
   async function handleBackfillAreas() {
-    if (!window.confirm(`Copy the household's Area onto ${missingArea.length} member(s) currently missing one? This only fills blanks — it never overwrites an area already set.`)) return;
+    const ok = await confirmDialog({
+      title: `Copy the household’s Area onto ${missingArea.length} member(s)?`,
+      message: 'This only fills blanks — it never overwrites an area already set.',
+      confirmText: 'Fill blanks',
+    });
+    if (!ok) return;
     setBackfilling(true);
     try {
       const { updated, skippedNoHouseholdArea } = await backfillMemberAreas(missingArea);

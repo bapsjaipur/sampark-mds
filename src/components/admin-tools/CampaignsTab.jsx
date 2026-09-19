@@ -5,6 +5,7 @@ import { Plus, Trash2, Pencil, X, Check } from 'lucide-react';
 import { db } from '../../lib/firebase';
 import { useAuth } from '../../hooks/usePermissions';
 import { useToast } from '../../contexts/ToastContext';
+import { confirmDialog } from '../ui/ConfirmHost';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 
@@ -58,7 +59,12 @@ export default function CampaignsTab() {
       return;
     }
 
-    if (!window.confirm(`Rename "${campaign.name}" to "${newName}"? All events associated with it will also be updated.`)) return;
+    const ok = await confirmDialog({
+      title: `Rename “${campaign.name}” to “${newName}”?`,
+      message: 'All events associated with it will also be updated.',
+      confirmText: 'Rename',
+    });
+    if (!ok) return;
 
     setProcessing(true);
     try {
@@ -91,7 +97,13 @@ export default function CampaignsTab() {
   }
 
   async function handleDelete(campaign) {
-    if (!window.confirm(`Delete campaign "${campaign.name}"? All associated events will be moved to 'Uncategorized'.`)) return;
+    const ok = await confirmDialog({
+      title: `Delete campaign “${campaign.name}”?`,
+      message: 'All associated events will be moved to ‘Uncategorized’.',
+      confirmText: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
     setProcessing(true);
     try {
       // 1. Move events to uncategorized (by deleting 'campaign' field or setting to "")

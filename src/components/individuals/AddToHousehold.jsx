@@ -1,21 +1,20 @@
 // src/components/individuals/AddToHousehold.jsx — Attio redesign.
-import { useEffect, useMemo, useState } from 'react';
-import { collection, onSnapshot } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { useMemo, useState } from 'react';
 import { moveIndividualToHousehold } from '../../services/householdService';
 import { useToast } from '../../contexts/ToastContext';
+import { useHouseholds } from '../../hooks/useHouseholds';
+import { useAllContacts } from '../../hooks/useAllContacts';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
 
 export default function AddToHousehold({ contact, onDone, onCancel }) {
   const { showToast } = useToast();
-  const [households, setHouseholds] = useState([]);
-  const [individuals, setIndividuals] = useState([]);
+  // Reuse the shared, scoped listeners the Contacts page already has open (PHASE 24)
+  // instead of opening a second households + individuals sweep just for this picker.
+  const { households } = useHouseholds();
+  const { contacts: individuals } = useAllContacts();
   const [search, setSearch] = useState('');
   const [moving, setMoving] = useState(false);
-
-  useEffect(() => onSnapshot(collection(db, 'households'), (snap) => setHouseholds(snap.docs.map((d) => ({ id: d.id, ...d.data() })))), []);
-  useEffect(() => onSnapshot(collection(db, 'individuals'), (snap) => setIndividuals(snap.docs.map((d) => ({ id: d.id, ...d.data() })))), []);
 
   const primaryNameByHousehold = useMemo(() => {
     const map = new Map();

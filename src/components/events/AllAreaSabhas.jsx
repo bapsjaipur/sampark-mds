@@ -34,6 +34,7 @@ import SabhaScheduleForm from './SabhaScheduleForm';
 import { useSabhaSchedules } from '../../hooks/useSabhaSchedules';
 import { useAuth } from '../../hooks/usePermissions';
 import { useToast } from '../../contexts/ToastContext';
+import { confirmDialog } from '../ui/ConfirmHost';
 import {
   createSchedule, updateSchedule, deleteSchedule, setScheduleActive, generateMissingEvents,
 } from '../../services/sabhaScheduleService';
@@ -138,11 +139,12 @@ export default function AllAreaSabhas({ events = [], counts = {}, onOpenEvent })
   }
 
   async function handleDelete(schedule) {
-    const ok = window.confirm(
-      `Delete the ${schedule.mandal} schedule for ${areaLabel(schedule) || 'all areas'}?\n\n`
-      + 'Sabhas it already created stay on the calendar with their attendance. '
-      + 'Only the recurring rule is removed, so no new ones appear.',
-    );
+    const ok = await confirmDialog({
+      title: `Delete the ${schedule.mandal} schedule for ${areaLabel(schedule) || 'all areas'}?`,
+      message: 'Sabhas it already created stay on the calendar with their attendance. Only the recurring rule is removed, so no new ones appear.',
+      confirmText: 'Delete',
+      tone: 'danger',
+    });
     if (!ok) return;
     try {
       await deleteSchedule(schedule.id);

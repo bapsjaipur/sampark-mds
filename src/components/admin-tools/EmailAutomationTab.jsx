@@ -36,6 +36,7 @@ import { getGoogleCalendarStatus, saveGoogleCalendarConfig } from '../../service
 import { useSettings } from '../../hooks/useSettings';
 import { useAuth } from '../../hooks/usePermissions';
 import { useToast } from '../../contexts/ToastContext';
+import { confirmDialog } from '../ui/ConfirmHost';
 import RequirePermission from '../RequirePermission';
 import SettingsRulesBanner from './SettingsRulesBanner';
 import { Button } from '../ui/Button';
@@ -494,7 +495,15 @@ function EmailAutomationInner() {
   }
 
   async function loadCalFeed(rotate = false) {
-    if (rotate && !window.confirm('Rotate your calendar link? The old URL stops working immediately and anyone you shared it with must re-subscribe.')) return;
+    if (rotate) {
+      const ok = await confirmDialog({
+        title: 'Rotate your calendar link?',
+        message: 'The old URL stops working immediately and anyone you shared it with must re-subscribe.',
+        confirmText: 'Rotate',
+        tone: 'danger',
+      });
+      if (!ok) return;
+    }
     setCalFeedLoading(true);
     try {
       const res = await getMyCalendarFeed({ rotate });
@@ -548,7 +557,13 @@ function EmailAutomationInner() {
   }
 
   async function handleClearWhatsAppToken() {
-    if (!window.confirm('Remove the saved WhatsApp access token? Automatic sending stops until a new token is saved.')) return;
+    const ok = await confirmDialog({
+      title: 'Remove the saved WhatsApp access token?',
+      message: 'Automatic sending stops until a new token is saved.',
+      confirmText: 'Remove',
+      tone: 'danger',
+    });
+    if (!ok) return;
     setWaSaving(true);
     try {
       const res = await saveWhatsAppCloudConfig({

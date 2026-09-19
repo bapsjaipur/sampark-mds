@@ -23,6 +23,7 @@ import {
 } from 'firebase/firestore';
 import { BarChart2, X } from 'lucide-react';
 import { db } from '../lib/firebase';
+import { confirmDialog } from '../components/ui/ConfirmHost';
 import { RequirePermission } from '../components/RequirePermission';
 import {
   DEFAULT_MANDALS, DEFAULT_LEVELS,
@@ -53,15 +54,18 @@ async function confirmAndCascade({ kind, oldValue, newValue, parentArea = null, 
   if (usage.total === 0) return { applied: true, records: 0 };
 
   const affectsVolunteers = usage.rows.some((r) => r.collection === 'volunteers' && r.count > 0);
-  const go = window.confirm(
-    `Rename ${label} "${oldValue}" to "${newValue}"?\n\n`
-    + `This also rewrites ${describeUsage(usage)}.\n\n`
-    + (affectsVolunteers
-      ? 'Karyakarta assignments are included — they have to be, or everyone assigned '
-        + `to "${oldValue}" would stop seeing their own contacts.\n\n`
-      : '')
-    + 'Leave this page open until it finishes.',
-  );
+  const go = await confirmDialog({
+    title: `Rename ${label} "${oldValue}" to "${newValue}"?`,
+    message:
+      `This also rewrites ${describeUsage(usage)}.\n\n`
+      + (affectsVolunteers
+        ? 'Karyakarta assignments are included — they have to be, or everyone assigned '
+          + `to "${oldValue}" would stop seeing their own contacts.\n\n`
+        : '')
+      + 'Leave this page open until it finishes.',
+    confirmText: 'Rename',
+    tone: 'danger',
+  });
   if (!go) return { applied: false, records: 0 };
 
   const res = await renameTaxonomyValue(kind, oldValue, newValue, { parentArea, onProgress });
@@ -660,13 +664,14 @@ function AreasMandalsManagerInner() {
     setError(null); setNotice(null);
     try {
       const usage = await countTaxonomyUsage('subArea', sub.name, { parentArea: area.name });
-      const go = window.confirm(
-        `Delete sub-area "${sub.name}" from ${area.name}?\n\n`
-        + (usage.total
-          ? `${describeUsage(usage)} still carry it. They keep the text, which will no longer `
-            + 'appear in the Sub-area dropdown.'
-          : 'Nothing uses it.'),
-      );
+      const go = await confirmDialog({
+        title: `Delete sub-area "${sub.name}" from ${area.name}?`,
+        message: usage.total
+          ? `${describeUsage(usage)} still carry it. They keep the text, which will no longer appear in the Sub-area dropdown.`
+          : 'Nothing uses it.',
+        confirmText: 'Delete',
+        tone: 'danger',
+      });
       if (!go) return;
       await updateDoc(doc(db, 'areas', area.id), {
         subAreas: (area.subAreas || []).filter((s) => s.name !== sub.name || s.code !== sub.code),

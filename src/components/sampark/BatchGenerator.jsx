@@ -21,6 +21,7 @@ import { subscribeToEvents, pickUpcomingEvent } from '../../services/eventServic
 import { useAuth } from '../../hooks/usePermissions';
 import { PERMISSIONS } from '../../constants/permissions';
 import { useToast } from '../../contexts/ToastContext';
+import { confirmDialog } from '../ui/ConfirmHost';
 import { Input, Label, Select } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -180,14 +181,15 @@ export default function BatchGenerator({ areas = [], mandals = [], scoped = fals
   async function handleReset() {
     const ids = preview?.resettableIds || [];
     if (!ids.length) return;
-    const go = window.confirm(
-      `Clear the call outcome on ${ids.length} contact(s)?\n\n`
-      + 'Use this to start a new calling round. It blanks the outcome and the remark '
-      + 'so the next batch can include them again.\n\n'
-      + 'Kept: every logged call, every sabha attendance, the whole contact record. '
-      + 'Only the outcome column is cleared, and every clearance is written to the '
-      + 'audit trail.\n\nThis cannot be undone.',
-    );
+    const go = await confirmDialog({
+      title: `Clear the call outcome on ${ids.length} contact(s)?`,
+      message:
+        'Use this to start a new calling round. It blanks the outcome and the remark so the next batch can include them again.\n\n'
+        + 'Kept: every logged call, every sabha attendance, the whole contact record. Only the outcome column is cleared, and every clearance is written to the audit trail.\n\n'
+        + 'This cannot be undone.',
+      confirmText: 'Clear outcomes',
+      tone: 'danger',
+    });
     if (!go) return;
 
     setResetting(true);
