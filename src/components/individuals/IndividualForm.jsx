@@ -27,6 +27,7 @@ import { useAuth } from "../../hooks/usePermissions";
 import PhotoUploader from "../photo/PhotoUploader";
 import { MandalSelect, AreaSelect, SubAreaSelect } from "../AreaMandalSelect";
 import { useAreasAndMandals } from "../../hooks/useAreasAndMandals";
+import { useNiyamDharma } from "../../hooks/useNiyamDharma";
 import { writableMandals } from "../../lib/scope";
 import { FULL_MEMBER_FIELDS, STANDARD_OPTIONS, HOBBY_OPTIONS } from "../../lib/areaMandalCodes";
 import { getMandalForStandard } from "../../constants/balMandalConfig";
@@ -141,11 +142,15 @@ const emptyForm = {
   standard: "",
   hobby: [],
   hobbyOther: "",
+  // PHASE 42 — daily observances (niyam dharma agna). Array of enabled-niyam
+  // keys. Always shown, not Mandal-gated — like callingPool.
+  niyamDharma: [],
 };
 
 export default function IndividualForm({ individual, onSubmit, onCancel, withinHousehold = false, householdArea = "", householdAddress = "", initialValues = null }) {
   const isEdit = Boolean(individual);
   const { mandals } = useAreasAndMandals();
+  const { enabled: niyamOptions } = useNiyamDharma();
   const { scope } = useAuth();
 
   // PHASE 31 — null for an admin (pick anything), otherwise the mandals this
@@ -180,6 +185,8 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
           standard: individual.standard || "",
           hobby: Array.isArray(individual.hobby) ? individual.hobby : [],
           hobbyOther: individual.hobbyOther || "",
+          // PHASE 42 — niyam dharma keys
+          niyamDharma: Array.isArray(individual.niyamDharma) ? individual.niyamDharma : [],
         }
       // `initialValues` pre-fills a new record — e.g. the walk-in add on the
       // attendance screen seeds the sabha's own Mandal and Area, which are right
@@ -223,6 +230,14 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
   const update = (field) => (e) => {
     const value = e.target.type === "checkbox" ? e.target.checked : e.target.value;
     setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  // PHASE 42 — flip one niyam key on/off in the form's niyamDharma array.
+  const toggleNiyam = (key) => {
+    setForm((prev) => {
+      const cur = Array.isArray(prev.niyamDharma) ? prev.niyamDharma : [];
+      return { ...prev, niyamDharma: cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key] };
+    });
   };
 
   // What this Mandal asks. Falls back to "ask everything" if no Mandal is
@@ -339,6 +354,10 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
       // Mandal screens map over.
       hobby: showHobby ? form.hobby : (isEdit ? individual?.hobby || [] : []),
       hobbyOther: showHobby ? form.hobbyOther : keep('hobbyOther'),
+      // PHASE 42 — always shown (not Mandal-gated), so always taken from the
+      // form. Array-safe: an '' here would poison the dashboard/CSV code that
+      // maps over it, exactly like hobby above.
+      niyamDharma: Array.isArray(form.niyamDharma) ? form.niyamDharma : [],
     };
     if (!isEdit) payload.id = draftId;
     const ok = await onSubmit(payload);
@@ -409,7 +428,7 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
               <Label>Area</Label>
               <AreaSelect
                 value={form.area}
-                onChange={(e) => { setAreaTouched(true); update("area")(e); }}
+                onChange={(e) => { setAreaTouched(true); setForm((prev) => ({ ...prev, area: e.target.value, subArea: "" })); }}
                 className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
               />
             </div>
@@ -627,6 +646,35 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
           </span>
         </label>
       </div>
+
+      {/* PHASE 42 — Niyam Dharma Agna. Always shown (not Mandal-gated); the list
+          of observances is admin-editable on the Areas & Mandals screen, so this
+          renders whatever is enabled there. Hidden entirely when an admin has
+          turned every niyam off. */}
+      {niyamOptions.length > 0 && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+          <Label>Niyam Dharma Agna</Label>
+          <p className="mb-2 text-xs leading-snug text-slate-400">
+            Daily observances this person keeps up. Tick all that apply.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {niyamOptions.map((n) => {
+              const checked = Array.isArray(form.niyamDharma) && form.niyamDharma.includes(n.key);
+              return (
+                <label key={n.key} className="flex cursor-pointer items-center gap-2.5 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleNiyam(n.key)}
+                    className="h-4 w-4 shrink-0 rounded border-slate-300 accent-orange-600"
+                  />
+                  {n.label}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>

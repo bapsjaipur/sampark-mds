@@ -16,9 +16,11 @@
 // tools here are assign_batches — cutting batches and handing them out are
 // deliberately separate permissions, and this tab now shows whichever of the
 // three you are actually allowed to use.
-import { useState } from 'react';
-import { ArrowRightLeft, ShieldAlert } from 'lucide-react';
-import { reassignContacts, clearAllBatches } from '../../services/batchService';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowRightLeft, CalendarClock, ShieldAlert } from 'lucide-react';
+import { reassignContacts, clearAllBatches, repointBatches } from '../../services/batchService';
+import { getRecentEventsForReports, pickUpcomingEvent } from '../../services/eventService';
+import { eventInScope } from '../../lib/scope';
 import { usePermissions } from '../../hooks/usePermissions';
 import { PERMISSIONS } from '../../constants/permissions';
 import { useToast } from '../../contexts/ToastContext';
@@ -31,9 +33,16 @@ import { Card } from '../ui/Card';
 
 const CLEAR_PHRASE = 'DELETE ALL BATCHES';
 
+// One-line "2026-09-14 — Sunday Sabha (Vaishali Nagar)" label for a sabha picker.
+function eventLabel(e) {
+  if (!e) return '';
+  const scope = e.mandal || e.area || (Array.isArray(e.areas) && e.areas[0]) || '';
+  return `${e.date || '????'} — ${e.title || 'Sabha'}${scope ? ` (${scope})` : ''}`;
+}
+
 export default function BatchAdminTools({ volunteers, areas = [], mandals = [], batchRows = null, scoped = false }) {
   const { showToast } = useToast();
-  const { hasPermission } = usePermissions();
+  const { hasPermission, scope } = usePermissions();
   const canAssign = hasPermission(PERMISSIONS.ASSIGN_BATCHES);
   const canGenerate = hasPermission(PERMISSIONS.GENERATE_BATCHES);
 
@@ -43,6 +52,49 @@ export default function BatchAdminTools({ volunteers, areas = [], mandals = [], 
 
   const [phrase, setPhrase] = useState('');
   const [clearing, setClearing] = useState(false);
+
+  // PHASE 41 — re-point the whole roster at a new sabha. The sabha menu is a
+  // capped one-time read (not a listener): this card is opened once a week, and
+  // the reports/generation that read events are the heavy jobs, not this pick.
+  const [events, setEvents] = useState([]);
+  const [targetEventId, setTargetEventId] = useState('');
+  const [repointing, setRepointing] = useState(false);
+
+  useEffect(() => {
+    getRecentEventsForReports(40)
+      .then((rows) => setEvents(rows))
+      .catch((err) => console.warn('[BatchAdminTools] sabhas unavailable:', err.message));
+  }, []);
+
+  const allBatches = batchRows || [];
+
+  // PHASE 43 — a scoped volunteer only re-points at their own mandal's/area's
+  // sabhas, matching the Events tab and the other Batches pickers. Admins (GLOBAL
+  // / unrestricted) keep the full list.
+  const visibleEvents = useMemo(() => events.filter((e) => eventInScope(scope, e)), [events, scope]);
+  const targetEvent = visibleEvents.find((e) => e.id === targetEventId) || null;
+
+  // Default to the nearest sabha in scope that hasn't finished yet — the recurring
+  // one the scheduler just materialised — so the common "roll forward to next
+  // week" case is one click. Falls back to the newest if all are past. Guarded so
+  // a later snapshot can't drag a hand-picked sabha back to the default.
+  useEffect(() => {
+    if (!visibleEvents.length) return;
+    const upcoming = pickUpcomingEvent(visibleEvents);
+    setTargetEventId((cur) => cur || upcoming?.id || visibleEvents[0]?.id || '');
+  }, [visibleEvents]);
+
+  // What are the batches aimed at right now? Summarise so the admin sees what
+  // they are moving away from before they move it.
+  const currentTarget = useMemo(() => {
+    if (!allBatches.length) return null;
+    const dates = new Set(allBatches.map((b) => b.eventDate || b.eventId || '∅'));
+    if (dates.size === 1) {
+      const one = allBatches[0];
+      return { count: allBatches.length, label: one.eventDate || one.eventId || 'no sabha set', mixed: false };
+    }
+    return { count: allBatches.length, label: `${dates.size} different sabhas`, mixed: true };
+  }, [allBatches]);
 
   const activeVolunteers = volunteers.filter((v) => v.isActive !== false);
   const nameOf = (id) => volunteers.find((v) => v.id === id)?.name || 'that volunteer';
@@ -88,6 +140,32 @@ export default function BatchAdminTools({ volunteers, areas = [], mandals = [], 
     }
   }
 
+  async function handleRepoint() {
+    if (!targetEvent || !allBatches.length) return;
+    const ok = await confirmDialog({
+      title: `Point all ${allBatches.length} batch${allBatches.length === 1 ? '' : 'es'} at “${eventLabel(targetEvent)}”?`,
+      message: 'The same batches, the same people in them and who they are assigned to all stay exactly as they are — only the sabha they are calling for changes. Call statuses are untouched. You can re-point again at any time.',
+      confirmText: 'Re-point batches',
+    });
+    if (!ok) return;
+    setRepointing(true);
+    try {
+      const res = await repointBatches({
+        batchIds: allBatches.map((b) => b.id),
+        eventId: targetEvent.id,
+        eventDate: targetEvent.date || null,
+      });
+      showToast({
+        type: 'success',
+        message: `Re-pointed ${res.updated} batch${res.updated === 1 ? '' : 'es'} to ${targetEvent.date || 'the selected sabha'}.`,
+      });
+    } catch (err) {
+      showToast({ type: 'error', message: err.message });
+    } finally {
+      setRepointing(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       {/* First, because it is the only one of the three that has a reason to be
@@ -95,6 +173,50 @@ export default function BatchAdminTools({ volunteers, areas = [], mandals = [], 
           starting the year over. */}
       {canGenerate && (
         <UnbatchedContactsPanel areas={areas} mandals={mandals} batchRows={batchRows} scoped={scoped} />
+      )}
+
+      {/* PHASE 41 — roll the SAME roster forward onto the next sabha. Generate once,
+          then every week just re-point rather than re-cutting (which would reshuffle
+          who calls whom and drop call statuses). Defaults to the upcoming recurring
+          sabha; pick another to override. */}
+      {canAssign && allBatches.length > 0 && (
+      <Card className="p-4">
+        <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+          <CalendarClock className="h-4 w-4 text-slate-400" /> Point batches at the next sabha
+        </h3>
+        <p className="mb-3 text-xs text-slate-500">
+          Keeps the exact same batches, the people in them and who they’re assigned to — only the sabha
+          they’re calling for changes. Use this to reuse last round’s clubbing for the upcoming event
+          instead of cutting fresh batches. Call statuses are left untouched.
+        </p>
+        {currentTarget && (
+          <p className="mb-3 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            {currentTarget.mixed
+              ? <>Your <strong>{currentTarget.count}</strong> batches currently point at <strong>{currentTarget.label}</strong>.</>
+              : <><strong>{currentTarget.count}</strong> batch{currentTarget.count === 1 ? '' : 'es'} currently calling for <strong>{currentTarget.label}</strong>.</>}
+          </p>
+        )}
+        <Label>Point them at</Label>
+        {visibleEvents.length > 0 ? (
+          <SearchableSelect
+            value={targetEventId}
+            onChange={setTargetEventId}
+            placeholder="Choose a sabha"
+            searchPlaceholder="Search sabhas…"
+            options={visibleEvents.map((e) => ({ value: e.id, label: eventLabel(e) }))}
+          />
+        ) : (
+          <p className="text-xs text-slate-400">No sabhas found. Create one on the Events screen first.</p>
+        )}
+        <Button
+          variant="primary"
+          className="mt-3 w-full sm:w-auto"
+          onClick={handleRepoint}
+          disabled={!targetEventId || repointing}
+        >
+          {repointing ? 'Re-pointing…' : `Re-point ${allBatches.length} batch${allBatches.length === 1 ? '' : 'es'}`}
+        </Button>
+      </Card>
       )}
 
       {canAssign && (

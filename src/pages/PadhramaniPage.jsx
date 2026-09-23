@@ -26,6 +26,7 @@ import { useAuth } from "../hooks/usePermissions";
 import { useAreasAndMandals } from "../hooks/useAreasAndMandals";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
+import { SubAreaSelect } from "../components/AreaMandalSelect";
 import Modal from "../components/ui/Modal";
 import { useToast } from "../contexts/ToastContext";
 import { confirmDialog } from "../components/ui/ConfirmHost";
@@ -415,6 +416,7 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
       campaign: editEvent.campaign || "General / Other",
       scheduledDate: editEvent.scheduledDate || "",
       area: editEvent.area || "",
+      subArea: editEvent.subArea || "",
       assignedVolunteerId: editEvent.assignedVolunteerId || "",
       assignedVolunteerName: editEvent.assignedVolunteerName || "",
       secondVolunteerId: editEvent.secondVolunteerId || "",
@@ -430,6 +432,7 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
       campaign: getCampaignOptions()[0], // Default to current season
       scheduledDate: "",
       area: (currentUser?.assignedAreas || [])[0] || "",
+      subArea: "",
       assignedVolunteerId: isAdmin ? "" : currentUser?.id || "",
       assignedVolunteerName: isAdmin ? "" : currentUser?.name || "",
       secondVolunteerId: "",
@@ -443,6 +446,14 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
   const [selected, setSelected] = useState(
     editEvent?.households ? [...editEvent.households] : []
   );
+
+  // PHASE 43 — a Padhramani can be filed under a specific sub-area of its area.
+  // The sub-area picker appears only when the chosen area actually has sub-areas.
+  const areaHasSubs = useMemo(() => {
+    if (!form.area) return false;
+    const def = areas.find((a) => a.name === form.area);
+    return Array.isArray(def?.subAreas) && def.subAreas.length > 0;
+  }, [areas, form.area]);
 
   useEffect(() => {
     let hhQuery = collection(db, "households");
@@ -544,6 +555,9 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
         campaign: form.campaign || "General / Other",
         scheduledDate: form.scheduledDate,
         area: form.area || null,
+        // Only persist a sub-area when the chosen area offers one; a value left
+        // over from a previous area is dropped so it can't read as "has one".
+        subArea: areaHasSubs ? (form.subArea || null) : null,
         assignedVolunteerId: form.assignedVolunteerId || null,
         assignedVolunteerName: form.assignedVolunteerName || null,
         secondVolunteerId: form.secondVolunteerId || null,
@@ -636,7 +650,7 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
               <label className="mb-1 block text-xs font-medium text-slate-600">Area</label>
               <select
                 value={form.area}
-                onChange={(e) => setForm({ ...form, area: e.target.value })}
+                onChange={(e) => setForm({ ...form, area: e.target.value, subArea: "" })}
                 className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
               >
                 <option value="">Select area…</option>
@@ -644,6 +658,18 @@ function ScheduleEventModal({ onClose, editEvent = null, prefillHouseholdId = nu
               </select>
             </div>
           </div>
+          {/* PHASE 43 — sub-area of the chosen area, shown only when it has some. */}
+          {areaHasSubs && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600">Sub-area (optional)</label>
+              <SubAreaSelect
+                areaName={form.area}
+                value={form.subArea}
+                onChange={(e) => setForm({ ...form, subArea: e.target.value })}
+                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300"
+              />
+            </div>
+          )}
           {isAdmin ? (
             <VolunteerDropdown
               label="Karyakarta (Volunteer)"

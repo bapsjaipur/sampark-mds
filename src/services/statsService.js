@@ -65,6 +65,10 @@ export function computeOverviewStats(individuals, scope) {
   const scoped = filterInScope(individuals, scope);
   const total = scoped.length;
   const statusBreakdown = {};
+  // PHASE 42 — how many contacts keep each niyam. Keyed by niyam KEY (stable);
+  // the dashboard resolves keys → labels via useNiyamDharma so a re-spelt niyam
+  // still lines up. Counted in the same pass to avoid a second loop.
+  const niyamBreakdown = {};
   let called = 0;
 
   for (const ind of scoped) {
@@ -72,6 +76,11 @@ export function computeOverviewStats(individuals, scope) {
     if (status) {
       called++;
       statusBreakdown[status] = (statusBreakdown[status] || 0) + 1;
+    }
+    if (Array.isArray(ind.niyamDharma)) {
+      for (const key of ind.niyamDharma) {
+        if (key) niyamBreakdown[key] = (niyamBreakdown[key] || 0) + 1;
+      }
     }
   }
 
@@ -88,7 +97,7 @@ export function computeOverviewStats(individuals, scope) {
     }
   }
 
-  return { total, called, statusBreakdown, byMandal };
+  return { total, called, statusBreakdown, niyamBreakdown, byMandal };
 }
 
 /** Per-volunteer activity: how many people each volunteer has called (status

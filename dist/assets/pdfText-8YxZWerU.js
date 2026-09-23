@@ -1,0 +1,1 @@
+const r=[[/[‐-―−]/g,"-"],[/[‘’‚‛′]/g,"'"],[/[“”„‟″]/g,'"'],[/…/g,"..."],[/[•⁃●]/g,"·"],[/[‹›]/g,">"],[/[  -​  　]/g," "]];function o(e){let t=String(e??"");for(const[g,n]of r)t=t.replace(g,n);return t.replace(/[^\x00-\xFF]/g,"?")}export{o as t};

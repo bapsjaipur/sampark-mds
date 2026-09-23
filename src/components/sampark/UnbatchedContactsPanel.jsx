@@ -63,9 +63,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { UserPlus, Loader2, ScanSearch, CalendarCheck, CheckCircle2, AlertTriangle, Layers } from 'lucide-react';
 import { generateBatches, previewBatchGeneration } from '../../services/batchService';
 import { subscribeToEvents, pickUpcomingEvent } from '../../services/eventService';
+import { eventInScope } from '../../lib/scope';
 import { useAuth } from '../../hooks/usePermissions';
+import { useSettings } from '../../hooks/useSettings';
 import { useToast } from '../../contexts/ToastContext';
-import { Label, Select } from '../ui/Input';
+import { Label, Select, Input } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 
@@ -90,8 +92,23 @@ function shortDate(ms) {
  * @param {boolean}  scoped     true when the two lists above were narrowed
  */
 export default function UnbatchedContactsPanel({ areas = [], mandals = [], batchRows = null, scoped = false }) {
-  const { volunteer } = useAuth();
+  const { volunteer, scope } = useAuth();
   const { showToast } = useToast();
+  // PHASE 43 — the size a top-up fills an existing batch UP TO before the rest
+  // spills into a new batch. This used to be hardcoded to 40, so a batch of 22
+  // grew to 36 on a top-up while the admin's own roster was cut in 25s — the
+  // "22 → 36" surprise. It now starts from the admin-set default (settings/app)
+  // and is editable here for a one-off, so the cap is the same promise across
+  // every mandal that Generate makes.
+  const { settings: appSettings } = useSettings('app');
+  const [batchSize, setBatchSize] = useState(25);
+  const sizeSeeded = useRef(false);
+  useEffect(() => {
+    if (sizeSeeded.current || !appSettings) return;
+    sizeSeeded.current = true;
+    const s = Number(appSettings.defaultBatchSize);
+    if (Number.isFinite(s) && s > 0) setBatchSize(s);
+  }, [appSettings]);
 
   const [events, setEvents] = useState([]);
   const [eventId, setEventId] = useState('');
@@ -116,25 +133,29 @@ export default function UnbatchedContactsPanel({ areas = [], mandals = [], batch
   // brand-new batch — the exact outcome this panel exists to avoid.
   useEffect(() => subscribeToEvents(setEvents), []);
 
+  // PHASE 43 — a scoped volunteer only sees their own mandal's/area's sabhas here,
+  // matching the Events tab. Admins (GLOBAL / unrestricted) still see every sabha.
+  const visibleEvents = useMemo(() => events.filter((e) => eventInScope(scope, e)), [events, scope]);
+
   const { upcoming, past } = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
-    const dated = events.filter((e) => e.date);
+    const dated = visibleEvents.filter((e) => e.date);
     return {
       upcoming: dated.filter((e) => e.date >= today).sort((a, b) => String(a.date).localeCompare(String(b.date))),
       past: dated.filter((e) => e.date < today).sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 8),
     };
-  }, [events]);
+  }, [visibleEvents]);
 
   // Seeded once. Re-seeding on every snapshot would drag the choice back to the
   // default the moment somebody edits an event.
   useEffect(() => {
-    if (seeded.current || !events.length) return;
+    if (seeded.current || !visibleEvents.length) return;
     seeded.current = true;
-    const next = pickUpcomingEvent(events) || upcoming[0] || null;
+    const next = pickUpcomingEvent(visibleEvents) || upcoming[0] || null;
     if (next) setEventId(next.id);
-  }, [events, upcoming]);
+  }, [visibleEvents, upcoming]);
 
-  const selectedEvent = useMemo(() => events.find((e) => e.id === eventId) || null, [events, eventId]);
+  const selectedEvent = useMemo(() => visibleEvents.find((e) => e.id === eventId) || null, [visibleEvents, eventId]);
 
   /**
    * PHASE 42 — the mandals that actually have a roster, newest first.
@@ -201,13 +222,13 @@ export default function UnbatchedContactsPanel({ areas = [], mandals = [], batch
   // and the snapshot fires on every assign, rename and top-up. A deleted sabha
   // leaves the current choice alone rather than blanking it.
   useEffect(() => {
-    if (!mandal || !events.length || eventSeededFor.current === mandal) return;
+    if (!mandal || !visibleEvents.length || eventSeededFor.current === mandal) return;
     const row = mandalRows.withBatches.find((r) => r.mandal === mandal);
     if (!row) return;                       // list hasn't resolved yet — try again
     eventSeededFor.current = mandal;
-    if (!row.lastEventId || !events.some((e) => e.id === row.lastEventId)) return;
+    if (!row.lastEventId || !visibleEvents.some((e) => e.id === row.lastEventId)) return;
     setEventId(row.lastEventId);
-  }, [mandal, events, mandalRows]);
+  }, [mandal, visibleEvents, mandalRows]);
 
   // One mandal, and the areas half stays as the caller's own scope: a mandal
   // spans areas, and narrowing both axes at once would silently exclude the
@@ -231,7 +252,11 @@ export default function UnbatchedContactsPanel({ areas = [], mandals = [], batch
     // PHASE 42 — exactly one. See the header: a scan that spans mandals whose
     // rounds are on different sabhas turns every top-up into a new batch.
     mandals: mandal ? [mandal] : [],
-    batchSize: 40,
+    // PHASE 43 — the cap, from the admin default / the field below. planTopUps
+    // never fills a batch past this, and previewBatchGeneration cuts whatever is
+    // left into a NEW batch — so an over-full "22 → 36" becomes "22 → 25" plus a
+    // fresh batch for the 11 that did not fit.
+    batchSize: Math.max(1, Math.min(500, Number(batchSize) || 25)),
     onlyUncalled: false,
     skipAlreadyBatched: true,
     requirePhone: true,
@@ -239,7 +264,7 @@ export default function UnbatchedContactsPanel({ areas = [], mandals = [], batch
     topUpExisting: true,
     batchRows,
     eventId: eventId || null,
-  }), [areas, mandal, batchRows, eventId]);
+  }), [areas, mandal, batchRows, eventId, batchSize]);
 
   async function handleScan() {
     if (!hasTarget) return;
@@ -366,6 +391,18 @@ export default function UnbatchedContactsPanel({ areas = [], mandals = [], batch
           <CalendarCheck className="mt-px h-3 w-3 shrink-0" />
           They can only join batches cut for this same sabha. Pick the round your volunteers are
           calling right now, or every one of them becomes a new batch instead.
+        </p>
+      </div>
+
+      <div className="mb-3 sm:w-40">
+        <Label>Batch size</Label>
+        <Input
+          type="number" min={1} max={500} inputMode="numeric"
+          value={batchSize}
+          onChange={(e) => { setBatchSize(e.target.value); setScan(null); setResult(null); }}
+        />
+        <p className="mt-1 text-[11px] leading-snug text-slate-400">
+          Existing batches fill up to this, then a new one is cut for the rest — never past this size.
         </p>
       </div>
 

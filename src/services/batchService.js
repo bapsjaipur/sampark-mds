@@ -980,6 +980,36 @@ export async function reassignContacts({ fromVolunteerId, toVolunteerId = null }
 }
 
 /**
+ * repointBatches({ batchIds, eventId, eventDate })
+ *
+ * PHASE 41 — re-aims a set of existing batches at a DIFFERENT sabha without
+ * recutting them. Keeps individualIds[], assignedVolunteerId, name and the whole
+ * clubbing intact — the only fields it touches are the eventId/eventDate label
+ * saying which sabha the round is calling for. This is the "we generated the
+ * roster once; now roll the same batches forward onto next week's sabha"
+ * operation, so an admin never re-runs Generate (and never re-shuffles who calls
+ * whom, or loses call statuses) merely to move the round to a new event.
+ *
+ * batchIds come from the already-open batches listener the Tools screen holds, so
+ * this costs ZERO extra reads — just one write per batch, chunked at
+ * WRITE_BATCH_LIMIT so a city-wide roster of hundreds still commits.
+ */
+export async function repointBatches({ batchIds, eventId = null, eventDate = null }) {
+  const ids = [...new Set((batchIds || []).filter(Boolean))];
+  if (!ids.length) return { updated: 0 };
+  for (const slice of chunk(ids, WRITE_BATCH_LIMIT)) {
+    const wb = writeBatch(db);
+    slice.forEach((id) => wb.update(doc(db, 'batches', id), {
+      eventId: eventId || null,
+      eventDate: eventDate || null,
+      updatedAt: serverTimestamp(),
+    }));
+    await wb.commit();
+  }
+  return { updated: ids.length };
+}
+
+/**
  * filterBatchesByScope(batches, scope, viewerId)
  *
  * "Could this batch contain a contact I'm allowed to see?" — deliberately the

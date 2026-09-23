@@ -1,0 +1,1 @@
+function s(o,n){return(o==null?void 0:o.code)==="permission-denied"?`You don't have permission to view ${n}. Ask your admin to check your role's permissions and your assigned Areas/Mandals.`:(o==null?void 0:o.code)==="unavailable"?`Couldn't reach the server to load ${n}. Check your connection.`:`Couldn't load ${n} (${(o==null?void 0:o.code)||"unknown error"}).`}export{s as f};

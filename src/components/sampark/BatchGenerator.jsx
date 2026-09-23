@@ -18,7 +18,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Wand2, Info, Grid3x3, PhoneCall, Users, RotateCcw, Loader2, CalendarCheck, UserPlus } from 'lucide-react';
 import { generateBatches, previewBatchGeneration, resetCallStatuses, GROUP_BY } from '../../services/batchService';
 import { subscribeToEvents, pickUpcomingEvent } from '../../services/eventService';
+import { eventInScope } from '../../lib/scope';
 import { useAuth } from '../../hooks/usePermissions';
+import { useSettings } from '../../hooks/useSettings';
 import { PERMISSIONS } from '../../constants/permissions';
 import { useToast } from '../../contexts/ToastContext';
 import { confirmDialog } from '../ui/ConfirmHost';
@@ -70,7 +72,7 @@ const WHO_OPTIONS = [
  *   subscribed to, so the "already batched" filter costs no extra reads.
  */
 export default function BatchGenerator({ areas = [], mandals = [], scoped = false, batchRows = null }) {
-  const { volunteer, hasPermission } = useAuth();
+  const { volunteer, hasPermission, scope } = useAuth();
   const { showToast } = useToast();
   // Clearing outcomes writes to `individuals`, which firestore.rules gates on
   // edit_contacts — a role can be allowed to cut batches without being allowed
@@ -80,7 +82,19 @@ export default function BatchGenerator({ areas = [], mandals = [], scoped = fals
   const [selectedAreas, setSelectedAreas] = useState([]);
   const [selectedMandals, setSelectedMandals] = useState([]);
   const [groupBy, setGroupBy] = useState(GROUP_BY.PAIR);
-  const [batchSize, setBatchSize] = useState(40);
+  // PHASE 43 — starts from the admin-set default (settings/app.defaultBatchSize,
+  // 25 out of the box) instead of a hardcoded 40, so the whole app cuts and tops
+  // up to one size. Seeded once so an admin can still type a different size for a
+  // single run without it being yanked back by the settings snapshot.
+  const { settings: appSettings } = useSettings('app');
+  const [batchSize, setBatchSize] = useState(25);
+  const sizeSeeded = useRef(false);
+  useEffect(() => {
+    if (sizeSeeded.current || !appSettings) return;
+    sizeSeeded.current = true;
+    const s = Number(appSettings.defaultBatchSize);
+    if (Number.isFinite(s) && s > 0) setBatchSize(s);
+  }, [appSettings]);
   const [onlyUncalled, setOnlyUncalled] = useState(true);
   const [skipAlreadyBatched, setSkipAlreadyBatched] = useState(true);
   const [requirePhone, setRequirePhone] = useState(true);
@@ -114,31 +128,38 @@ export default function BatchGenerator({ areas = [], mandals = [], scoped = fals
 
   useEffect(() => subscribeToEvents(setEvents), []);
 
+  // PHASE 43 — a mandal- or area-scoped volunteer only sees their own sabhas in
+  // this picker, the same as they do on the Events tab. Without it a Yuvak Mandal
+  // karyekarta was offered every other mandal's sabha to point a batch at. Admins
+  // (GLOBAL / unrestricted scope) still see all of them: eventInScope returns true
+  // for them on every event.
+  const visibleEvents = useMemo(() => events.filter((e) => eventInScope(scope, e)), [events, scope]);
+
   // Sabhas still to happen, soonest first — you cut batches to invite people to
   // something, so a past sabha in this list is only ever a mis-tap. Past ones
   // stay reachable in the second optgroup for the case where the round is being
   // recorded after the fact.
   const { upcoming, past } = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
-    const dated = events.filter((e) => e.date);
+    const dated = visibleEvents.filter((e) => e.date);
     return {
       upcoming: dated.filter((e) => e.date >= today).sort((a, b) => String(a.date).localeCompare(String(b.date))),
       past: dated.filter((e) => e.date < today).sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 12),
     };
-  }, [events]);
+  }, [visibleEvents]);
 
   // Seeded once, then left alone: re-seeding on every events snapshot would drag
   // the admin's choice back to the default the moment somebody edits an event.
   useEffect(() => {
-    if (seededEvent.current || !events.length) return;
+    if (seededEvent.current || !visibleEvents.length) return;
     seededEvent.current = true;
-    const next = pickUpcomingEvent(events) || upcoming[0] || null;
+    const next = pickUpcomingEvent(visibleEvents) || upcoming[0] || null;
     if (next) setEventId(next.id);
-  }, [events, upcoming]);
+  }, [visibleEvents, upcoming]);
 
   const selectedEvent = useMemo(
-    () => events.find((e) => e.id === eventId) || null,
-    [events, eventId],
+    () => visibleEvents.find((e) => e.id === eventId) || null,
+    [visibleEvents, eventId],
   );
 
   const hasTarget = selectedAreas.length > 0 || selectedMandals.length > 0;
@@ -359,7 +380,7 @@ export default function BatchGenerator({ areas = [], mandals = [], scoped = fals
               into <strong>came as promised</strong>, <strong>said yes but didn’t come</strong> and{' '}
               <strong>came anyway</strong> — so the follow-up calls write themselves.
             </>
-          ) : events.length === 0 ? (
+          ) : visibleEvents.length === 0 ? (
             'No sabhas created yet. Add one on the Events tab and the after-the-sabha follow-up list turns itself on.'
           ) : (
             'Optional, but worth one tap: without a sabha the app has to guess which one these calls were about, and the after-the-sabha follow-up list falls back to the most recent past sabha in the same mandal.'

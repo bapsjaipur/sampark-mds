@@ -47,6 +47,14 @@ export default function SearchableSelect({
   const [q, setQ] = useState('');
   const rootRef = useRef(null);
   const inputRef = useRef(null);
+  const btnRef = useRef(null);
+  // Where the menu opens, and how tall its scrolling list may be. A picker near
+  // the foot of a phone screen used to open DOWNWARD into — and behind — the fixed
+  // bottom tab bar, leaving its lower options unreachable: you cannot scroll a page
+  // far enough to clear a fixed bar. So on open we measure the room above and below
+  // the trigger, flip the menu upward when below is cramped, and cap the list to the
+  // space that actually exists so it always scrolls inside the viewport.
+  const [placement, setPlacement] = useState({ dropUp: false, maxH: 240 });
 
   // Normalise both call forms to one grouped shape internally.
   const normalizedGroups = useMemo(() => {
@@ -87,6 +95,22 @@ export default function SearchableSelect({
     if (!open) setQ('');
   }, [open, showSearch]);
 
+  // Decide up-vs-down and the list height the moment the menu opens (see the
+  // `placement` note above). Measured once per open — good enough for a tap; the
+  // trigger does not move under the finger between opening and choosing.
+  useEffect(() => {
+    if (!open || !btnRef.current) return;
+    const r = btnRef.current.getBoundingClientRect();
+    const margin = 16; // breathing room from the screen edge / bottom bar
+    const below = window.innerHeight - r.bottom - margin;
+    const above = r.top - margin;
+    const dropUp = below < 220 && above > below;
+    const room = dropUp ? above : below;
+    // The list is the scrolling part; leave headroom for the filter box when shown.
+    const maxH = Math.max(140, Math.min(240, room - (showSearch ? 64 : 8)));
+    setPlacement({ dropUp, maxH });
+  }, [open, showSearch]);
+
   const choose = (v) => { onChange?.(v); setOpen(false); };
 
   const buttonLabel = selected ? selected.label : (emptyOption ? emptyOption.label : placeholder);
@@ -95,6 +119,7 @@ export default function SearchableSelect({
   return (
     <div ref={rootRef} className={cn('relative', className)}>
       <button
+        ref={btnRef}
         type="button"
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
@@ -109,7 +134,12 @@ export default function SearchableSelect({
       </button>
 
       {open && (
-        <div className="absolute z-30 mt-1 w-full min-w-[13rem] rounded-lg border border-slate-200 bg-white shadow-lg">
+        <div
+          className={cn(
+            'absolute z-30 w-full min-w-[13rem] rounded-lg border border-slate-200 bg-white shadow-lg',
+            placement.dropUp ? 'bottom-full mb-1' : 'top-full mt-1',
+          )}
+        >
           {showSearch && (
             <div className="relative border-b border-slate-100 p-2">
               <Search className="pointer-events-none absolute left-4 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
@@ -140,7 +170,7 @@ export default function SearchableSelect({
             </div>
           )}
 
-          <div className="max-h-60 overflow-y-auto py-1">
+          <div className="overflow-y-auto overscroll-contain py-1" style={{ maxHeight: placement.maxH }}>
             {/* The "" choice sits above the list and only when not searching — a
                 search is a hunt for a name, and "Any volunteer" is never it. */}
             {emptyOption && !q && (

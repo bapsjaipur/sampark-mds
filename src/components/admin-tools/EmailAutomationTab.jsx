@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { db } from '../../lib/firebase';
 import { saveSettings, describeSettingsError } from '../../services/settingsService';
+import { getRecentEventsForReports } from '../../services/eventService';
 import { getMyCalendarFeed, rebuildCalendarCacheNow } from '../../services/calendarService';
 import { getWhatsAppCloudStatus, saveWhatsAppCloudConfig, sendWhatsAppCloudMessage } from '../../services/whatsappCloudService';
 import { getGoogleCalendarStatus, saveGoogleCalendarConfig } from '../../services/googleCalendarService';
@@ -86,6 +87,12 @@ const TOGGLES = [
     cronKey: 'scheduleBirthdayCron',
     when: 'Every morning at 6:10 am',
     description: 'Today’s birthdays and anniversaries with a one-tap WhatsApp link per person. Skipped on days with nobody to wish.',
+  },
+  {
+    key: 'autoBirthdayVolunteerEnabled',
+    title: 'Birthday copy to each volunteer',
+    when: 'With the summary above',
+    description: 'Sends each karyakar only the birthdays and anniversaries of contacts in their assigned area and mandal — and only if there is someone in their scope to wish. Needs a report email on their volunteer record.',
   },
   {
     key: 'autoSabhaDigestEnabled',
@@ -163,6 +170,14 @@ function formatTimestamp(ts) {
   if (!ts) return 'just now';
   const date = ts.toDate ? ts.toDate() : new Date(ts);
   return date.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+/** A one-line "date — title (scope)" label for the sabha picker. Scope is the
+ *  single mandal a sabha is for, else its area, so two same-titled sabhas on the
+ *  same day are still told apart. */
+function eventLabel(e) {
+  const scope = e.mandal || e.area || (Array.isArray(e.areas) && e.areas[0]) || '';
+  return `${e.date || '????'} — ${e.title || 'Sabha'}${scope ? ` (${scope})` : ''}`;
 }
 
 /** Greys out a disabled field without changing the shared Input component. */
@@ -280,6 +295,11 @@ function EmailAutomationInner() {
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState('');
   const [testAddress, setTestAddress] = useState('');
+  // PHASE 39 — the post-sabha report and the karyakarta calling lists each cover
+  // ONE sabha, so a manual send needs a sabha to point at. A capped one-time fetch
+  // (see the effect below) feeds this menu; nothing here runs on a loop.
+  const [sabhaEvents, setSabhaEvents] = useState([]);
+  const [postSabhaEventId, setPostSabhaEventId] = useState('');
   const [audience, setAudience] = useState(null);
   const [audienceLoading, setAudienceLoading] = useState(false);
   const [logs, setLogs] = useState([]);
@@ -361,6 +381,23 @@ function EmailAutomationInner() {
 
   useEffect(() => { loadAudience(); }, [loadAudience]);
 
+  // The manual post-sabha / karyakarta sends need a sabha to point at. Fetch the
+  // recent ones once (a capped read, not a listener) and keep only those that
+  // have already started — you cannot report attendance for a sabha that has not
+  // happened. The date key is built in local time so a late-evening IST visit
+  // does not hide today's sabha behind a UTC rollover.
+  useEffect(() => {
+    getRecentEventsForReports(40)
+      .then((events) => {
+        const now = new Date();
+        const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const started = events.filter((e) => String(e.date || '') <= todayKey);
+        setSabhaEvents(started);
+        setPostSabhaEventId((cur) => cur || started[0]?.id || '');
+      })
+      .catch((err) => console.warn('[EmailAutomationTab] recent sabhas unavailable:', err.message));
+  }, []);
+
   const dirty = useMemo(() => {
     if (!draft || !settings) return false;
     const current = { ...settings, extraRecipientsText: (settings.extraRecipients || []).join('\n') };
@@ -411,6 +448,7 @@ function EmailAutomationInner() {
         autoPostSabhaVolunteerEnabled: !!draft.autoPostSabhaVolunteerEnabled,
         autoSkBatchReportsEnabled: !!draft.autoSkBatchReportsEnabled,
         autoBirthdayEnabled: !!draft.autoBirthdayEnabled,
+        autoBirthdayVolunteerEnabled: !!draft.autoBirthdayVolunteerEnabled,
         autoSabhaDigestEnabled: !!draft.autoSabhaDigestEnabled,
         autoSabhaDigestVolunteerEnabled: !!draft.autoSabhaDigestVolunteerEnabled,
         dryRun: !!draft.dryRun,
@@ -438,15 +476,24 @@ function EmailAutomationInner() {
     }
   }
 
-  async function handleSend(kind, useTestAddress) {
+  async function handleSend(kind, useTestAddress, eventId) {
     if (useTestAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(testAddress.trim())) {
       showToast({ type: 'error', message: 'Enter a valid address to send the test to.' });
+      return;
+    }
+    // The post-sabha report and the karyakarta calling lists each cover one sabha.
+    // Refuse early with a plain message rather than let the server's
+    // invalid-argument surface as if the button were broken.
+    if ((kind === 'postSabha' || kind === 'skBatch') && !eventId) {
+      showToast({ type: 'error', message: 'Pick a sabha first.' });
       return;
     }
     setSending(`${kind}${useTestAddress ? '-test' : ''}`);
     try {
       const fn = httpsCallable(getFunctions(), 'sendManualEmail');
-      const res = await fn(useTestAddress ? { kind, to: [testAddress.trim()] } : { kind });
+      const payload = useTestAddress ? { kind, to: [testAddress.trim()] } : { kind };
+      if (eventId) payload.eventId = eventId;
+      const res = await fn(payload);
       const result = res.data?.result || {};
       const queued = result.queued ?? result.admin?.queued;
       const skipped = result.skipped || result.admin?.skipped;
@@ -1140,9 +1187,9 @@ function EmailAutomationInner() {
         </h3>
         <p className="mb-3 text-xs text-slate-500">
           Sends the report to the recipients listed above right now, whether or not its schedule is switched on. The
-          per-volunteer copies are not included — that stays a settings decision. There are no buttons for the
-          post-sabha report or the karyakarta calling lists: both need a specific sabha, so they only go out on the
-          15-minute check after one has actually finished and its attendance has been marked.
+          per-volunteer copies are not included — that stays a settings decision. The post-sabha report and the
+          karyakarta calling lists cover one sabha, so they have their own picker below; the rest cover a day or the
+          calendar and send straight away.
         </p>
 
         <div className="flex flex-wrap gap-2">
@@ -1155,6 +1202,46 @@ function EmailAutomationInner() {
           <Button variant="secondary" onClick={() => handleSend('sabhaCoverage', false)} disabled={!!sending}>
             {sending === 'sabhaCoverage' ? 'Sending…' : 'Send sabha coverage'}
           </Button>
+        </div>
+
+        <div className="mt-4 border-t border-slate-100 pt-3">
+          <Label>Post-sabha report &amp; karyakarta calling lists</Label>
+          <p className="mb-2 text-xs text-slate-500">
+            Pick a sabha whose attendance has been marked, then send the attendance report or each karyakarta’s
+            follow-up list. Sending again re-sends it even if it already went out on the automatic 15-minute check.
+          </p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <select
+              value={postSabhaEventId}
+              onChange={(e) => setPostSabhaEventId(e.target.value)}
+              disabled={!!sending || sabhaEvents.length === 0}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-orange-400 focus:outline-none focus:ring-1 focus:ring-orange-400 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400 sm:flex-1"
+            >
+              {sabhaEvents.length === 0
+                ? <option value="">No recent sabhas found</option>
+                : sabhaEvents.map((e) => <option key={e.id} value={e.id}>{eventLabel(e)}</option>)}
+            </select>
+            <div className="flex gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => handleSend('postSabha', false, postSabhaEventId)}
+                disabled={!!sending || !postSabhaEventId}
+              >
+                {sending === 'postSabha' ? 'Sending…' : 'Send report'}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => handleSend('skBatch', false, postSabhaEventId)}
+                disabled={!!sending || !postSabhaEventId}
+              >
+                {sending === 'skBatch' ? 'Sending…' : 'Send calling lists'}
+              </Button>
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-slate-400">
+            The calling lists need a report email on each karyakarta’s volunteer record and at least one batch assigned
+            to the sabha; the attendance report just needs the sabha to have been marked.
+          </p>
         </div>
 
         <div className="mt-4 border-t border-slate-100 pt-3">
@@ -1176,6 +1263,12 @@ function EmailAutomationInner() {
               </Button>
               <Button variant="ghost" onClick={() => handleSend('sabhaCoverage', true)} disabled={!!sending}>
                 {sending === 'sabhaCoverage-test' ? 'Sending…' : 'Sabha'}
+              </Button>
+              <Button variant="ghost" onClick={() => handleSend('postSabha', true, postSabhaEventId)} disabled={!!sending || !postSabhaEventId}>
+                {sending === 'postSabha-test' ? 'Sending…' : 'Post-sabha'}
+              </Button>
+              <Button variant="ghost" onClick={() => handleSend('skBatch', true, postSabhaEventId)} disabled={!!sending || !postSabhaEventId}>
+                {sending === 'skBatch-test' ? 'Sending…' : 'Calling list'}
               </Button>
             </div>
           </div>

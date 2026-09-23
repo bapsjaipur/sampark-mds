@@ -27,7 +27,7 @@
 // rather than as a broken list.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useMemo, useState } from 'react';
-import { MandalSelect } from '../AreaMandalSelect';
+import { MandalSelect, SubAreaSelect } from '../AreaMandalSelect';
 import ChipMultiSelect from '../ui/ChipMultiSelect';
 import { Input, Label, FieldError, Select } from '../ui/Input';
 import { Button } from '../ui/Button';
@@ -55,6 +55,7 @@ export default function SabhaScheduleForm({
     title: schedule.title || '',
     areas: eventAreas(schedule),
     mandal: schedule.mandal || '',
+    subArea: schedule.subArea || '',
     dayOfWeek: String(schedule.dayOfWeek ?? 0),
     time: schedule.time || '',
     intervalWeeks: String(schedule.intervalWeeks || 1),
@@ -70,6 +71,7 @@ export default function SabhaScheduleForm({
     // (empty) until they choose.
     areas: areaRestricted && allowedAreas.length === 1 ? [allowedAreas[0]] : [],
     mandal: defaultMandal,
+    subArea: '',
     dayOfWeek: '0',
     time: '',
     intervalWeeks: '1',
@@ -100,6 +102,15 @@ export default function SabhaScheduleForm({
 
   const cityWide = form.areas.length === 0;
   const areaLabelText = form.areas.length ? form.areas.join(' + ') : 'All areas';
+  // PHASE 43 — a sub-area only applies when the recurring sabha is filed under
+  // exactly ONE area that actually has sub-areas; hidden otherwise. Every event
+  // this schedule generates then carries the sub-area too (eventFromSchedule).
+  const singleArea = form.areas.length === 1 ? form.areas[0] : '';
+  const singleAreaHasSubs = useMemo(() => {
+    if (!singleArea) return false;
+    const def = (areaDefs || []).find((a) => (a.name || a) === singleArea);
+    return Array.isArray(def?.subAreas) && def.subAreas.length > 0;
+  }, [areaDefs, singleArea]);
 
   function validate() {
     const errs = {};
@@ -129,6 +140,9 @@ export default function SabhaScheduleForm({
       title: form.title.trim(),
       areas: form.areas,
       mandal: form.mandal,
+      // Only persist a sub-area when the single filed area offers one; never let
+      // a value left over from a previous area selection slip through.
+      subArea: singleAreaHasSubs ? (form.subArea || '') : '',
       dayOfWeek: Number(form.dayOfWeek),
       time: form.time,
       intervalWeeks: Number(form.intervalWeeks) || 1,
@@ -165,7 +179,13 @@ export default function SabhaScheduleForm({
         <ChipMultiSelect
           options={areaOptions}
           value={form.areas}
-          onChange={(next) => setForm((p) => ({ ...p, areas: next }))}
+          onChange={(next) => setForm((p) => ({
+            ...p,
+            areas: next,
+            // Drop the sub-area on any switch to city-wide, a joint sabha, or a
+            // different single area.
+            subArea: (next.length === 1 && p.areas.length === 1 && next[0] === p.areas[0]) ? p.subArea : '',
+          }))}
           emptyLabel="No areas defined yet."
         />
         <p className="mt-1 text-xs text-slate-400">
@@ -177,6 +197,23 @@ export default function SabhaScheduleForm({
         </p>
         <FieldError>{errors.areas}</FieldError>
       </div>
+
+      {/* PHASE 43 — sub-area for a recurring sabha held in one sector of an area.
+          Shown only when the single chosen area has sub-areas. */}
+      {singleAreaHasSubs && (
+        <div>
+          <Label>Sub-area (optional)</Label>
+          <SubAreaSelect
+            areaName={singleArea}
+            value={form.subArea}
+            onChange={update('subArea')}
+            className={selectClass}
+          />
+          <p className="mt-1 text-xs text-slate-400">
+            If this recurring sabha is held in a specific sub-area of {singleArea}, pick it — every generated sabha inherits it.
+          </p>
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-3">
         <div>

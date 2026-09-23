@@ -12,9 +12,11 @@ import AddToHousehold from "../components/individuals/AddToHousehold";
 import ImportContactsWizard from "../components/import-export/ImportContactsWizard";
 import Modal from "../components/ui/Modal";
 import RequirePermission from "../components/RequirePermission";
-import ExportButtons from "../components/import-export/ExportButtons";
+import ExportButtons, { CONTACT_COLUMNS } from "../components/import-export/ExportButtons";
 import { formatDate } from "../lib/dateHelpers";
 import { useCallOutcomes } from "../hooks/useCallOutcomes";
+import { useNiyamDharma } from "../hooks/useNiyamDharma";
+import { niyamLabelString } from "../lib/niyamDharma";
 import { Button } from "../components/ui/Button";
 import { Input, Select } from "../components/ui/Input";
 import { Avatar } from "../components/ui/Avatar";
@@ -71,6 +73,10 @@ export default function ContactsPage() {
   const { areas, mandals } = useAreasAndMandals();
   const { permissions } = useAuth();
   const { colorClasses: statusColorClasses } = useCallOutcomes();
+  // PHASE 42 — the live niyam list, for the CSV/PDF "Niyam Dharma" column. The
+  // full list (not just enabled) so a retired niyam a contact still carries
+  // still resolves to its label instead of a bare key.
+  const { niyams } = useNiyamDharma();
   // PHASE 21 — karyakartas appear in this list as ordinary contacts. The badge
   // and the tinted row make them findable without a separate volunteer screen.
   const { identify } = useVolunteerIdentity();
@@ -130,6 +136,14 @@ export default function ContactsPage() {
   const pageContacts = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
   const selectedContacts = useMemo(() => filtered.filter((c) => selected.has(c.id)), [filtered, selected]);
 
+  // PHASE 42 — the default contact columns plus a computed "Niyam Dharma" column
+  // that joins each contact's niyam keys to their live labels. `format` runs at
+  // export time, so it works for both the paginated rows and a fetch-all export.
+  const exportColumns = useMemo(() => [
+    ...CONTACT_COLUMNS,
+    { key: 'niyamDharma', label: 'Niyam Dharma', default: false, format: (r) => niyamLabelString(r.niyamDharma, niyams) },
+  ], [niyams]);
+
   const allFilteredSelected = selected.size === filtered.length && filtered.length > 0;
   const someSelected = selected.size > 0 && selected.size < filtered.length;
 
@@ -178,7 +192,7 @@ export default function ContactsPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <ExportButtons rows={selected.size > 0 ? selectedContacts : filtered} label="contacts" />
+          <ExportButtons rows={selected.size > 0 ? selectedContacts : filtered} label="contacts" columns={exportColumns} />
           <RequirePermission permission="edit_contacts">
             <Button variant="secondary" onClick={() => setImportOpen(true)}><Upload className="h-3.5 w-3.5" /> Import</Button>
           </RequirePermission>
@@ -248,7 +262,7 @@ export default function ContactsPage() {
                 <Trash2 className="h-3.5 w-3.5" /> Delete {selected.size}
               </Button>
             )}
-            <ExportButtons rows={selectedContacts} label={`${selected.size}-contacts`} />
+            <ExportButtons rows={selectedContacts} label={`${selected.size}-contacts`} columns={exportColumns} />
           </div>
         </div>
       )}

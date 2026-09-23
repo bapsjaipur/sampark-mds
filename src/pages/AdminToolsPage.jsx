@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react';
 import {
   ShieldCheck, ScrollText, Database, Megaphone, Mail, MessageSquareText,
-  ListChecks, FileSpreadsheet, Gauge,
+  ListChecks, FileSpreadsheet, Gauge, SlidersHorizontal,
 } from 'lucide-react';
 import RequirePermission from '../components/RequirePermission';
 import { usePermissions } from '../hooks/usePermissions';
@@ -15,6 +15,7 @@ import MessageTemplateTab from '../components/admin-tools/MessageTemplateTab';
 import CallOutcomesTab from '../components/admin-tools/CallOutcomesTab';
 import ImportHistoryTab from '../components/admin-tools/ImportHistoryTab';
 import FirestoreUsageTab from '../components/admin-tools/FirestoreUsageTab';
+import GeneralSettingsTab from '../components/admin-tools/GeneralSettingsTab';
 import { cn } from '../lib/cn';
 
 // `requires` is optional. The tabs that predate Phase 20 have no entry, so they
@@ -46,6 +47,7 @@ const TABS = [
   { key: 'email', label: 'Report Emails', short: 'Emails', hint: 'Scheduled daily and sabha reports', Icon: Mail, Component: EmailAutomationTab, requires: ['send_emails'] },
   { key: 'templates', label: 'Message Templates', short: 'Templates', hint: 'WhatsApp wording for calls and wishes', Icon: MessageSquareText, Component: MessageTemplateTab, requires: ['manage_templates'] },
   { key: 'outcomes', label: 'Call Outcomes', short: 'Outcomes', hint: 'The buttons on the calling screen', Icon: ListChecks, Component: CallOutcomesTab, requires: ['manage_templates'] },
+  { key: 'general', label: 'App Settings', short: 'Settings', hint: 'Attendance window and batch defaults', Icon: SlidersHorizontal, Component: GeneralSettingsTab, requires: ['manage_templates'] },
   { key: 'history', label: 'Import Sabha History', short: 'Import', hint: 'Load past attendance from a sheet', Icon: FileSpreadsheet, Component: ImportHistoryTab, requires: ['import_data'] },
   { key: 'usage', label: 'Free Tier Usage', short: 'Usage', hint: 'Daily Firestore reads and writes', Icon: Gauge, Component: FirestoreUsageTab, requires: ['manage_users'] },
 ];

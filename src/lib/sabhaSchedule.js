@@ -186,6 +186,9 @@ export function eventFromSchedule(schedule, dateStr, createdBy = null) {
     // firestore.rules and pre-Phase-34 readers keep seeing a valid single area.
     areas,
     area: areas[0] || null,
+    // Phase 43: carry the schedule's sub-area onto every sabha it generates, so a
+    // recurring sabha pinned to one sector of an area stays filed there.
+    subArea: schedule.subArea || null,
     scheduleId: schedule.id,
     source: 'schedule',
     createdBy: createdBy || schedule.createdBy || null,

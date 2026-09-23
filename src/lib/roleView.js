@@ -135,7 +135,11 @@ const NAV = {
   },
   events: {
     to: '/events', label: 'Events', icon: CalendarDays,
-    anyOf: ['manage_events', 'view_all_contacts', 'view_assigned_contacts', 'edit_contacts'],
+    // manage_attendance is here so a role whose whole job is marking sabha
+    // attendance can reach /events. Its read rule (canReadEvent) accepts the same
+    // key, and EventsPage narrows the calendar to the role's own area client-side
+    // — the server query cannot (see src/lib/scope.js eventInScope).
+    anyOf: ['manage_events', 'view_all_contacts', 'view_assigned_contacts', 'edit_contacts', 'manage_attendance'],
   },
   padhramani: {
     to: '/padhramani', label: 'Padhramani', icon: HeartHandshake,

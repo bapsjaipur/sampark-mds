@@ -38,6 +38,10 @@ import { buildTelUrl } from '../../lib/whatsapp';
  * @param {Function} emoji         (status) => emoji or ''      ├─ useCallOutcomes,
  * @param {Function} statusClasses (status) => chip classes    ─┘ so admin renames apply
  * @param {string}   [filterLabel] name of the active filter, if any
+ * @param {Map|null} [roundById]   id → { emoji, short, chip } post-sabha verdict,
+ *                                 or null before the register is marked. Renders a
+ *                                 badge per row so the list doubles as the "who was
+ *                                 present / who said yes but didn't come" view.
  */
 export default function BatchContactList({
   contacts = [],
@@ -49,6 +53,7 @@ export default function BatchContactList({
   emoji = () => '',
   statusClasses = () => '',
   filterLabel = null,
+  roundById = null,
 }) {
   // A row tap must jump the card view to the right person, and the card view
   // indexes the FULL queue — so each visible row needs its full-queue position,
@@ -110,6 +115,7 @@ export default function BatchContactList({
               const isCurrent = c.id === currentId;
               const fullIdx = indexById.get(c.id) ?? 0;
               const tel = buildTelUrl(c.mobile);
+              const rv = roundById?.get(c.id) || null;
               return (
                 <li key={c.id} className={cn('flex items-stretch', isCurrent && 'bg-orange-50/60')}>
                   <button
@@ -144,6 +150,21 @@ export default function BatchContactList({
                         <span className="tabular-nums">{c.mobile || 'no number'}</span>
                         {c.callCount > 0 && <span>· {c.callCount} call{c.callCount === 1 ? '' : 's'}</span>}
                       </span>
+                      {/* PHASE 46 — the post-sabha verdict, once the register is
+                          marked: 🟢/🎉 came, 🔴 said yes but stayed away. This is
+                          what turns the list into an attendance status list. */}
+                      {rv && (
+                        <span className="mt-1 block">
+                          <span
+                            className={cn(
+                              'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium',
+                              rv.chip,
+                            )}
+                          >
+                            <span aria-hidden="true">{rv.emoji}</span> {rv.short}
+                          </span>
+                        </span>
+                      )}
                       {/* The note, when there is one. This is the field a karyakarta
                           most often wants to re-read before dialling again, and
                           hunting for it one card at a time is why the list exists. */}

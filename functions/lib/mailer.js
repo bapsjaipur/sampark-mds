@@ -87,6 +87,10 @@ const DEFAULT_EMAIL_SETTINGS = {
   // deliberately once reportEmail is filled in for the SK-YM role.
   autoSkBatchReportsEnabled: false,
   autoBirthdayEnabled: true,
+  // PHASE 44 — the per-volunteer birthday/anniversary copy, scoped to each
+  // karyakar's assigned area/mandal. Default OFF: switch on once mandal heads
+  // have a reportEmail, exactly like the other per-volunteer fan-outs.
+  autoBirthdayVolunteerEnabled: false,
   // PHASE 33 — the weekly sabha coverage digest.
   autoSabhaDigestEnabled: true,
   autoSabhaDigestVolunteerEnabled: false,

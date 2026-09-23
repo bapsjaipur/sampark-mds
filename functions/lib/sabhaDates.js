@@ -158,6 +158,8 @@ function eventFieldsFromSchedule(schedule, dateStr) {
     // firestore.rules and pre-Phase-34 readers keep seeing a valid single area.
     areas,
     area: areas[0] || null,
+    // Phase 43: carry the schedule's sub-area onto every generated sabha.
+    subArea: schedule.subArea || null,
     scheduleId: schedule.id,
     // NOT 'history-import' — firestore.rules lets an import_data holder DELETE
     // anything carrying that marker, and a generated sabha is not an imported one.

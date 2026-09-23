@@ -44,6 +44,11 @@ export const PERMISSIONS = {
   // MANAGE_TEMPLATES: edit the WhatsApp message template + email settings
   // (which reports are on, sender name, dry-run mode).
   MANAGE_TEMPLATES: 'manage_templates',
+  // Phase 42 — edit the Niyam Dharma Agna list (the daily-observance checkboxes
+  // on the contact form) from the Areas & Mandals screen: add a niyam, re-spell
+  // one, or retire one. Kept separate from manage_templates so the person who
+  // curates observances need not also hold the email/template power.
+  MANAGE_NIYAM_DHARMA: 'manage_niyam_dharma',
   // Phase 21 (Area/Mandal hierarchy) — ASSIGN_BATCHES used to mean both
   // "create batches" and "hand them out", which made an Area Moderator either
   // powerless or able to re-cut the whole city's roster. Split in two:
@@ -96,6 +101,7 @@ export const PERMISSION_LABELS = {
   [PERMISSIONS.VIEW_PADHRAMANI]: 'View My Padhramani Schedule (Santo only)',
   [PERMISSIONS.SEND_EMAILS]: 'Send & Receive Report Emails',
   [PERMISSIONS.MANAGE_TEMPLATES]: 'Manage Message Templates & Email Settings',
+  [PERMISSIONS.MANAGE_NIYAM_DHARMA]: 'Manage Niyam Dharma List',
   [PERMISSIONS.GENERATE_BATCHES]: 'Generate Batches (cut new batches)',
   [PERMISSIONS.MANAGE_ATTENDANCE]: 'Mark Sabha Attendance',
   [PERMISSIONS.IMPORT_DATA]: 'Import Contacts & History (CSV)',
@@ -123,6 +129,7 @@ export const PERMISSION_SHORT_LABELS = {
   [PERMISSIONS.VIEW_PADHRAMANI]: 'My Schedule',
   [PERMISSIONS.SEND_EMAILS]: 'Emails',
   [PERMISSIONS.MANAGE_TEMPLATES]: 'Templates',
+  [PERMISSIONS.MANAGE_NIYAM_DHARMA]: 'Niyam Dharma',
   [PERMISSIONS.GENERATE_BATCHES]: 'Generate',
   [PERMISSIONS.MANAGE_ATTENDANCE]: 'Attendance',
   [PERMISSIONS.IMPORT_DATA]: 'Import',
@@ -148,7 +155,7 @@ export const PERMISSION_GROUPS = [
   ] },
   { label: 'Administration', permissions: [
     PERMISSIONS.MANAGE_USERS, PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS, PERMISSIONS.MANAGE_ROLES,
-    PERMISSIONS.SEND_EMAILS, PERMISSIONS.MANAGE_TEMPLATES,
+    PERMISSIONS.SEND_EMAILS, PERMISSIONS.MANAGE_TEMPLATES, PERMISSIONS.MANAGE_NIYAM_DHARMA,
   ] },
   // Opt-out toggles — ticking one HIDES a tab for this role (default off). Kept
   // in their own group so it reads differently from the grant-access boxes above.
@@ -181,6 +188,7 @@ export const PERMISSION_HELP = {
   [PERMISSIONS.MANAGE_ROLES]: 'Edit this screen. Anyone with it can grant themselves anything.',
   [PERMISSIONS.SEND_EMAILS]: 'Run report emails on demand and receive the scheduled ones.',
   [PERMISSIONS.MANAGE_TEMPLATES]: 'Edit the WhatsApp message text, the calling outcome buttons and email settings.',
+  [PERMISSIONS.MANAGE_NIYAM_DHARMA]: 'Edit the Niyam Dharma Agna list on the Areas & Mandals screen — the daily-observance checkboxes (Tulsi Kanthi, Mala Jaap…) shown on every contact. Lets someone re-spell, add or retire a niyam. Does not grant any contact-editing power on its own.',
   [PERMISSIONS.HIDE_ALL_CONTACTS]: 'Removes the “All Contacts” tab for this role. Their assigned and calling contacts are untouched — this only takes away the browse-everything list. Leave OFF for most roles; tick it for a caller who should only work their queue.',
   [PERMISSIONS.HIDE_PAST_SABHAS]: 'In Events, shows only the upcoming sabha for attendance marking and hides the list of past sabhas. Tick it for a role that should mark today’s sabha but never reopen an old one.',
 };

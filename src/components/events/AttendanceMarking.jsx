@@ -19,6 +19,7 @@ import { markPresent, unmarkPresent } from '../../services/eventService';
 import { createStandaloneContact, saveContact } from '../../services/contactService';
 import { getWindowState } from '../../lib/attendanceWindow';
 import { useAuth } from '../../hooks/usePermissions';
+import { useSettings } from '../../hooks/useSettings';
 import { useVolunteerIdentity } from '../../hooks/useVolunteerIdentity';
 import { useToast } from '../../contexts/ToastContext';
 import RequirePermission from '../RequirePermission';
@@ -38,6 +39,14 @@ const WINDOW_LABELS = {
 
 export default function AttendanceMarking({ event, individuals = [], present = [] }) {
   const { volunteer } = useAuth();
+  // PHASE 43 — the 30-minute window is now an admin toggle, not a hard law. When
+  // an admin turns it off (settings/app.attendanceWindowEnforced === false) the
+  // screen stops gating on the clock, so a late-starting sabha or a next-morning
+  // back-fill can still be marked. Read is open to every volunteer (see the
+  // settings rules), so a door karyekar with no admin permission still gets the
+  // right answer. Defaults to enforced, i.e. the old behaviour, when unread.
+  const { settings: appSettings } = useSettings('app');
+  const windowEnforced = appSettings?.attendanceWindowEnforced !== false;
   // PHASE 21 — the person on the door needs to see at a glance which of these
   // names is a karyakarta, so the sevak list and the haribhakt list don't have to
   // be reconciled from memory afterwards.
@@ -82,8 +91,16 @@ export default function AttendanceMarking({ event, individuals = [], present = [
       .slice(0, 20);
   }, [search, individuals]);
 
-  const isOpen = windowState === 'open';
-  const banner = WINDOW_LABELS[windowState];
+  // PHASE 43 — enforcement is now conditional. With the window turned off the
+  // screen is open whatever the clock says; the only banner then is a quiet note
+  // explaining WHY it is open outside the usual times, so an admin can tell the
+  // toggle is doing something rather than the window being broken.
+  const isOpen = !windowEnforced || windowState === 'open';
+  const banner = windowEnforced
+    ? WINDOW_LABELS[windowState]
+    : (windowState !== 'open'
+      ? { text: 'Attendance window is off in Admin settings — marking is open at any time.', tone: 'bg-sky-50 text-sky-700 border-sky-100' }
+      : null);
 
   async function handleMark(individual) {
     try {

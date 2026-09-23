@@ -92,7 +92,7 @@ function summaryLine(doc, pairs, y) {
   return y + 8;
 }
 
-function autoTable(doc, head, body, startY) {
+function autoTable(doc, head, body, startY, opts = {}) {
   doc.autoTable({
     startY,
     head: [head.map(ascii)],
@@ -101,8 +101,25 @@ function autoTable(doc, head, body, startY) {
     headStyles: { fillColor: [241, 245, 249], textColor: MUTED, fontStyle: 'bold', fontSize: 8 },
     alternateRowStyles: { fillColor: [250, 250, 251] },
     margin: { left: 14, right: 14, bottom: 20 },
+    ...opts,
   });
   return doc.lastAutoTable.finalY + 8;
+}
+
+/**
+ * A bold section title. Pushes to a new page first when the title would otherwise
+ * strand at the very bottom — autoTable paginates its own rows, but a heading
+ * printed at y≈285 with the table starting on the next page looks orphaned.
+ * Returns the Y the following table should start at.
+ */
+function sectionHeading(doc, text, y) {
+  let ny = y;
+  if (ny > 262) { doc.addPage(); ny = 20; }
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(...SLATE);
+  doc.text(ascii(text), 14, ny);
+  return ny + 3;
 }
 
 /**
@@ -192,52 +209,80 @@ function dailyReportPdf(stats) {
 function postSabhaPdf(report) {
   try {
     const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-    header(doc, ascii(report.event.title) || 'Sabha Attendance', report.event.dateLabel);
+    header(doc, ascii(report.event.title) || 'Sabha Attendance', 'Sabha Attendance Report');
 
+    // ATTENDANCE SUMMARY — the four the report leads with.
     let y = summaryLine(doc, [
       { label: 'Present', value: report.present.length },
-      { label: 'Expected', value: report.expected },
-      { label: 'Turnout', value: `${report.turnoutPct}%` },
-      { label: 'First timers', value: report.firstTimers.length },
+      { label: 'Absent', value: report.absent },
+      { label: 'Total', value: report.expected },
+      { label: 'Rate', value: `${report.turnoutPct}%` },
     ], 32);
 
-    if (report.event.mandal || report.event.speaker) {
-      doc.setFontSize(9);
-      doc.setTextColor(...MUTED);
-      doc.text(ascii([
-        report.event.mandal && `Mandal: ${report.event.mandal}`,
-        report.event.area && `Area: ${report.event.area}`,
-        report.event.speaker && `Speaker: ${report.event.speaker}`,
-      ].filter(Boolean).join('   |   ')), 14, y);
-      doc.setTextColor(...SLATE);
-      y += 8;
+    // SABHA DETAILS — date, time, mandal, area, speaker on one muted line.
+    doc.setFontSize(9);
+    doc.setTextColor(...MUTED);
+    doc.text(ascii([
+      report.event.dateLabel,
+      report.event.time,
+      report.event.mandal && `Mandal: ${report.event.mandal}`,
+      report.event.area && `Area: ${report.event.area}`,
+      report.event.speaker && `Speaker: ${report.event.speaker}`,
+    ].filter(Boolean).join('   |   ')), 14, y);
+    doc.setTextColor(...SLATE);
+    y += 8;
+
+    if (report.byArea && report.byArea.length) {
+      y = sectionHeading(doc, 'By area', y);
+      y = autoTable(doc, ['Area', 'Present'],
+        report.byArea.map((a) => [a.area, String(a.count)]), y);
     }
 
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.text(`Present (${report.present.length})`, 14, y);
-    y += 3;
+    if (report.byMandal && report.byMandal.length) {
+      y = sectionHeading(doc, 'By mandal', y);
+      y = autoTable(doc, ['Mandal', 'Present'],
+        report.byMandal.map((m) => [m.mandal, String(m.count)]), y);
+    }
 
+    // VOLUNTEER CONTRIBUTION — the sevak who called, and how many of theirs came.
+    if (report.volunteerContribution && report.volunteerContribution.length) {
+      y = sectionHeading(doc, 'Volunteer contribution', y);
+      y = autoTable(doc, ['Sevak', 'Contacts present'],
+        report.volunteerContribution.map((v) => [v.name, String(v.count)]), y);
+    }
+
+    // PRESENT MEMBERS — the full list, moved out of the email body into the PDF.
+    // Keeps the Last 12 months ratio AND adds the sevak who called each person.
+    y = sectionHeading(doc, `Present members (${report.present.length})`, y);
     y = autoTable(doc,
-      ['#', 'Name', 'Mandal', 'Mobile', 'Last 12 months'],
+      ['#', 'Name', 'Phone', 'Area', 'Mandal', 'Sevak', 'Last 12 months'],
       report.present.map((p, i) => [
         String(i + 1),
         pdfName(p.name, p.mobile) + (p.isFirstTimer ? ' (new)' : ''),
-        p.mandal || '-',
         p.mobile || '-',
+        p.area || '-',
+        p.mandal || '-',
+        p.sevak || '-',
         `${p.attended}/${p.held}`,
       ]),
-      y);
+      y,
+      {
+        styles: { font: 'helvetica', fontSize: 8, cellPadding: 2, textColor: SLATE },
+        columnStyles: {
+          0: { cellWidth: 8, halign: 'right' },
+          2: { cellWidth: 24 },
+          3: { cellWidth: 28 },
+          4: { cellWidth: 26 },
+          6: { cellWidth: 22, halign: 'center' },
+        },
+      });
 
     if (report.regularsAbsent.length) {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(11);
-      doc.text(`Regulars who did not come (${report.regularsAbsent.length})`, 14, y);
-      y += 3;
+      y = sectionHeading(doc, `Regulars who did not come (${report.regularsAbsent.length})`, y);
       autoTable(doc,
-        ['#', 'Name', 'Mandal', 'Mobile', 'Last 12 months'],
+        ['#', 'Name', 'Mobile', 'Mandal', 'Last 12 months'],
         report.regularsAbsent.map((p, i) => [
-          String(i + 1), pdfName(p.name, p.mobile), p.mandal || '-', p.mobile || '-', `${p.attended}/${p.held}`,
+          String(i + 1), pdfName(p.name, p.mobile), p.mobile || '-', p.mandal || '-', `${p.attended}/${p.held}`,
         ]),
         y);
     }

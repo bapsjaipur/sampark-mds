@@ -201,9 +201,11 @@ function buildDailyReport(stats, opts = {}) {
 /**
  * buildPostSabhaReport(report) — mailed once, shortly after an event ends.
  *
- * The X/Y column is the legacy app's 12-month attendance ratio: how many of the
- * last 12 months' sabhas this person attended, out of how many were held. It is
- * the number the sanchalak actually looks at, so it stays in the first table.
+ * The BODY is stats only. "in body i do no want the list of present contacts. i
+ * want that list in pdf" — so the who-attended list (with the sevak who called
+ * each person and the 12-month ratio) lives in the attached PDF, and the email
+ * carries the headline numbers, the present breakdown per mandal and per area,
+ * and the batch follow-up: of the contacts a karyakarta rang, how many came.
  */
 function buildPostSabhaReport(report, opts = {}) {
   const solo = opts.forVolunteer || null;
@@ -212,9 +214,9 @@ function buildPostSabhaReport(report, opts = {}) {
 
   parts.push(tiles([
     { label: 'Present', value: report.present.length, tone: '#16a34a' },
-    { label: 'Expected', value: report.expected, tone: SLATE },
+    { label: report.event.mandal ? 'Mandal contacts' : 'Expected', value: report.expected, tone: SLATE },
     { label: 'Turnout', value: `${report.turnoutPct}%`, tone: ORANGE },
-    { label: 'First timers', value: report.firstTimers.length },
+    { label: 'Absent', value: report.absent, tone: report.absent ? '#dc2626' : SLATE },
   ]));
 
   parts.push(`<div style="color:${MUTED};font-size:13px;margin-bottom:4px;">`
@@ -224,19 +226,48 @@ function buildPostSabhaReport(report, opts = {}) {
     + `${report.event.speaker ? `<br>Speaker: ${esc(report.event.speaker)}` : ''}`
     + `</div>`);
 
-  parts.push(sectionTitle(`Present (${report.present.length})`));
-  parts.push(table(['Name', 'Mandal', 'Last 12 months'],
-    report.present.map((p) => [
-      esc(p.name) + (p.isFirstTimer ? ` <span style="color:${ORANGE};font-size:11px;font-weight:700;">NEW</span>` : ''),
-      esc(p.mandal || '-'),
-      `${p.attended}/${p.held}`,
-    ])));
+  parts.push(`<div style="color:${MUTED};font-size:12px;margin:4px 0 8px;">`
+    + 'The full list of who attended — with the sevak who called each person — is in the attached PDF.'
+    + '</div>');
+
+  const byMandal = report.byMandal || [];
+  if (byMandal.length) {
+    parts.push(sectionTitle('Present by mandal'));
+    parts.push(table(['Mandal', 'Present'], byMandal.map((m) => [esc(m.mandal), String(m.count)])));
+  }
+
+  const byArea = report.byArea || [];
+  if (byArea.length) {
+    parts.push(sectionTitle('Present by area'));
+    parts.push(table(['Area', 'Present'], byArea.map((a) => [esc(a.area), String(a.count)])));
+  }
+
+  // Batch follow-up — the "stats also followed up contacts the batches generated"
+  // angle: of the contacts we rang for this sabha, how many turned up, and who
+  // brought them.
+  const bs = report.batchStats || {};
+  const contribution = report.volunteerContribution || [];
+  if (bs.called) {
+    parts.push(sectionTitle('Batch follow-up'));
+    parts.push(`<div style="color:${MUTED};font-size:13px;margin-bottom:8px;">`
+      + `<strong style="color:${SLATE};">${bs.called}</strong> contact${bs.called === 1 ? '' : 's'} were followed up across `
+      + `<strong style="color:${SLATE};">${bs.batches}</strong> batch${bs.batches === 1 ? '' : 'es'} for this sabha — `
+      + `<strong style="color:#16a34a;">${bs.present}</strong> came `
+      + `(<strong style="color:${ORANGE};">${bs.followUpRate}%</strong>).`
+      + '</div>');
+    if (contribution.length) {
+      parts.push(table(['Sevak', 'Contacts present'], contribution.map((v) => [esc(v.name), String(v.count)])));
+    }
+  } else if (contribution.length) {
+    parts.push(sectionTitle('Volunteer contribution'));
+    parts.push(table(['Sevak', 'Contacts present'], contribution.map((v) => [esc(v.name), String(v.count)])));
+  }
 
   if (report.regularsAbsent.length) {
-    parts.push(sectionTitle(`Regulars who did not come (${report.regularsAbsent.length})`));
-    parts.push(`<div style="color:${MUTED};font-size:12px;margin-bottom:6px;">Attended at least half of the last 12 months' sabhas but were not marked present today — worth a call.</div>`);
-    parts.push(table(['Name', 'Mandal', 'Last 12 months'],
-      report.regularsAbsent.map((p) => [esc(p.name), esc(p.mandal || '-'), `${p.attended}/${p.held}`])));
+    parts.push(`<div style="color:${MUTED};font-size:12px;margin-top:14px;">`
+      + `<strong style="color:${SLATE};">${report.regularsAbsent.length}</strong> regular attendee`
+      + `${report.regularsAbsent.length === 1 ? '' : 's'} did not come today — the list is in the attached PDF.`
+      + '</div>');
   }
 
   const html = shell({
@@ -250,9 +281,19 @@ function buildPostSabhaReport(report, opts = {}) {
     heading,
     report.event.dateLabel,
     '',
-    `Present: ${report.present.length} of ${report.expected} expected (${report.turnoutPct}%).`,
+    `Present: ${report.present.length} of ${report.expected} (${report.turnoutPct}%). Absent: ${report.absent}.`,
     '',
-    ...report.present.map((p) => `  ${p.name} (${p.attended}/${p.held})`),
+    'Present by mandal:',
+    ...byMandal.map((m) => `  ${m.mandal}: ${m.count}`),
+    ...(bs.called ? [
+      '',
+      `Batch follow-up: ${bs.present} of ${bs.called} rang came (${bs.followUpRate}%) across ${bs.batches} batch(es).`,
+      '',
+      'Volunteer contribution:',
+      ...contribution.map((v) => `  ${v.name}: ${v.count}`),
+    ] : []),
+    '',
+    'The full attendee list (with the sevak who called each person) is in the attached PDF.',
   ].join('\n');
 
   return { subject: heading, html, text };
@@ -397,9 +438,16 @@ function waButton(url, label) {
  * from the email on a phone. The legacy version listed names only and left
  * everyone to look the number up in the sheet.
  */
-function buildBirthdayReport(data) {
+function buildBirthdayReport(data, opts = {}) {
+  const solo = opts.forVolunteer || null;
   const heading = `Birthdays & anniversaries — ${data.dateLabel}`;
   const parts = [];
+
+  if (solo) {
+    parts.push(`<div style="color:${MUTED};font-size:13px;margin-bottom:4px;">`
+      + `Birthdays and anniversaries of contacts in your assigned area and mandal today — please send them your wishes.`
+      + `</div>`);
+  }
 
   parts.push(tiles([
     { label: 'Birthdays', value: data.birthdays.length, tone: ORANGE },
@@ -435,7 +483,7 @@ function buildBirthdayReport(data) {
 
   const html = shell({
     title: heading,
-    subtitle: 'Jai Swaminarayan',
+    subtitle: solo ? esc(solo.name) : 'Jai Swaminarayan',
     bodyHtml: parts.join(''),
   });
 
@@ -449,7 +497,8 @@ function buildBirthdayReport(data) {
     ...(data.anniversaries.length ? data.anniversaries.map((p) => `  ${p.name}${p.years != null ? ` (${p.years} years)` : ''} ${p.mobile || ''}`) : ['  none']),
   ].join('\n');
 
-  return { subject: heading, html, text };
+  const subject = solo ? `Your birthdays & anniversaries to wish — ${data.dateLabel}` : heading;
+  return { subject, html, text };
 }
 
 // ── Weekly sabha coverage digest ────────────────────────────────────────────

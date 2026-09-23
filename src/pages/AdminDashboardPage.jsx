@@ -29,6 +29,7 @@ import { getHouseholdIdsForAreas } from '../services/reminderService';
 import { useAuth } from '../hooks/usePermissions';
 import RequirePermission from '../components/RequirePermission';
 import { useCallOutcomes } from '../hooks/useCallOutcomes';
+import { useNiyamDharma } from '../hooks/useNiyamDharma';
 import { useSharedCollection } from '../hooks/useSharedCollection';
 import { buildIndividualSpecs } from '../hooks/useAllContacts';
 import { useVolunteers } from '../hooks/useVolunteers';
@@ -44,6 +45,10 @@ function AdminDashboardInner() {
   // below — the live vocabulary, so an admin-renamed outcome reads the same on
   // this dashboard as it does on the calling screen and in BatchList.
   const { colorClasses: statusColorClasses, emoji: statusEmoji, label: statusLabel } = useCallOutcomes();
+  // PHASE 42 — the live niyam list, so a breakdown key resolves to the same label
+  // the admin set, and the full list (not just enabled) is used so a niyam that
+  // was turned off but is still carried by contacts still reads with its name.
+  const { niyams, label: niyamLabel } = useNiyamDharma();
   const [householdIds, setHouseholdIds] = useState([]);
   const [resetOpen, setResetOpen] = useState(false);
 
@@ -88,6 +93,21 @@ function AdminDashboardInner() {
   const interested = (overview.statusBreakdown['Interested'] || 0) + (overview.statusBreakdown['Already Volunteer'] || 0);
   const statusRows = Object.entries(overview.statusBreakdown).sort((a, b) => b[1] - a[1]);
   const mandalRows = Object.entries(overview.byMandal).sort((a, b) => b[1].total - a[1].total);
+
+  // PHASE 42 — how many contacts keep each niyam. Configured niyams first (in the
+  // admin's order, dropping ones that are off and unused so the card stays about
+  // the active set), then any key still carried by a contact but no longer in the
+  // list at all. Sorted by count so the most-kept observance leads.
+  const niyamRows = useMemo(() => {
+    const bd = overview.niyamBreakdown || {};
+    const rows = niyams
+      .map((n) => ({ key: n.key, label: n.label, count: bd[n.key] || 0, enabled: n.enabled !== false }))
+      .filter((r) => r.enabled || r.count > 0);
+    for (const k of Object.keys(bd)) {
+      if (!niyams.some((n) => n.key === k)) rows.push({ key: k, label: niyamLabel(k), count: bd[k], enabled: false });
+    }
+    return rows.sort((a, b) => b.count - a.count);
+  }, [overview.niyamBreakdown, niyams, niyamLabel]);
 
   if (loading) return <div className="p-6 text-sm text-slate-400">Loading stats…</div>;
 
@@ -145,6 +165,32 @@ function AdminDashboardInner() {
           })}
         </div>
       </Card>
+
+      {niyamRows.length > 0 && (
+        <Card className="p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-sm font-medium text-slate-700">Niyam Dharma Agna</p>
+            <span className="text-xs text-slate-400">of {overview.total} contacts</span>
+          </div>
+          <div className="space-y-2">
+            {niyamRows.map((r) => {
+              const bp = overview.total ? Math.round((r.count / overview.total) * 100) : 0;
+              return (
+                <div key={r.key} className="flex items-center gap-2 sm:gap-3">
+                  <span className="flex min-w-[104px] items-center gap-1 truncate text-[13px] text-slate-600 sm:min-w-[160px]">
+                    <span className="truncate">{r.label}</span>
+                    {!r.enabled && <span className="shrink-0 text-[10px] uppercase tracking-wide text-slate-300">off</span>}
+                  </span>
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-amber-400 transition-all" style={{ width: `${bp}%` }} /></div>
+                  <span className="w-16 text-right text-sm font-semibold tabular-nums text-slate-700">
+                    {r.count}<span className="ml-1 text-[11px] font-normal text-slate-400">{bp}%</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
 
       {mandalRows.length > 0 && (
         <div>

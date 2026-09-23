@@ -39,6 +39,7 @@ import { Card } from '../components/ui/Card';
 import { AreaTable } from './AreaTable';
 import { MergeTaxonomyPanel } from './MergeTaxonomyPanel';
 import { UnlistedTaxonomyPanel } from './UnlistedTaxonomyPanel';
+import NiyamDharmaEditor from './NiyamDharmaEditor';
 
 // ── Rename: count, confirm, cascade ──────────────────────────────────────────
 // Returns { applied, records } — `applied: false` means the admin cancelled at
@@ -763,6 +764,14 @@ function AreasMandalsManagerInner() {
         kind="level"
         onNotice={announce}
       />
+
+      {/* PHASE 42 — Niyam Dharma Agna list. Lives here because this is where the
+          admin already curates the app's vocabulary; carries its own
+          manage_niyam_dharma gate (see NiyamDharmaEditor), so opening this screen
+          via manage_users is not enough to edit it. */}
+      <Card className="p-4">
+        <NiyamDharmaEditor />
+      </Card>
 
       <DeleteTaxonomyDialog
         pending={pendingDelete}

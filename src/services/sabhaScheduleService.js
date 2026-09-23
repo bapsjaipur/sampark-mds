@@ -32,6 +32,9 @@ function normalise(data) {
     out.area = norm.area;
   }
   if ('mandal' in out) out.mandal = out.mandal || null;
+  // Phase 43: blank sub-area stored as null so a schedule moved off a sub-area
+  // doesn't keep an empty string that reads as "has one".
+  if ('subArea' in out) out.subArea = out.subArea || null;
   if ('endDate' in out) out.endDate = out.endDate || null;
   if ('dayOfWeek' in out) out.dayOfWeek = Number(out.dayOfWeek);
   if ('intervalWeeks' in out) out.intervalWeeks = Math.max(1, Math.min(52, Number(out.intervalWeeks) || 1));

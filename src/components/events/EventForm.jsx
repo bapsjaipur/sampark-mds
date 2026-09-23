@@ -10,7 +10,7 @@
 // same way — a mandal head searching "Ramesh" wants their own karyakartas, not
 // every Ramesh in Jaipur.
 import { useState, useMemo, useEffect } from 'react';
-import { MandalSelect } from '../AreaMandalSelect';
+import { MandalSelect, SubAreaSelect } from '../AreaMandalSelect';
 import ChipMultiSelect from '../ui/ChipMultiSelect';
 import { Input, Label, FieldError } from '../ui/Input';
 import { Button } from '../ui/Button';
@@ -19,7 +19,7 @@ import { useAuth } from '../../hooks/usePermissions';
 import { useAreasAndMandals } from '../../hooks/useAreasAndMandals';
 import { filterVolunteersByScope, eventAreas } from '../../lib/scope';
 
-const emptyForm = { title: '', date: '', time: '', durationMinutes: '', speaker: '', mandal: '', areas: [] };
+const emptyForm = { title: '', date: '', time: '', durationMinutes: '', speaker: '', mandal: '', areas: [], subArea: '' };
 const selectClass = "h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-300";
 
 export default function EventForm({ event, onSubmit, onCancel, allowedMandals = null }) {
@@ -48,7 +48,7 @@ export default function EventForm({ event, onSubmit, onCancel, allowedMandals = 
   }, [allowedMandals, mustChooseAssignedMandal, mandals]);
   const [form, setForm] = useState(() =>
     isEdit
-      ? { title: event.title || '', date: event.date || '', time: event.time || '', durationMinutes: event.durationMinutes || '', speaker: event.speaker || '', mandal: event.mandal || '', areas: eventAreas(event) }
+      ? { title: event.title || '', date: event.date || '', time: event.time || '', durationMinutes: event.durationMinutes || '', speaker: event.speaker || '', mandal: event.mandal || '', areas: eventAreas(event), subArea: event.subArea || '' }
       : { ...emptyForm }
   );
   const [errors, setErrors] = useState({});
@@ -75,6 +75,16 @@ export default function EventForm({ event, onSubmit, onCancel, allowedMandals = 
     return [...new Set([...names, ...form.areas])];
   }, [areaDefs, form.areas]);
   const cityWide = form.areas.length === 0;
+  // PHASE 43 — a sub-area only makes sense to pin when the sabha is filed under
+  // exactly ONE area (a joint sabha spans several, a city-wide one none). The
+  // block below only renders when that one area actually has sub-areas, so nothing
+  // shows for the common case and it appears only where there is a choice to make.
+  const singleArea = form.areas.length === 1 ? form.areas[0] : '';
+  const singleAreaHasSubs = useMemo(() => {
+    if (!singleArea) return false;
+    const def = (areaDefs || []).find((a) => (a.name || a) === singleArea);
+    return Array.isArray(def?.subAreas) && def.subAreas.length > 0;
+  }, [areaDefs, singleArea]);
 
   // Speaker autocomplete draws only on volunteers inside the creator's scope.
   // Unrestricted admins keep the full roster.
@@ -113,6 +123,9 @@ export default function EventForm({ event, onSubmit, onCancel, allowedMandals = 
     setSaving(true);
     const ok = await onSubmit({
       ...form,
+      // Only persist a sub-area when the single filed area actually offers one;
+      // never let a value left over from a previous area selection slip through.
+      subArea: singleAreaHasSubs ? (form.subArea || '') : '',
       durationMinutes: form.durationMinutes ? Number(form.durationMinutes) : null
     });
     setSaving(false);
@@ -195,7 +208,13 @@ export default function EventForm({ event, onSubmit, onCancel, allowedMandals = 
         <ChipMultiSelect
           options={areaNames}
           value={form.areas}
-          onChange={(next) => setForm((prev) => ({ ...prev, areas: next }))}
+          onChange={(next) => setForm((prev) => ({
+            ...prev,
+            areas: next,
+            // Keep the sub-area only while the one filed area is unchanged; clear
+            // it on any switch to city-wide, a joint sabha, or a different area.
+            subArea: (next.length === 1 && prev.areas.length === 1 && next[0] === prev.areas[0]) ? prev.subArea : '',
+          }))}
           emptyLabel="No areas defined yet."
         />
         <p className="mt-1 text-xs text-slate-400">
@@ -206,6 +225,23 @@ export default function EventForm({ event, onSubmit, onCancel, allowedMandals = 
               : `Files this sabha under ${form.areas[0]}.`}
         </p>
       </div>
+      {/* PHASE 43 — sub-area, shown only when the single chosen area has some.
+          A sabha held in one sector of a larger area (e.g. Sanganer → Sector-9)
+          can now be filed there. */}
+      {singleAreaHasSubs && (
+        <div>
+          <Label>Sub-area (optional)</Label>
+          <SubAreaSelect
+            areaName={singleArea}
+            value={form.subArea}
+            onChange={update('subArea')}
+            className={selectClass}
+          />
+          <p className="mt-1 text-xs text-slate-400">
+            If this sabha was held in a specific sub-area of {singleArea}, pick it here.
+          </p>
+        </div>
+      )}
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
         <Button type="submit" variant="accent" disabled={saving}>{saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create event'}</Button>

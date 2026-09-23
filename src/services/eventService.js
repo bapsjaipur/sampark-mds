@@ -4,7 +4,7 @@
 // collection instead of the legacy's per-event Sheet column).
 
 import {
-  collection, doc, query, where, orderBy, onSnapshot, serverTimestamp,
+  collection, doc, query, where, orderBy, limit, onSnapshot, serverTimestamp,
 } from 'firebase/firestore';
 // PHASE 24 — metered drop-ins (src/lib/fsMetered.js): same signatures, they count.
 // Marking a sabha's attendance is one write per person present, which is the
@@ -15,7 +15,7 @@ import {
 import { db } from '../lib/firebase';
 import { normaliseAreas } from '../lib/scope';
 
-export async function createEvent({ title, date, time, durationMinutes, speaker, mandal, areas, area, createdBy }) {
+export async function createEvent({ title, date, time, durationMinutes, speaker, mandal, areas, area, subArea, createdBy }) {
   // Phase 34: a sabha can span several areas (joint) or none (city-wide). areas[]
   // is the list; the scalar `area` stays areas[0] for firestore.rules and old readers.
   const norm = normaliseAreas(areas, area);
@@ -26,6 +26,10 @@ export async function createEvent({ title, date, time, durationMinutes, speaker,
     mandal: mandal || null,
     areas: norm.areas,
     area: norm.area,
+    // Phase 43: an optional single sub-area of `area`, for a sabha held in one
+    // sector of a larger area. Only meaningful for a one-area sabha; the form
+    // sends '' otherwise, stored as null so scoped readers can ignore it.
+    subArea: subArea || null,
     createdBy,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -39,6 +43,10 @@ export async function updateEvent(eventId, data) {
   // `mandal == null` scoping the post-sabha report uses. Normalise here so both
   // paths write the same shape.
   if ('mandal' in patch) patch.mandal = patch.mandal || null;
+  // Phase 43: blank sub-area is stored as null, matching createEvent, so a sabha
+  // moved to a different area (which blanks it in the form) doesn't keep an empty
+  // string that reads as "has a sub-area".
+  if ('subArea' in patch) patch.subArea = patch.subArea || null;
   // Keep areas[] and the scalar `area` in step (Phase 34). Either field arriving
   // rewrites both from the same normalisation, so an edit can never leave a joint
   // sabha half-updated — and a legacy caller that only sets `area` still gets a
@@ -75,6 +83,21 @@ export function subscribeToEvents(callback, scope = null) {
     snap.docs.map((d) => ({ id: d.id, ...d.data() }))
       .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')))
   ));
+}
+
+/**
+ * PHASE 39 — the recent sabhas the manual post-sabha / karyakarta sends pick from.
+ *
+ * A capped ONE-TIME read, not a listener: the Email Automation tab only needs a
+ * short "which sabha" menu, and the reports themselves are heavy server jobs that
+ * nobody triggers on a loop. Ordered by `date` desc (the ISO string sorts
+ * chronologically) so the just-finished sabha is first; the caller drops anything
+ * still in the future. ~`max` reads per visit to the tab, not per render.
+ */
+export async function getRecentEventsForReports(max = 40) {
+  const q = query(collection(db, 'events'), orderBy('date', 'desc'), limit(max));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
 /** Picks the nearest event that hasn't fully ended yet — ports

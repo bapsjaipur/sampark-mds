@@ -6,7 +6,9 @@ import { Download } from 'lucide-react';
 import Modal from '../ui/Modal';
 import { Button } from '../ui/Button';
 
-const ALL_COLUMNS = [
+// The default per-contact column set. Exported so a page can spread it and add
+// computed columns (see ContactsPage adding a niyam-labels column via `format`).
+export const CONTACT_COLUMNS = [
   { key: 'name', label: 'Name', default: true }, { key: 'mobile', label: 'Phone', default: true },
   { key: 'mandal', label: 'Mandal', default: true }, { key: 'area', label: 'Area', default: true },
   { key: 'address', label: 'Address', default: false }, { key: 'level', label: 'Level', default: false },
@@ -34,9 +36,17 @@ export const HOUSEHOLD_COLUMNS = [
   { key: 'createdAt', label: 'Added On', default: false },
 ];
 
+// A column's value for one row. `format(row)` wins when present — used for
+// computed columns (e.g. joining a keys[] array to a labels string) that have no
+// single stored field. Plain columns just read r[c.key].
+function cellValue(row, col) {
+  if (typeof col.format === 'function') return String(col.format(row) ?? '');
+  return String(row[col.key] ?? '');
+}
+
 function toCSV(rows, columns) {
   const header = columns.map((c) => c.label).join(',');
-  const lines = rows.map((r) => columns.map((c) => `"${String(r[c.key] ?? '').replace(/"/g, '""')}"`).join(','));
+  const lines = rows.map((r) => columns.map((c) => `"${cellValue(r, c).replace(/"/g, '""')}"`).join(','));
   return [header, ...lines].join('\n');
 }
 
@@ -55,7 +65,7 @@ function downloadBlob(content, filename, type) {
 // HouseholdsPage) to export one row per household instead of one row per contact.
 // Must be a stable module-level constant; the initial checkbox selection is read
 // from it once on mount.
-export default function ExportButtons({ rows, label = 'contacts', fetchAllRows = null, columns: columnDefs = ALL_COLUMNS }) {
+export default function ExportButtons({ rows, label = 'contacts', fetchAllRows = null, columns: columnDefs = CONTACT_COLUMNS }) {
   const [open, setOpen] = useState(false);
   const [format, setFormat] = useState(null);
   const [selected, setSelected] = useState(() => new Set(columnDefs.filter((c) => c.default).map((c) => c.key)));
@@ -84,7 +94,7 @@ export default function ExportButtons({ rows, label = 'contacts', fetchAllRows =
         autoTable(pdf, {
           startY: 26,
           head: [columns.map((c) => c.label)],
-          body: exportRows.map((r) => columns.map((c) => String(r[c.key] ?? ''))),
+          body: exportRows.map((r) => columns.map((c) => cellValue(r, c))),
           styles: { fontSize: 8, valign: 'top' },
           headStyles: { fillColor: [234, 88, 12] },
         });

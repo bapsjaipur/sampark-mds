@@ -305,20 +305,47 @@ async function findEventsToReport({
  * sabhas held. "Held" is scoped to the event's own mandal when it has one —
  * counting a Malviya Nagar regular against Vaishali Nagar's sabhas would make
  * every ratio meaningless.
+ *
+ * SEVAK-who-called. Each present/absent row also carries the volunteer who was
+ * assigned to call that person for THIS sabha, joined from the calling batches
+ * cut for the event (batches.individualIds[] → batches.assignedVolunteerId). It
+ * is one extra query per reported event — the same batches lib/skReport.js reads
+ * on the same tick — and feeds the PDF's SEVAK column and Volunteer contribution
+ * table, plus the batch follow-up stats ("of the N we rang, M came").
  */
 async function buildPostSabhaReport({ eventId, now = new Date() }) {
   const eventSnap = await db.collection('events').doc(eventId).get();
   if (!eventSnap.exists) throw new Error(`Event ${eventId} not found.`);
   const event = { id: eventSnap.id, ...eventSnap.data() };
 
-  // ── this event's attendance
-  const attSnap = await db.collection('attendance').where('eventId', '==', eventId).get();
+  // ── this event's attendance, plus the calling batches cut for it, read together.
+  const [attSnap, batchSnap] = await Promise.all([
+    db.collection('attendance').where('eventId', '==', eventId).get(),
+    db.collection('batches').where('eventId', '==', eventId).get(),
+  ]);
   const presentIds = [];
   const markedBy = new Set();
   attSnap.forEach((d) => {
     const a = d.data();
     presentIds.push(a.individualId);
     if (a.markedBy) markedBy.add(a.markedBy);
+  });
+
+  // individualId -> volunteer doc id assigned to call them for this sabha. Only
+  // ASSIGNED batches populate it; anyone in an unassigned batch (or in no batch)
+  // has no caller and shows blank. `batchedIds` is every contact any batch
+  // covered — the "followed up" denominator for the batch stats.
+  const callerByIndividual = new Map();
+  const batchedIds = new Set();
+  let assignedBatchCount = 0;
+  batchSnap.forEach((d) => {
+    const b = d.data();
+    const vol = b.assignedVolunteerId || '';
+    if (vol) assignedBatchCount += 1;
+    (b.individualIds || []).forEach((iid) => {
+      batchedIds.add(iid);
+      if (vol && !callerByIndividual.has(iid)) callerByIndividual.set(iid, vol);
+    });
   });
 
   // ── the comparable sabhas of the last 12 months
@@ -363,14 +390,17 @@ async function buildPostSabhaReport({ eventId, now = new Date() }) {
   const row = (id, extraAttendedToday) => {
     const ind = individuals[id] || {};
     const past = attendedCount.get(id) || 0;
+    const sevakId = callerByIndividual.get(id);
     return {
       id,
       name: ind.name || 'Unknown contact',
       mandal: ind.mandal || '',
+      area: ind.area || '',
       mobile: ind.mobile || '',
       attended: past + (extraAttendedToday ? 1 : 0),
       held,
       isFirstTimer: past === 0,
+      sevak: sevakId ? (volunteerNames[sevakId] || 'Unknown') : '',
     };
   };
 
@@ -394,6 +424,21 @@ async function buildPostSabhaReport({ eventId, now = new Date() }) {
   }
   if (expected < present.length) expected = present.length;
 
+  // Present-only breakdowns for the PDF and the stats-only email body. All derived
+  // in memory from rows already fetched — no extra reads. A present contact with
+  // no assigned caller is bucketed under "Unassigned" so the contribution totals
+  // still sum to the present count.
+  const tallyBy = (rows, keyFn) => {
+    const m = new Map();
+    rows.forEach((r) => { const k = keyFn(r); m.set(k, (m.get(k) || 0) + 1); });
+    return [...m.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+  };
+  const byArea = tallyBy(present, (r) => r.area || 'Other').map(([area, count]) => ({ area, count }));
+  const byMandal = tallyBy(present, (r) => r.mandal || 'Unknown').map(([mandal, count]) => ({ mandal, count }));
+  const volunteerContribution = tallyBy(present, (r) => r.sevak || 'Unassigned')
+    .map(([name, count]) => ({ name, count }));
+  const presentFromBatches = present.filter((p) => batchedIds.has(p.id)).length;
+
   return {
     event: {
       id: event.id,
@@ -409,11 +454,23 @@ async function buildPostSabhaReport({ eventId, now = new Date() }) {
     regularsAbsent,
     firstTimers: present.filter((p) => p.isFirstTimer),
     expected,
+    absent: Math.max(0, expected - present.length),
     turnoutPct: expected ? Math.round((present.length / expected) * 100) : 0,
     held,
     comparableSabhas: history.length,
     markedByIds: [...markedBy],
     markedByNames: [...markedBy].map((id) => volunteerNames[id] || 'Unknown'),
+    // SEVAK-who-called breakdowns (present tallies).
+    byArea,
+    byMandal,
+    volunteerContribution,
+    batchStats: {
+      batches: batchSnap.size,
+      assignedBatches: assignedBatchCount,
+      called: batchedIds.size,
+      present: presentFromBatches,
+      followUpRate: batchedIds.size ? Math.round((presentFromBatches / batchedIds.size) * 100) : 0,
+    },
   };
 }
 
@@ -455,6 +512,8 @@ async function buildBirthdayData({ now = new Date(), templates = {} } = {}) {
       name: i.name || 'Unknown contact',
       mobile: i.mobile || '',
       mandal: i.mandal || '',
+      // Phase 44: carry area so the per-volunteer birthday fan-out can scope by it.
+      area: i.area || '',
       age,
       waUrl: buildWhatsAppUrl({ mobile: i.mobile, template: bTemplate, contact: i, extra: { age } }),
     };
@@ -468,6 +527,8 @@ async function buildBirthdayData({ now = new Date(), templates = {} } = {}) {
       name: i.name || 'Unknown contact',
       mobile: i.mobile || '',
       mandal: i.mandal || '',
+      // Phase 44: carry area so the per-volunteer birthday fan-out can scope by it.
+      area: i.area || '',
       years,
       waUrl: buildWhatsAppUrl({ mobile: i.mobile, template: aTemplate, contact: i, extra: { years } }),
     };

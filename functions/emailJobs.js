@@ -39,6 +39,9 @@ const {
 } = require('./lib/reportData');
 const { dailyReportPdf, postSabhaPdf, skBatchPdf, birthdayPdf } = require('./lib/pdfReport');
 const { permissionsForVolunteer, volunteerRoleIds } = require('./lib/callerAccess');
+// PHASE 44 — the per-volunteer birthday fan-out scopes each copy to the
+// recipient's assigned area/mandal. Same scope engine the sabha digest uses.
+const { resolveScope, matchesScope } = require('./lib/volunteerScope');
 // PHASE 38 — the per-karyakarta batch follow-up list. Shares the post-sabha tick
 // but nothing else; see runSkBatchReports below.
 const { buildSkBatchReports, MAX_SK_EMAILS_PER_EVENT } = require('./lib/skReport');
@@ -452,30 +455,105 @@ async function runSkBatchReports({ now = new Date(), force = false, eventId = nu
 
 async function runBirthdaySummary({ now = new Date(), force = false } = {}) {
   const settings = await getEmailSettings();
-  if (!force && !settings.autoBirthdayEnabled) return { skipped: 'disabled' };
+  const wantAdmin = force || settings.autoBirthdayEnabled;
+  // `force` deliberately does NOT extend to the per-volunteer copies. Pressing
+  // "Send now" on the admin screen is a request for the city-wide list — an
+  // admin checking the layout should not silently mail every mandal head their
+  // scoped list. Turning that on stays an explicit settings decision.
+  const wantVolunteer = settings.autoBirthdayVolunteerEnabled;
+
+  if (!wantAdmin && !wantVolunteer) return { skipped: 'disabled' };
 
   const templates = await getMessageTemplates();
   const data = await buildBirthdayData({ now, templates });
 
-  if (!force && data.birthdays.length === 0 && data.anniversaries.length === 0) {
+  const nobody = data.birthdays.length === 0 && data.anniversaries.length === 0;
+  // Nothing to wish and nobody forced a send: the whole job is a no-op. (A manual
+  // force still sends the empty city-wide copy so the layout can be checked.)
+  if (nobody && !force) {
     console.log(`[birthday] nobody to wish on ${data.dateKey}.`);
     return { skipped: 'nobody-today', date: data.dateKey };
   }
 
-  const to = await resolveReportRecipients(settings);
-  const { subject, html, text } = buildBirthdayReport(data);
-  const pdf = birthdayPdf(data);
+  const results = { date: data.dateKey, admin: null, volunteers: [] };
 
-  return queueMail({
-    to,
-    subject,
-    html,
-    text,
-    attachments: pdf ? [pdf] : [],
-    kind: 'birthday',
-    meta: { date: data.dateKey, birthdays: data.birthdays.length, anniversaries: data.anniversaries.length },
-    settings,
-  });
+  if (wantAdmin) {
+    const to = await resolveReportRecipients(settings);
+    const { subject, html, text } = buildBirthdayReport(data);
+    const pdf = birthdayPdf(data);
+    results.admin = await queueMail({
+      to,
+      subject,
+      html,
+      text,
+      attachments: pdf ? [pdf] : [],
+      kind: 'birthday',
+      meta: { date: data.dateKey, birthdays: data.birthdays.length, anniversaries: data.anniversaries.length },
+      settings,
+    });
+  }
+
+  // PHASE 44 — the per-volunteer copy the request is actually about: "send email
+  // on basis of there Assigned Mandal and Area contacts." One scoped email per
+  // karyakar, listing only the birthdays/anniversaries inside their own area and
+  // mandal. Costs no extra Firestore reads — buildBirthdayData already ran, and
+  // the slicing is in memory.
+  if (wantVolunteer && !nobody) {
+    const mailable = await loadMailableVolunteers();
+
+    const candidates = mailable
+      // view_assigned_contacts is the permission that makes somebody a scoped,
+      // contact-facing karyakar — precisely the audience whose "own" birthdays
+      // these are. An unrestricted volunteer (view_all_contacts) would receive
+      // the whole city twice, once here and once as the admin copy above; they
+      // ARE the admin audience.
+      .filter((v) => v.permissions.includes('view_assigned_contacts'))
+      .map((v) => ({
+        person: v,
+        scope: resolveScope({ volunteer: v, roles: v.roles, permissions: v.permissions }),
+      }))
+      .filter(({ scope }) => !scope.unrestricted && !scope.empty);
+
+    let sent = 0;
+    for (const { person, scope } of candidates) {
+      if (sent >= MAX_PER_VOLUNTEER_EMAILS) {
+        console.warn(`[birthday] per-volunteer cap of ${MAX_PER_VOLUNTEER_EMAILS} reached; ${candidates.length - sent} not mailed.`);
+        break;
+      }
+
+      // matchesScope is the CONTACT predicate: a birthday is theirs when the
+      // contact's area/mandal falls inside their assigned scope.
+      const birthdays = data.birthdays.filter((p) => matchesScope(scope, { area: p.area, mandal: p.mandal }));
+      const anniversaries = data.anniversaries.filter((p) => matchesScope(scope, { area: p.area, mandal: p.mandal }));
+      if (!birthdays.length && !anniversaries.length) continue; // nobody in their scope today
+
+      const slice = { ...data, birthdays, anniversaries };
+      const { subject, html, text } = buildBirthdayReport(slice, { forVolunteer: { id: person.id, name: person.name } });
+
+      /* eslint-disable no-await-in-loop */
+      const res = await queueMail({
+        to: [person.email],
+        subject,
+        html,
+        text,
+        // No per-volunteer PDF: the scoped list is short and the HTML carries it
+        // in full, keeping the mail doc small — same bargain as the daily and
+        // sabha-digest volunteer copies.
+        kind: 'birthday-volunteer',
+        meta: { date: data.dateKey, volunteerId: person.id, birthdays: birthdays.length, anniversaries: anniversaries.length },
+        settings,
+      });
+      /* eslint-enable no-await-in-loop */
+      results.volunteers.push({ volunteerId: person.id, ...res });
+      sent += 1;
+    }
+
+    if (!results.volunteers.length) {
+      console.log('[birthday] no scoped volunteer had anyone to wish today.');
+    }
+  }
+
+  return results;
 }
 
 // ── Scheduled entry points ──────────────────────────────────────────────────

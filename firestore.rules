@@ -554,13 +554,26 @@ service cloud.firestore {
 
     function canReadEvents() {
       let c = ctx();
-      return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts']);
+      // manage_attendance / manage_events read the calendar too: an attendance
+      // marker must see the sabha list to mark it, and event managers already do
+      // in practice. Events are sabha schedules, not contact PII.
+      return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts', 'manage_attendance', 'manage_events']);
     }
 
     function canReadEvent(data) {
       let c = ctx();
-      return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts']) &&
-        eventScopeAllows(data, c);
+      // A view permission reads events only within its area/mandal scope. But an
+      // area-only viewer cannot LIST events at all: Firestore rejects a whole
+      // listen if any one document fails the rule, and subscribeToEvents can only
+      // pre-filter the query by mandal — so per-area event scoping never worked
+      // server-side (see src/lib/scope.js eventInScope). manage_attendance /
+      // manage_events therefore read the full calendar unscoped, which is what
+      // lets an area attendance-marker's unfiltered listen succeed; EventsPage
+      // narrows the list to their area client-side. Events are sabha schedules,
+      // not contact PII, so this widening is safe.
+      return (c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts']) &&
+        eventScopeAllows(data, c)) ||
+        c.perms.hasAny(['manage_attendance', 'manage_events']);
     }
 
     function canManageEvent(data) {
@@ -814,6 +827,17 @@ service cloud.firestore {
       return c.perms.hasAny(['manage_templates']);
     }
 
+    // PHASE 42 — the Niyam Dharma list (settings/niyamDharma) gets its own
+    // permission so an admin can hand out "curate the daily-observance
+    // checkboxes" without also handing out the email/template power. The write
+    // rule ORs it with canManageTemplates() so an existing admin who has
+    // manage_templates but has not yet re-saved their role to pick up the new
+    // permission is never locked out of a doc they could always edit.
+    function canManageNiyamDharma() {
+      let c = ctx();
+      return c.perms.hasAny(['manage_niyam_dharma']);
+    }
+
     function canSeeEmailSettings() {
       let c = ctx();
       return c.perms.hasAny(['send_emails', 'manage_templates', 'manage_users']);
@@ -821,7 +845,10 @@ service cloud.firestore {
 
     match /settings/{docId} {
       allow read: if volunteerExists() && (docId != 'email' || canSeeEmailSettings());
-      allow write: if volunteerExists() && canManageTemplates();
+      allow write: if volunteerExists()
+        && (docId == 'niyamDharma'
+              ? (canManageNiyamDharma() || canManageTemplates())
+              : canManageTemplates());
     }
 
     // ---------------------------------------------------------------------

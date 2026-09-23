@@ -26,6 +26,7 @@ import { getDoc, setDoc } from '../lib/fsMetered';
 import { db } from '../lib/firebase';
 import { DEFAULT_WA_TEMPLATE, DEFAULT_BIRTHDAY_TEMPLATE, DEFAULT_ANNIVERSARY_TEMPLATE } from '../lib/whatsapp';
 import { DEFAULT_STATUS_CHIPS } from '../lib/callingStatuses';
+import { DEFAULT_NIYAM_DHARMAS } from '../lib/niyamDharma';
 
 export const SETTINGS_COLLECTION = 'settings';
 
@@ -49,6 +50,10 @@ export const DEFAULT_EMAIL_SETTINGS = {
   autoSkBatchReportsEnabled: false,
   // Birthday + anniversary digest at 06:00 IST.
   autoBirthdayEnabled: true,
+  // Phase 44 — the per-volunteer copy of the birthday list, narrowed to the
+  // contacts in that karyakar's assigned area/mandal. Off by default; switch on
+  // once mandal heads have a reportEmail, like the other per-volunteer fan-outs.
+  autoBirthdayVolunteerEnabled: false,
   // Phase 33 — weekly sabha coverage digest, Monday morning. Reports on
   // COMPLETED weeks only: which area's sabha happened, which didn't, and who has
   // now missed two in a row.
@@ -105,10 +110,38 @@ export const DEFAULT_CALL_OUTCOME_SETTINGS = {
   outcomes: DEFAULT_STATUS_CHIPS,
 };
 
+// PHASE 42 — the daily-observance checkboxes on the contact form. Seeded from
+// the four niyams the user named; admins add/rename/retire from the Areas &
+// Mandals screen (see the Niyam Dharma editor + useNiyamDharma).
+export const DEFAULT_NIYAM_DHARMA_SETTINGS = {
+  niyams: DEFAULT_NIYAM_DHARMAS,
+};
+
+// PHASE 43 — miscellaneous app-wide settings that are not email, templates or
+// outcomes, kept in their OWN document on purpose. Unlike settings/email this
+// one is readable by every volunteer (the generic settings read rule), which is
+// what lets the calling screen and the attendance screen honour these without
+// the send_emails gate that guards settings/email. Two knobs so far:
+//
+//   attendanceWindowEnforced — the hardcoded "attendance opens 30 min before
+//     the sabha and closes 30 min after" used to be absolute. An admin running a
+//     sabha that starts late, or back-filling a register the next morning, had no
+//     way past it. Turn this off to let attendance be marked at any time; the
+//     window labels then stop gating the screen. Default true = the old behaviour.
+//   defaultBatchSize — the batch size the Generate and Tools screens start from,
+//     and the cap a mid-week top-up fills an existing batch to before rolling the
+//     overflow into a NEW batch instead of overstuffing the last one. Default 25.
+export const DEFAULT_APP_SETTINGS = {
+  attendanceWindowEnforced: true,
+  defaultBatchSize: 25,
+};
+
 const DEFAULTS = {
   email: DEFAULT_EMAIL_SETTINGS,
   messageTemplate: DEFAULT_MESSAGE_TEMPLATE_SETTINGS,
   callOutcomes: DEFAULT_CALL_OUTCOME_SETTINGS,
+  niyamDharma: DEFAULT_NIYAM_DHARMA_SETTINGS,
+  app: DEFAULT_APP_SETTINGS,
 };
 
 function withDefaults(docId, data) {

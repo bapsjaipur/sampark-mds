@@ -178,6 +178,30 @@ export default function CallingFlowPage() {
   }, [round.ready, round.groups, current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
+   * PHASE 46 — the same verdict as roundRow, but for EVERY contact, keyed by id,
+   * so the LIST view can show who came and who said yes and didn't right next to
+   * each name — the "status list of who was present, and who said I will come but
+   * didn't" a karyekar wants after the sabha.
+   *
+   * Built from round.groups (the full classification), NOT round.pending (the
+   * shrinking work list), so it reflects who actually attended rather than who is
+   * left to call back. Only once the register is marked (round.ready): before
+   * that every row would merely echo its call outcome, which is a different fact
+   * and already on the card. Free — it re-reads the in-memory groups, no query.
+   */
+  const roundById = useMemo(() => {
+    if (!round.ready || !round.groups) return null;
+    const m = new Map();
+    for (const g of ROUND_GROUPS) {
+      const chip = (ROUND_TONE_CLASSES[g.tone] || ROUND_TONE_CLASSES.slate).chip;
+      for (const c of round.groups[g.key] || []) {
+        m.set(c.id, { emoji: g.emoji, short: g.short, chip, attended: c._attended });
+      }
+    }
+    return m;
+  }, [round.ready, round.groups]);
+
+  /**
    * The queue currently being walked, whichever kind it is.
    *
    * Both filters resolve down to a set of contact ids so goToNext() has one code
@@ -714,6 +738,10 @@ export default function CallingFlowPage() {
           contacts={queueContacts}
           allContacts={contacts}
           currentIdx={currentIdx}
+          // The post-sabha verdict per contact (present / said yes, didn't come).
+          // Null until the register is marked, so the list stays a plain calling
+          // list before the sabha and becomes an attendance status list after it.
+          roundById={roundById}
           // Picking a row is a decision to CALL that person, so it drops straight
           // back into the card — the list is a way in, not a second place to work.
           onPick={(idx) => { jumpTo(idx); setResumeNote(false); setViewMode('card'); }}
