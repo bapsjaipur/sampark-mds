@@ -158,7 +158,7 @@ async function loadRolePermissions() {
  * fallback, which is exactly what volunteerRoleIds() encodes.
  *
  * @returns {Promise<Array<{id, name, email, mobile, permissions, roles,
- *   assignedAreas, assignedMandals, scopeKind}>>}
+ *   assignedAreas, assignedMandals, scopeKind, program, programs}>>}
  */
 async function loadMailableVolunteers() {
   const [vSnap, rolesSnap] = await Promise.all([
@@ -190,6 +190,19 @@ async function loadMailableVolunteers() {
       assignedAreas: Array.isArray(v.assignedAreas) ? v.assignedAreas : [],
       assignedMandals: Array.isArray(v.assignedMandals) ? v.assignedMandals : [],
       scopeKind: typeof v.scopeKind === 'string' ? v.scopeKind : null,
+      // PHASE 45 — which wing ('Yuvak' | 'Bal Mandal') this person works in.
+      // Already on the document we just read, so it costs no extra reads. The
+      // per-recipient report copies use it to stop a Yuvak-wing area coordinator
+      // being mailed every Bal Mandal sabha (and vice versa). See
+      // programCoversMandal() in volunteerScope.js.
+      program: typeof v.program === 'string' ? v.program : null,
+      // PHASE 47 — the explicit list of mandals this person works with (the
+      // multi-select successor to `program`). Rides on the same document, so no
+      // extra reads. programsCoverMandal() routes each birthday/sabha copy by it,
+      // falling back to the binary `program` above when it is absent.
+      programs: Array.isArray(v.programs)
+        ? v.programs.filter((x) => typeof x === 'string' && x)
+        : null,
     });
   });
   return out;

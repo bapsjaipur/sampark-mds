@@ -33,6 +33,7 @@ import ChipMultiSelect from '../components/ui/ChipMultiSelect';
 import Modal from '../components/ui/Modal';
 import { resolveScope, describeScope, statedScopeKind, roleStatedScopeKind, inferScopeKind, filterVolunteersByScope, SCOPE_KINDS, SCOPE_KIND_META } from '../lib/scope';
 import { DEFAULT_ROLE_RANK, isSantoRole } from '../constants/roleTemplates';
+import { isBalMandalProgram } from '../constants/balMandalConfig';
 import { expandLegacyPermissions, isLegacyRole } from '../constants/permissions';
 import { buildVolunteerRows, computeVolunteerStats, exportVolunteerCsv, exportVolunteerPdf } from '../lib/volunteerExports';
 import PasswordApprovals, { usePasswordApprovals } from '../components/volunteers/PasswordApprovals';
@@ -987,6 +988,14 @@ function VolunteerEditorInner() {
         // PHASE 30 — program assignment (Yuvak or Bal Mandal). Defaults to Yuvak
         // for existing volunteers with no program field, so nothing breaks.
         program: v.program || 'Yuvak',
+        // PHASE 47 — the multi-select. Pre-filled from the legacy wing on first
+        // open so the admin reviews a sensible default rather than a blank box:
+        // Yuvak → Yuvak Mandal, Bal → Bal + Sishu (paired). Routing keeps today's
+        // behaviour until this is saved, so un-opened profiles stay safe.
+        programs: Array.isArray(v.programs) && v.programs.length
+          ? v.programs
+          : (v.program === 'Bal Mandal' ? ['Bal Mandal', 'Sishu Mandal']
+            : v.program === 'Yuvak' ? ['Yuvak Mandal'] : []),
       });
     }
   }, [selectedId, volunteers]);
@@ -1175,6 +1184,15 @@ function VolunteerEditorInner() {
     const assignedMandals = santo ? [] : draft.assignedMandals;
     const savedScopeKind = santo ? SCOPE_KINDS.NONE : scopeKind;
 
+    // PHASE 47 — the multi-programme list is the source of truth; derive the
+    // legacy binary `program` wing from it ('Bal Mandal' if any ticked mandal is
+    // a children's mandal, else 'Yuvak') so the Bal-Mandal feature gates that
+    // still read `program` keep working. isBalMandalProgram mirrors the server's
+    // isChildMandal, so the two agree. Both fields are written below — the direct
+    // updateDoc is what lands them before the functions are redeployed.
+    const programsClean = Array.isArray(draft.programs) ? draft.programs : [];
+    const programWing = programsClean.some(isBalMandalProgram) ? 'Bal Mandal' : 'Yuvak';
+
     try {
       const functions = getFunctions();
       const updateVolunteerAccount = httpsCallable(functions, 'updateVolunteerAccount');
@@ -1189,8 +1207,11 @@ function VolunteerEditorInner() {
         assignedAreas,
         assignedMandals,
         isActive: draft.isActive,
-        // PHASE 30 — program assignment
-        program: draft.program || 'Yuvak',
+        // PHASE 30/47 — the programmes array (source of truth) plus the derived
+        // binary wing. Sending `program` too keeps an un-redeployed callable
+        // correct during the deploy gap.
+        programs: programsClean,
+        program: programWing,
       });
 
       // PHASE 39 — a moved login number is the one edit on this form with a
@@ -1219,7 +1240,8 @@ function VolunteerEditorInner() {
         roleRefs: draft.roleRefs,
         roleRef: primaryRole?.id || null,
         scopeKind: savedScopeKind,
-        program: draft.program || 'Yuvak',
+        programs: programsClean,
+        program: programWing,
       });
     } catch (err) {
       setError(err.message);
@@ -1656,26 +1678,23 @@ function VolunteerEditorInner() {
 
             <div>
               <Label>Program</Label>
-              {/* PHASE 39 — there were TWO of these, both bound to draft.program,
-                  one here and one under the role picker, labelled differently
-                  ("Yuvak (Youth)" vs "Yuvak Mandal"). Two controls for one field
-                  read as two settings that could disagree. The lower copy is gone.
-
-                  The LABEL is "Yuvak Mandal" — "Youth" was a second name for the
-                  same mandal and reading both made it look like two programs. The
-                  stored VALUE stays 'Yuvak': it is written on every volunteer
-                  document and matched by src/lib/scope.js and the batch/event
-                  filters, so renaming it would orphan the whole roster. Display
-                  name here, data underneath — they are allowed to differ. */}
-              <Select
-                value={draft.program || 'Yuvak'}
-                onChange={(e) => setDraft({ ...draft, program: e.target.value })}
-              >
-                <option value="Yuvak">Yuvak Mandal</option>
-                <option value="Bal Mandal">Bal Mandal</option>
-              </Select>
+              {/* PHASE 47 — was a single Yuvak/Bal select; now a multi-select of
+                  mandals (the "programmes" a volunteer works with). The array is
+                  stored on `programs`; the callable derives the legacy binary
+                  `program` ('Bal Mandal' if any child mandal is ticked, else
+                  'Yuvak') so the Bal-Mandal feature gates that still read it keep
+                  working. Options are the live mandal names — the same source as
+                  Assigned mandals above. */}
+              <ChipMultiSelect
+                options={assignableMandalNames}
+                value={draft.programs || []}
+                onChange={(v) => setDraft({ ...draft, programs: v })}
+                allLabel="programs"
+                emptyLabel="No mandals defined yet — add them on the Areas & Mandals tab"
+              />
               <p className="mt-1 text-xs text-slate-400">
-                Which program this volunteer works with. Determines which contacts and events they can see.
+                Which programmes this volunteer works with. They receive birthday, anniversary and
+                sabha-coverage emails only for the mandals ticked here. Pick one or more.
               </p>
             </div>
 

@@ -44,6 +44,11 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const admin = require('firebase-admin');
 const { permissionsForVolunteer, normalizeRoleRefs } = require('./lib/callerAccess');
+// PHASE 47 — the multi-programme field derives the legacy binary `program` wing
+// so the Bal-Mandal feature gates (notes panel, observer attendance, SK
+// assignment, roleView) that still read it keep working. isChildMandal is the
+// one source of "is this a children's mandal" shared with the routing helpers.
+const { isChildMandal } = require('./lib/volunteerScope');
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -121,7 +126,10 @@ exports.updateVolunteerAccount = onCall({ region: 'us-central1' }, async (reques
     // follows the callable with its own updateDoc. Accepted here so the callable
     // is the whole truth again and that second write is a fallback rather than
     // the only thing that works.
-    program,
+    //
+    // PHASE 47 — `programs` is the multi-select successor (an array of mandal
+    // names). `program` is still accepted/derived for backward compatibility.
+    program, programs,
   } = request.data || {};
 
   if (!volunteerId) throw new HttpsError('invalid-argument', 'volunteerId is required.');
@@ -140,6 +148,16 @@ exports.updateVolunteerAccount = onCall({ region: 'us-central1' }, async (reques
   const PROGRAMS = ['Yuvak', 'Bal Mandal'];
   if (program !== undefined && program !== null && !PROGRAMS.includes(program)) {
     throw new HttpsError('invalid-argument', `program must be one of: ${PROGRAMS.join(', ')}.`);
+  }
+  // PHASE 47 — the multi-select: an array of mandal names (the programmes a
+  // volunteer works with), routing their birthday/anniversary & sabha emails.
+  // Bounded and string-checked here without a read; the names themselves are
+  // governed by the Areas & Mandals taxonomy, not re-validated against it.
+  if (programs !== undefined && programs !== null) {
+    if (!Array.isArray(programs) || programs.length > 20
+        || programs.some((p) => typeof p !== 'string' || !p.trim())) {
+      throw new HttpsError('invalid-argument', 'programs must be an array of up to 20 non-empty mandal names.');
+    }
   }
 
   const isSelf = request.auth.uid === volunteerId;
@@ -319,10 +337,24 @@ exports.updateVolunteerAccount = onCall({ region: 'us-central1' }, async (reques
       // Null lets it fall through to the role and then to that inference.
       if (scopeKind !== undefined) updateData.scopeKind = scopeKind || null;
       if (isActive !== undefined) updateData.isActive = !!isActive;
-      // Inside the manage_users branch with the rest: which program a volunteer
-      // belongs to decides which contacts and events they are shown, so it is not
-      // a field they may set on themselves.
-      if (program !== undefined) updateData.program = program || 'Yuvak';
+      // Inside the manage_users branch with the rest: which programmes a
+      // volunteer belongs to decides which Bal-Mandal tools they see and which
+      // birthday/sabha emails reach them, so it is not a field they may set on
+      // themselves.
+      //
+      // PHASE 47 — `programs` (the array) is the source of truth; `program` (the
+      // binary wing) is derived from it so the Bal-Mandal feature gates that
+      // still read `program` keep working. When only legacy `program` is sent
+      // (an older client), honour it as before.
+      if (programs !== undefined) {
+        const cleanPrograms = Array.isArray(programs)
+          ? [...new Set(programs.map((s) => String(s || '').trim()).filter(Boolean))]
+          : [];
+        updateData.programs = cleanPrograms;
+        updateData.program = cleanPrograms.some(isChildMandal) ? 'Bal Mandal' : 'Yuvak';
+      } else if (program !== undefined) {
+        updateData.program = program || 'Yuvak';
+      }
     }
 
     await db.collection('volunteers').doc(volunteerId).update(updateData);

@@ -30,7 +30,7 @@ import { useAreasAndMandals } from "../../hooks/useAreasAndMandals";
 import { useNiyamDharma } from "../../hooks/useNiyamDharma";
 import { writableMandals } from "../../lib/scope";
 import { FULL_MEMBER_FIELDS, STANDARD_OPTIONS, HOBBY_OPTIONS } from "../../lib/areaMandalCodes";
-import { getMandalForStandard } from "../../constants/balMandalConfig";
+import { getMandalForStandard, isBalMandalProgram } from "../../constants/balMandalConfig";
 import { Input, Select, Label, FieldError } from "../ui/Input";
 import { Button } from "../ui/Button";
 
@@ -535,9 +535,16 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
             value={form.standard}
             onChange={(e) => {
               const newStandard = e.target.value;
-              const autoMandal = getMandalForStandard(newStandard);
+              // Working mandal wins over age. getMandalForStandard only ever
+              // returns a children's-wing mandal (Sishu ↔ Bal), so it must not
+              // pull someone already placed in another wing's mandal — the one
+              // they actually volunteer in — back into Bal/Sishu. Re-derive only
+              // when the mandal is empty or itself a children's-wing mandal;
+              // otherwise the chosen mandal stays.
+              const keepMandal = form.mandal && !isBalMandalProgram(form.mandal);
+              const autoMandal = keepMandal ? form.mandal : getMandalForStandard(newStandard);
               // Standard drives Mandal, so it counts as touching it — otherwise
-              // the scoped default would seed itself back over the auto-assignment.
+              // the scoped default would seed itself back over the assignment.
               setMandalTouched(true);
               setForm((f) => ({ ...f, standard: newStandard, mandal: autoMandal }));
             }}
@@ -548,7 +555,8 @@ export default function IndividualForm({ individual, onSubmit, onCancel, withinH
             ))}
           </Select>
           <p className="mt-1 text-xs text-slate-400">
-            LKG/UKG/1st-4th auto-assigns Sishu Mandal, 5th-8th auto-assigns Bal Mandal.
+            LKG/UKG/1st-4th auto-assigns Sishu Mandal, 5th-8th auto-assigns Bal Mandal —
+            unless a different Mandal is already chosen, which is kept.
           </p>
         </div>
       )}

@@ -121,7 +121,7 @@ export const DEFAULT_NIYAM_DHARMA_SETTINGS = {
 // outcomes, kept in their OWN document on purpose. Unlike settings/email this
 // one is readable by every volunteer (the generic settings read rule), which is
 // what lets the calling screen and the attendance screen honour these without
-// the send_emails gate that guards settings/email. Two knobs so far:
+// the send_emails gate that guards settings/email. The knobs so far:
 //
 //   attendanceWindowEnforced — the hardcoded "attendance opens 30 min before
 //     the sabha and closes 30 min after" used to be absolute. An admin running a
@@ -131,9 +131,19 @@ export const DEFAULT_NIYAM_DHARMA_SETTINGS = {
 //   defaultBatchSize — the batch size the Generate and Tools screens start from,
 //     and the cap a mid-week top-up fills an existing batch to before rolling the
 //     overflow into a NEW batch instead of overstuffing the last one. Default 25.
+//   autoClearOutcomesEnabled / clearOutcomesAfterHours — PHASE 46. When enabled,
+//     a scheduled function clears the call status + reference note on the contacts
+//     in a sabha's batches this many hours after the sabha ends, so the next round
+//     starts fresh (functions/outcomeCleanup.js). Default OFF — it is the only
+//     automatic destructive write, so an admin turns it on deliberately. The delay
+//     defaults to 12h, comfortably after the post-sabha reports have gone out.
+//     These two are ALSO mirrored functions-side in functions/outcomeCleanup.js
+//     (DEFAULT_APP_SETTINGS there) — keep the two copies in sync.
 export const DEFAULT_APP_SETTINGS = {
   attendanceWindowEnforced: true,
   defaultBatchSize: 25,
+  autoClearOutcomesEnabled: false,
+  clearOutcomesAfterHours: 12,
 };
 
 const DEFAULTS = {

@@ -1,0 +1,5 @@
+# BAPS Jaipur MDS is a private, auth-gated internal tool for karyekartas —
+# there is nothing here for search engines to index. Keep the whole app out
+# of search results.
+User-agent: *
+Disallow: /

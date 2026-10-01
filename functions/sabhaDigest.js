@@ -38,7 +38,7 @@ const {
 } = require('./lib/mailer');
 const { buildSabhaCoverageReport } = require('./lib/emailTemplates');
 const { loadSabhaCoverage, DEFAULT_WEEKS_BACK } = require('./lib/sabhaCoverage');
-const { resolveScope, eventInScope } = require('./lib/volunteerScope');
+const { resolveScope, eventInScope, programsCoverMandal } = require('./lib/volunteerScope');
 const { formatDayMonth } = require('./lib/sabhaDates');
 // PHASE 34 — editable cron, see lib/scheduleConfig.js.
 const { schedules } = require('./lib/scheduleConfig');
@@ -160,10 +160,18 @@ async function runSabhaDigest({ now = new Date(), force = false, weeksBack = DEF
       // area's head and a city-wide one reaches all of them — the same rule the
       // All Area Sabhas screen uses, so the email and the grid agree on "mine".
       // r.areas is the schedule's area list (city-wide is []); mirrors the row.
-      const mine = data.rows.filter((r) => eventInScope(scope, {
-        areas: r.areas,
-        mandal: r.mandal === '—' ? null : r.mandal,
-      }));
+      //
+      // PHASE 45/47 — then narrowed to the mandals the recipient actually works
+      // with: an AREA-scoped Yuvak coordinator is in-scope for every mandal's
+      // sabha in their area, so eventInScope alone mailed them Bal Mandal (and
+      // Sanyukt) reports. programsCoverMandal keeps only their ticked programmes
+      // (Bal⇄Sishu paired); it falls back to the binary wing, then a no-op, when
+      // their programmes are unset.
+      const mine = data.rows.filter((r) => {
+        const mandal = r.mandal === '—' ? null : r.mandal;
+        return eventInScope(scope, { areas: r.areas, mandal })
+          && programsCoverMandal(person.programs, person.program, mandal);
+      });
       if (!mine.length) continue;
       if (!isActionable(mine)) continue; // see the header — silence is the point
 

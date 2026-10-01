@@ -41,7 +41,7 @@ const { dailyReportPdf, postSabhaPdf, skBatchPdf, birthdayPdf } = require('./lib
 const { permissionsForVolunteer, volunteerRoleIds } = require('./lib/callerAccess');
 // PHASE 44 — the per-volunteer birthday fan-out scopes each copy to the
 // recipient's assigned area/mandal. Same scope engine the sabha digest uses.
-const { resolveScope, matchesScope } = require('./lib/volunteerScope');
+const { resolveScope, matchesScope, programsCoverMandal } = require('./lib/volunteerScope');
 // PHASE 38 — the per-karyakarta batch follow-up list. Shares the post-sabha tick
 // but nothing else; see runSkBatchReports below.
 const { buildSkBatchReports, MAX_SK_EMAILS_PER_EVENT } = require('./lib/skReport');
@@ -93,6 +93,17 @@ async function runDailyReport({ now = new Date(), force = false } = {}) {
   }
 
   const stats = await buildDailyStats({ now });
+
+  // PHASE 47 — a day on which nobody logged a call produces an all-zero digest.
+  // A scheduled run skips it, saving the mail + emailLogs writes and the
+  // Trigger-Email send it would otherwise cost every quiet day. A manual "Send
+  // daily report" (force) still sends so the layout can be checked. Like
+  // runBirthdaySummary's nobody-today skip, a skip writes no emailLogs row.
+  if (!force && Number(stats.totals.calls) === 0) {
+    console.log(`[daily] no calls logged on ${stats.dateKey} — skipping the daily report email.`);
+    return { skipped: 'no-calls', date: stats.dateKey };
+  }
+
   const results = { date: stats.dateKey, admin: null, volunteers: [] };
 
   if (wantAdmin) {
@@ -523,8 +534,16 @@ async function runBirthdaySummary({ now = new Date(), force = false } = {}) {
 
       // matchesScope is the CONTACT predicate: a birthday is theirs when the
       // contact's area/mandal falls inside their assigned scope.
-      const birthdays = data.birthdays.filter((p) => matchesScope(scope, { area: p.area, mandal: p.mandal }));
-      const anniversaries = data.anniversaries.filter((p) => matchesScope(scope, { area: p.area, mandal: p.mandal }));
+      //
+      // PHASE 45/47 — and then only if the contact's mandal is one this person
+      // actually works with. An AREA-scoped Yuvak coordinator matches every
+      // mandal in their area, so matchesScope alone put Sanyukt (and Bal Mandal)
+      // birthdays in their copy. programsCoverMandal keeps only the mandals they
+      // ticked (Bal⇄Sishu paired); it falls back to the binary wing, then to a
+      // no-op, when their programmes are unset.
+      const inWing = (p) => programsCoverMandal(person.programs, person.program, p.mandal);
+      const birthdays = data.birthdays.filter((p) => matchesScope(scope, { area: p.area, mandal: p.mandal }) && inWing(p));
+      const anniversaries = data.anniversaries.filter((p) => matchesScope(scope, { area: p.area, mandal: p.mandal }) && inWing(p));
       if (!birthdays.length && !anniversaries.length) continue; // nobody in their scope today
 
       const slice = { ...data, birthdays, anniversaries };
