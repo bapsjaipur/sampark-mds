@@ -29,6 +29,8 @@ import { confirmDialog } from '../ui/ConfirmHost';
 import { findLikelyDuplicates, findMissingInfo, findMissingAreaInHousehold } from '../../services/integrityService';
 import { backfillMemberAreas } from '../../services/bulkService';
 import MergeDuplicatesPanel from './MergeDuplicatesPanel';
+import IndividualForm from '../individuals/IndividualForm';
+import Modal from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 
@@ -72,10 +74,29 @@ export default function DataIntegrityTab() {
 }
 
 function IntegrityReport({ onClose }) {
-  const { contacts, loading } = useAllContacts();
+  const { contacts, loading, updateContact, deleteContact, bulkDeleteContacts } = useAllContacts();
   const { showToast } = useToast();
   const [tab, setTab] = useState('duplicates');
   const [backfilling, setBackfilling] = useState(false);
+  // Missing-info tab: the contact currently being fixed inline (drives the modal),
+  // the set of ids ticked for a bulk remove, and a guard while a delete is in
+  // flight. Selection only ever holds standalone contacts — household members are
+  // never removable from here (see renderMissingList), so bulk remove can never
+  // orphan a household.
+  const [editing, setEditing] = useState(null);
+  const [selected, setSelected] = useState(() => new Set());
+  const [removing, setRemoving] = useState(false);
+
+  const toggleSelect = (id) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleSelectMany = (ids, checked) => setSelected((prev) => {
+    const next = new Set(prev);
+    ids.forEach((id) => { if (checked) next.add(id); else next.delete(id); });
+    return next;
+  });
 
   // Counted here so the tab label can carry a number; MergeDuplicatesPanel runs
   // the same memo on the same array, which React de-duplicates for free.
@@ -106,6 +127,102 @@ function IntegrityReport({ onClose }) {
     }
   }
 
+  // Fix inline: IndividualForm calls this with its assembled payload and closes
+  // itself when we return a truthy result (updateContact resolves true/false).
+  async function handleFix(payload) {
+    if (!editing) return false;
+    return updateContact(editing.id, payload);
+  }
+
+  // "removing if not require that person in list" — a single delete, only ever
+  // offered on standalone contacts (household members get "Open household").
+  async function handleRemoveOne(ind) {
+    const ok = await confirmDialog({
+      title: `Remove ${ind.name || 'this contact'}?`,
+      message: 'This permanently deletes the contact. Household members are kept — open the household to edit them there.',
+      confirmText: 'Remove',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    await deleteContact(ind.id);
+    setSelected((prev) => { const n = new Set(prev); n.delete(ind.id); return n; });
+  }
+
+  // "bulk selection so remove it in one click" — ids are pre-filtered to
+  // standalone contacts by the caller, so this never touches a household member.
+  async function handleRemoveSelected(ids) {
+    if (ids.length === 0) return;
+    const ok = await confirmDialog({
+      title: `Remove ${ids.length} contact${ids.length === 1 ? '' : 's'}?`,
+      message: 'This permanently deletes the selected contacts. Anyone in a Household is left untouched.',
+      confirmText: `Remove ${ids.length}`,
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setRemoving(true);
+    try {
+      await bulkDeleteContacts(ids);
+      setSelected(new Set());
+    } finally {
+      setRemoving(false);
+    }
+  }
+
+  // One renderer for both missing-info lists (phone, mandal). A row is removable
+  // only when it has no householdId; the "select shown" box and the bulk button
+  // act on the removable rows in view. Called as a function, not mounted as a
+  // component, so it shares this component's state without extra hooks.
+  function renderMissingList(heading, list, emptyText) {
+    const visible = list.slice(0, 50);
+    const visibleRemovable = visible.filter((ind) => !ind.householdId).map((i) => i.id);
+    const allShownSelected = visibleRemovable.length > 0 && visibleRemovable.every((id) => selected.has(id));
+    const selectedHere = list.filter((ind) => selected.has(ind.id) && !ind.householdId).map((i) => i.id);
+    return (
+      <div>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-medium text-slate-700">{heading} ({list.length})</p>
+          <div className="flex items-center gap-3">
+            {visibleRemovable.length > 0 && (
+              <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                <input type="checkbox" checked={allShownSelected} onChange={(e) => toggleSelectMany(visibleRemovable, e.target.checked)} className="rounded border-slate-300" />
+                Select shown
+              </label>
+            )}
+            {selectedHere.length > 0 && (
+              <Button variant="danger" size="sm" onClick={() => handleRemoveSelected(selectedHere)} disabled={removing}>
+                {removing ? 'Removing…' : `Remove selected (${selectedHere.length})`}
+              </Button>
+            )}
+          </div>
+        </div>
+        {list.length === 0 ? <p className="text-sm text-slate-400">{emptyText}</p> : (
+          <div className="space-y-1">
+            {visible.map((ind) => (
+              <div key={ind.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 px-3 py-2 text-sm">
+                <div className="flex min-w-0 items-center gap-2">
+                  {!ind.householdId && (
+                    <input type="checkbox" checked={selected.has(ind.id)} onChange={() => toggleSelect(ind.id)} className="rounded border-slate-300" />
+                  )}
+                  <span className="truncate">{ind.name || <span className="text-slate-400">(no name)</span>}</span>
+                  {ind.householdId && <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">Household</span>}
+                </div>
+                <div className="flex shrink-0 items-center gap-3 text-xs">
+                  <button type="button" onClick={() => setEditing(ind)} className="font-medium text-orange-600 hover:underline">Fix</button>
+                  {ind.householdId ? (
+                    <Link to={`/households/${ind.householdId}`} className="text-slate-500 hover:underline">Open household</Link>
+                  ) : (
+                    <button type="button" onClick={() => handleRemoveOne(ind)} className="text-rose-600 hover:underline">Remove</button>
+                  )}
+                </div>
+              </div>
+            ))}
+            {list.length > 50 && <p className="text-xs text-slate-400">+{list.length - 50} more…</p>}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -122,34 +239,8 @@ function IntegrityReport({ onClose }) {
 
       {tab === 'missing' && (
         <div className="space-y-6">
-          <div>
-            <p className="mb-2 text-sm font-medium text-slate-700">Missing or invalid phone number ({missing.missingPhone.length})</p>
-            {missing.missingPhone.length === 0 ? <p className="text-sm text-slate-400">None — everyone has a valid 10-digit number.</p> : (
-              <div className="space-y-1">
-                {missing.missingPhone.slice(0, 50).map((ind) => (
-                  <div key={ind.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-sm">
-                    <span>{ind.name}</span>
-                    <Link to={ind.householdId ? `/households/${ind.householdId}` : '/contacts'} className="text-xs text-orange-600 hover:underline">Fix</Link>
-                  </div>
-                ))}
-                {missing.missingPhone.length > 50 && <p className="text-xs text-slate-400">+{missing.missingPhone.length - 50} more…</p>}
-              </div>
-            )}
-          </div>
-          <div>
-            <p className="mb-2 text-sm font-medium text-slate-700">Missing Mandal ({missing.missingMandal.length})</p>
-            {missing.missingMandal.length === 0 ? <p className="text-sm text-slate-400">None — everyone has a Mandal assigned.</p> : (
-              <div className="space-y-1">
-                {missing.missingMandal.slice(0, 50).map((ind) => (
-                  <div key={ind.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-sm">
-                    <span>{ind.name}</span>
-                    <Link to={ind.householdId ? `/households/${ind.householdId}` : '/contacts'} className="text-xs text-orange-600 hover:underline">Fix</Link>
-                  </div>
-                ))}
-                {missing.missingMandal.length > 50 && <p className="text-xs text-slate-400">+{missing.missingMandal.length - 50} more…</p>}
-              </div>
-            )}
-          </div>
+          {renderMissingList('Missing or invalid phone number', missing.missingPhone, 'None — everyone has a valid 10-digit number.')}
+          {renderMissingList('Missing Mandal', missing.missingMandal, 'None — everyone has a Mandal assigned.')}
         </div>
       )}
 
@@ -186,6 +277,21 @@ function IntegrityReport({ onClose }) {
           )}
         </div>
       )}
+
+      <Modal
+        open={!!editing}
+        onClose={() => setEditing(null)}
+        title={editing ? `Fix ${editing.name || 'contact'}` : 'Fix contact'}
+      >
+        {editing && (
+          <IndividualForm
+            individual={editing}
+            onSubmit={handleFix}
+            onCancel={() => setEditing(null)}
+            withinHousehold={Boolean(editing.householdId)}
+          />
+        )}
+      </Modal>
     </div>
   );
 }

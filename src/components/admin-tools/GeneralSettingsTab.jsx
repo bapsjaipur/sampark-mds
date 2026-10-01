@@ -2,14 +2,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // PHASE 43 — the app-wide knobs that are not email, templates or outcomes.
 //
-// Two settings, both living in settings/app (see DEFAULT_APP_SETTINGS). That
-// document is deliberately separate from settings/email: its READ is open to
-// every volunteer, so the attendance screen and the batch screens can honour
-// these without the send_emails gate that guards the email settings. Only the
-// WRITE is gated — on manage_templates, the same permission firestore.rules
-// requires for every settings/{docId} except niyamDharma — so a role that can
-// open Admin Tools but not manage settings sees the values read-only rather than
-// a Save button that would only ever produce a permission-denied toast.
+// Settings living in settings/app (see DEFAULT_APP_SETTINGS). That document is
+// deliberately separate from settings/email: its READ is open to every volunteer,
+// so the attendance screen and the batch screens can honour these without the
+// send_emails gate that guards the email settings. Only the WRITE is gated — on
+// manage_templates, the same permission firestore.rules requires for every
+// settings/{docId} except niyamDharma — so a role that can open Admin Tools but
+// not manage settings sees the values read-only rather than a Save button that
+// would only ever produce a permission-denied toast.
 //
 //   • Attendance window — the hardcoded "opens 30 min before, closes 30 min
 //     after" is now a toggle. Off = mark attendance at any time (a late sabha,
@@ -19,9 +19,13 @@
 //     batch. Was hardcoded (25 on Generate's field, 40 on the Tools top-up),
 //     which is exactly how a batch of 22 grew to 36 while the roster was cut in
 //     25s. One number now drives both, for every mandal.
+//   • Auto-clear call outcomes (PHASE 46) — off by default. When on, a scheduled
+//     job clears the call status + note on a sabha's batched contacts this many
+//     hours after the sabha, so the next round starts fresh without a manual
+//     reset. See functions/outcomeCleanup.js; the toggle + delay write here.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, Layers, CheckCircle2, Lock, Loader2 } from 'lucide-react';
+import { CalendarClock, Layers, Eraser, CheckCircle2, Lock, Loader2 } from 'lucide-react';
 import { saveSettings, describeSettingsError } from '../../services/settingsService';
 import { useSettings } from '../../hooks/useSettings';
 import { useAuth } from '../../hooks/usePermissions';
@@ -55,6 +59,8 @@ export default function GeneralSettingsTab() {
   // write a no-op.
   const [windowEnforced, setWindowEnforced] = useState(true);
   const [defaultBatchSize, setDefaultBatchSize] = useState(25);
+  const [clearEnabled, setClearEnabled] = useState(false);
+  const [clearDelayHours, setClearDelayHours] = useState(12);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -62,6 +68,8 @@ export default function GeneralSettingsTab() {
     if (!settings) return;
     setWindowEnforced(settings.attendanceWindowEnforced !== false);
     setDefaultBatchSize(Number(settings.defaultBatchSize) || 25);
+    setClearEnabled(settings.autoClearOutcomesEnabled === true);
+    setClearDelayHours(Number(settings.clearOutcomesAfterHours) || 12);
     setDirty(false);
   }, [settings]);
 
@@ -71,13 +79,21 @@ export default function GeneralSettingsTab() {
     return null;
   }, [defaultBatchSize]);
 
+  const delayError = useMemo(() => {
+    const n = Number(clearDelayHours);
+    if (!Number.isFinite(n) || n < 1 || n > 720) return 'Enter a whole number of hours between 1 and 720 (30 days).';
+    return null;
+  }, [clearDelayHours]);
+
   async function handleSave() {
-    if (sizeError) return;
+    if (sizeError || delayError) return;
     setSaving(true);
     try {
       await saveSettings('app', {
         attendanceWindowEnforced: windowEnforced,
         defaultBatchSize: Math.max(1, Math.min(500, Math.round(Number(defaultBatchSize)))),
+        autoClearOutcomesEnabled: clearEnabled,
+        clearOutcomesAfterHours: Math.max(1, Math.min(720, Math.round(Number(clearDelayHours)))),
       }, volunteer?.id);
       setDirty(false);
       showToast({ type: 'success', message: 'App settings saved.' });
@@ -151,9 +167,48 @@ export default function GeneralSettingsTab() {
         </div>
       </Card>
 
+      {/* ── Auto-clear call outcomes after a sabha ─────────────────────────── */}
+      <Card className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+              <Eraser className="h-4 w-4 text-orange-600" /> Auto-clear call outcomes after a sabha
+            </h3>
+            <p className="mt-1 text-xs leading-relaxed text-slate-500">
+              When on, a while after each sabha ends the call status and reference note on the
+              contacts in that sabha’s calling batches are cleared automatically, so the next round
+              starts fresh — the same as pressing “reset” on the calling screen. Only that sabha’s
+              contacts are touched, and the full call history stays in the activity log. Leave off to
+              clear rounds by hand.
+            </p>
+          </div>
+          <Toggle
+            checked={clearEnabled}
+            disabled={!canEdit}
+            onChange={(v) => { setClearEnabled(v); setDirty(true); }}
+            label="Auto-clear call outcomes after a sabha"
+          />
+        </div>
+        <div className="mt-3 sm:w-48">
+          <Label>Clear this many hours after the sabha</Label>
+          <Input
+            type="number" min={1} max={720} inputMode="numeric"
+            value={clearDelayHours}
+            disabled={!canEdit || !clearEnabled}
+            onChange={(e) => { setClearDelayHours(e.target.value); setDirty(true); }}
+          />
+          {delayError && <p className="mt-1 text-[11px] text-rose-600">{delayError}</p>}
+          <p className="mt-1 text-[11px] text-slate-400">
+            Measured from when the sabha ends. 12 hours by default — long enough for the post-sabha
+            reports to have gone out first. The sweep runs hourly, so clearing happens within about
+            an hour of this mark.
+          </p>
+        </div>
+      </Card>
+
       {canEdit && (
         <div className="flex items-center gap-3">
-          <Button variant="accent" onClick={handleSave} disabled={!dirty || saving || Boolean(sizeError)}>
+          <Button variant="accent" onClick={handleSave} disabled={!dirty || saving || Boolean(sizeError) || Boolean(delayError)}>
             {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</> : <><CheckCircle2 className="h-3.5 w-3.5" /> Save settings</>}
           </Button>
           {dirty && !saving && <span className="text-[11px] text-slate-400">Unsaved changes</span>}

@@ -43,7 +43,7 @@
 // not yours to open" are different messages, and the user asked for the second.
 // ─────────────────────────────────────────────────────────────────────────────
 import { Navigate, useLocation } from 'react-router-dom';
-import { ShieldAlert } from 'lucide-react';
+import { ShieldAlert, WifiOff } from 'lucide-react';
 import { useAuth } from '../hooks/usePermissions';
 import { getRoleView } from '../lib/roleView';
 
@@ -64,6 +64,35 @@ function NoAccessPanel() {
   );
 }
 
+// Shown when the permissions never loaded because of a transient failure that
+// outlasted the startup retries in usePermissions (an expired token on a warm
+// reload, or a dropped mobile connection). This is NOT "no role" — the account is
+// fine, the data just didn't arrive — so it offers a reload rather than the
+// misleading role message. Distinguishing the two was the whole point of the
+// 'permission-load-error' marker.
+function LoadErrorPanel() {
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center px-4">
+      <div className="max-w-sm rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+        <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-slate-100">
+          <WifiOff className="h-5 w-5 text-slate-500" />
+        </div>
+        <h2 className="text-sm font-semibold text-slate-900">Couldn’t load your access</h2>
+        <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
+          We couldn’t reach the server to load your role. Check your connection and try again.
+        </p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-700"
+        >
+          Reload
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Gate a protected route to the signed-in person's own role.
  *
@@ -76,12 +105,18 @@ function NoAccessPanel() {
  * @param {React.ReactNode} children the page to render when allowed.
  */
 export default function RequireRoute({ navPath, check, children }) {
-  const { permissions, volunteer, loading } = useAuth();
+  const { permissions, volunteer, loading, error } = useAuth();
   const location = useLocation();
 
   // RequireAuth already blocks on loading before AppLayout mounts, so this is
   // belt-and-braces: never flash a "no access" panel at a session still resolving.
   if (loading) return null;
+
+  // The permissions load failed for real (transient error that outlasted the
+  // startup retries) and we have nothing to gate on. Offer a reload instead of
+  // pretending the page simply isn't theirs. Guarded on an empty permission set so
+  // a late blip in an already-working session never yanks the user off their page.
+  if (error === 'permission-load-error' && !permissions.length) return <LoadErrorPanel />;
 
   const view = getRoleView(permissions, volunteer);
   const ok = typeof check === 'function'

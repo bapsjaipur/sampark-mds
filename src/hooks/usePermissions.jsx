@@ -126,6 +126,10 @@ export function PermissionsProvider({ children }) {
     let unsubRoles = () => {};
     let heartbeatInterval = null;
     let autoLogoutTimer = null;
+    // Handle for the startup-listener retry backoff (see onListenerError below).
+    // Hoisted to the effect scope so a sign-out / auth change can cancel a pending
+    // retry before the next session re-subscribes.
+    let retryTimer = null;
 
     // Latest value from each listener. Either can fire first, and the roles
     // listener keeps firing when an admin edits a role, so both are kept here
@@ -164,6 +168,7 @@ export function PermissionsProvider({ children }) {
       unsubVolunteer();
       unsubRoles();
       if (heartbeatInterval) clearInterval(heartbeatInterval);
+      if (retryTimer) clearTimeout(retryTimer);
       cleanupActivityListeners();
       latestVolunteer = null;
       latestRolesById = null;
@@ -183,12 +188,18 @@ export function PermissionsProvider({ children }) {
       setState((s) => ({ ...s, loading: true, authUser: user, user, error: null }));
 
       let stampedLogin = false;
+      // How many times the startup listeners have been re-armed after a transient
+      // Firestore error (see onListenerError). Reset to 0 the instant a real read
+      // lands, so a much later blip still gets the full retry budget.
+      let retries = 0;
+      const MAX_RETRIES = 6;
 
       const publish = () => {
         // Wait for both listeners before publishing, otherwise the first paint
         // is a volunteer with zero permissions and every gated screen flashes
         // its "no access" state before correcting itself.
         if (!latestVolunteer || !latestRolesById) return;
+        retries = 0; // a full, good read — clear the retry backoff
         const d = derive(latestVolunteer, latestRolesById);
         setState({
           loading: false,
@@ -227,68 +238,106 @@ export function PermissionsProvider({ children }) {
       };
       heartbeatInterval = setInterval(beat, HEARTBEAT_MS);
 
-      unsubRoles = onSnapshot(
-        collection(db, 'roles'),
-        (snap) => {
-          meterSnapshot(snap, 'roles');
-          const map = {};
-          snap.forEach((d) => { map[d.id] = { id: d.id, ...d.data() }; });
-          latestRolesById = map;
-          publish();
-        },
-        (err) => setState((s) => ({ ...s, loading: false, error: err?.message || 'role-lookup-error' }))
-      );
+      // ── STARTUP LISTENER RETRY ────────────────────────────────────────────────
+      // onSnapshot NEVER re-fires after its error callback runs — the listener is
+      // dead. The old handlers reacted to an error by setting loading:false with
+      // permissions still [], which stranded EVERY gated route on the "This page
+      // isn't part of your role" panel until a manual reload. The trigger is
+      // transient and warm-session-specific: a phone reopened the next day hands
+      // Firestore a persisted ID token that has expired, and the first listen goes
+      // out before the SDK refreshes it, so the server answers permission-denied
+      // once; a dropped mobile connection gives `unavailable` the same way. (An
+      // incognito login never hits this — it starts with a fresh token — which is
+      // exactly the normal-vs-incognito difference users reported.) So on error we
+      // force a token refresh and re-subscribe, keeping loading:true throughout
+      // (RequireAuth shows "Loading…", never the panel), giving up only after
+      // MAX_RETRIES with a distinct 'permission-load-error' the UI can offer to
+      // reload from — never the misleading "not your role" message.
+      const onListenerError = (err) => {
+        unsubVolunteer();
+        unsubRoles();
+        if (retries >= MAX_RETRIES) {
+          setState((s) => ({ ...s, loading: false, error: 'permission-load-error' }));
+          return;
+        }
+        retries += 1;
+        const delay = Math.min(800 * 2 ** (retries - 1), 8000);
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => {
+          // Force-refresh the ID token so the re-armed listen carries a valid one,
+          // then re-subscribe — but only if this is still the same signed-in user.
+          Promise.resolve(auth.currentUser && auth.currentUser.getIdToken(true))
+            .catch(() => {})
+            .then(() => { if (auth.currentUser && auth.currentUser.uid === user.uid) subscribe(); });
+        }, delay);
+      };
 
-      unsubVolunteer = onSnapshot(
-        doc(db, 'volunteers', user.uid),
-        (vSnap) => {
-          meterSnapshot(vSnap, 'my volunteer doc');
-          if (!stampedLogin) {
-            stampedLogin = true;
-            const u = getUsage();
-            setDoc(doc(db, 'presence', user.uid), {
-              lastLoginAt: serverTimestamp(),
-              lastSeenAt: serverTimestamp(),
-              usage: { day: u.day, reads: u.reads, writes: u.writes, deletes: u.deletes, at: Date.now() },
-            }, { merge: true }).then(() => meterWrites(1, 'login stamp')).catch(() => {});
-          }
+      const subscribe = () => {
+        unsubRoles = onSnapshot(
+          collection(db, 'roles'),
+          (snap) => {
+            meterSnapshot(snap, 'roles');
+            const map = {};
+            snap.forEach((d) => { map[d.id] = { id: d.id, ...d.data() }; });
+            latestRolesById = map;
+            publish();
+          },
+          onListenerError
+        );
 
-          if (!vSnap.exists()) {
-            setState({ ...emptyState, loading: false, authUser: user, user, error: 'no-volunteer-doc' });
-            return;
-          }
+        unsubVolunteer = onSnapshot(
+          doc(db, 'volunteers', user.uid),
+          (vSnap) => {
+            meterSnapshot(vSnap, 'my volunteer doc');
+            if (!stampedLogin) {
+              stampedLogin = true;
+              const u = getUsage();
+              setDoc(doc(db, 'presence', user.uid), {
+                lastLoginAt: serverTimestamp(),
+                lastSeenAt: serverTimestamp(),
+                usage: { day: u.day, reads: u.reads, writes: u.writes, deletes: u.deletes, at: Date.now() },
+              }, { merge: true }).then(() => meterWrites(1, 'login stamp')).catch(() => {});
+            }
 
-          const volunteer = { id: vSnap.id, ...vSnap.data() };
+            if (!vSnap.exists()) {
+              setState({ ...emptyState, loading: false, authUser: user, user, error: 'no-volunteer-doc' });
+              return;
+            }
 
-          // If the account was deactivated by an admin, log them out immediately
-          if (volunteer.isActive === false) {
-            signOut(auth).catch(() => {});
-            setState({ ...emptyState, loading: false, error: 'account-disabled' });
-            return;
-          }
+            const volunteer = { id: vSnap.id, ...vSnap.data() };
 
-          latestVolunteer = volunteer;
+            // If the account was deactivated by an admin, log them out immediately
+            if (volunteer.isActive === false) {
+              signOut(auth).catch(() => {});
+              setState({ ...emptyState, loading: false, error: 'account-disabled' });
+              return;
+            }
 
-          if (volunteerRoleIds(volunteer).length === 0) {
-            // No role at all — publish immediately rather than waiting on the
-            // roles listener, since it can never change this outcome.
-            setState({
-              ...emptyState,
-              loading: false,
-              authUser: user,
-              user,
-              volunteer,
-              assignedAreas: Array.isArray(volunteer.assignedAreas) ? volunteer.assignedAreas : [],
-              assignedMandals: Array.isArray(volunteer.assignedMandals) ? volunteer.assignedMandals : [],
-              error: null,
-            });
-            return;
-          }
+            latestVolunteer = volunteer;
 
-          publish();
-        },
-        (err) => setState((s) => ({ ...s, loading: false, error: err?.message || 'volunteer-lookup-error' }))
-      );
+            if (volunteerRoleIds(volunteer).length === 0) {
+              // No role at all — publish immediately rather than waiting on the
+              // roles listener, since it can never change this outcome.
+              retries = 0;
+              setState({
+                ...emptyState,
+                loading: false,
+                authUser: user,
+                user,
+                volunteer,
+                assignedAreas: Array.isArray(volunteer.assignedAreas) ? volunteer.assignedAreas : [],
+                assignedMandals: Array.isArray(volunteer.assignedMandals) ? volunteer.assignedMandals : [],
+                error: null,
+              });
+              return;
+            }
+
+            publish();
+          },
+          onListenerError
+        );
+      };
+      subscribe();
     });
 
     return () => {
@@ -296,6 +345,7 @@ export function PermissionsProvider({ children }) {
       unsubVolunteer();
       unsubRoles();
       if (heartbeatInterval) clearInterval(heartbeatInterval);
+      if (retryTimer) clearTimeout(retryTimer);
       cleanupActivityListeners();
     };
   }, []);

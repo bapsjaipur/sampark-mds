@@ -51,6 +51,12 @@ const DEFAULT_SCHEDULES = {
   // that the per-volunteer ICS feed serves. 03:40 IST, before the 06:10 birthday
   // email, so the feed is fresh for the day. See functions/calendarSync.js.
   calendarRebuild: '40 3 * * *', // rebuildCalendarCache — 03:40 IST
+  // PHASE 46 — sweep for sabhas whose call round is now old enough to clear (the
+  // delay itself is settings/app.clearOutcomesAfterHours, read at runtime; this
+  // only sets how often the sweep looks). Hourly at :23, off the stampede. The
+  // sweep is a single settings read and stops early while the feature is off, so
+  // hourly costs almost nothing. See functions/outcomeCleanup.js.
+  outcomeCleanup: '23 * * * *', // scheduledOutcomeCleanup — hourly at :23
 };
 
 /** A cron string this project would ever set: exactly five whitespace-separated

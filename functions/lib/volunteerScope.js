@@ -191,6 +191,62 @@ function eventInScope(scope, doc) {
   }
 }
 
+// ── Programme (wing) routing ───────────────────────────────────────────────────
+// PHASE 45 — a volunteer's `program` says which wing they work in. It is
+// server-whitelisted to exactly two values in updateVolunteerAccount.js:
+// 'Bal Mandal' (the children's wing) and 'Yuvak' (everyone else). The
+// per-recipient copies of the weekly sabha digest and the birthday/anniversary
+// report are scoped by AREA, and an AREA scope on its own hands a Yuvak-wing
+// area coordinator every Bal Mandal sabha — and every child's birthday — in
+// their area. That is the "Bal Mandal report received by the Yuvak coordinator"
+// bug. These two helpers narrow those copies to the recipient's own wing.
+//
+// Mirrors isBalMandalProgram() in src/constants/balMandalConfig.js. Binary on
+// purpose, to match the whitelist: a mandal either belongs to the children's
+// wing or it does not.
+
+const CHILD_MANDAL_RE = /bal mandal|sishu mandal|balika mandal/i;
+
+/** Does this mandal name belong to the children's (Bal) wing? */
+function isChildMandal(mandal) {
+  return typeof mandal === 'string' && CHILD_MANDAL_RE.test(mandal);
+}
+
+/**
+ * Should a recipient working in `program` receive an item belonging to `mandal`?
+ *
+ * Routing can only get TIGHTER here, never wider: when the recipient has no
+ * program set, or the item carries no mandal, nothing is narrowed and the item
+ * is kept — so a document that predates this field, or a city-wide row, behaves
+ * exactly as it did before.
+ */
+function programCoversMandal(program, mandal) {
+  if (!program) return true;   // wing unknown → leave routing unchanged
+  if (!mandal) return true;    // item has no mandal → not a wing-specific item
+  const recipientIsChildWing = program === 'Bal Mandal';
+  return recipientIsChildWing === isChildMandal(mandal);
+}
+
+/**
+ * PHASE 47 — the multi-programme successor to programCoversMandal.
+ *
+ * `programs` is the EXPLICIT list of mandal names a volunteer works with (ticked
+ * on their profile). An item belonging to `mandal` reaches them only when that
+ * mandal is in their list — so a Yuvak-Mandal-only karyakar no longer receives
+ * Sanyukt/Mahila/Yuvati/Haribhakt birthdays the old binary wing swept in with it.
+ *
+ * Bal ⇄ Sishu stay paired (expandMandalGroups), matching every other scope in the
+ * app. Backward-compatible: when the volunteer has no `programs` yet, routing
+ * falls back to the legacy binary wing, so a document that predates this field —
+ * or a city-wide item with no mandal — behaves exactly as it did before.
+ */
+function programsCoverMandal(programs, legacyProgram, mandal) {
+  if (!mandal) return true;                        // city-wide / no mandal → keep
+  const list = Array.isArray(programs) ? programs.filter(Boolean) : [];
+  if (!list.length) return programCoversMandal(legacyProgram, mandal); // un-migrated
+  return expandMandalGroups(list).includes(mandal);
+}
+
 module.exports = {
   SCOPE_KINDS,
   MANDAL_GROUPS,
@@ -203,4 +259,7 @@ module.exports = {
   matchesScope,
   eventAreas,
   eventInScope,
+  isChildMandal,
+  programCoversMandal,
+  programsCoverMandal,
 };

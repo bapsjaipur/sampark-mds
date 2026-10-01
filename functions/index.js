@@ -132,6 +132,15 @@ exports.googleOAuthCallback = googleCalendar.googleOAuthCallback;
 exports.syncMyGoogleCalendar = googleCalendar.syncMyGoogleCalendar;
 exports.disconnectGoogleCalendar = googleCalendar.disconnectGoogleCalendar;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 46 — auto-clear call outcomes a while after each sabha, so the next
+// calling round starts clean without anyone pressing "reset" by hand. Off by
+// default (settings/app.autoClearOutcomesEnabled); the delay is configurable in
+// Admin Tools → General settings. Scoped to one sabha's batches, claimed once per
+// event, read-frugal — see functions/outcomeCleanup.js.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.scheduledOutcomeCleanup = require('./outcomeCleanup').scheduledOutcomeCleanup;
+
 exports.backupDatabase = onCall({ region: 'us-central1', maxInstances: 1, timeoutSeconds: 540 }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Must be logged in.');
   const volDoc = await db.collection('volunteers').doc(request.auth.uid).get();

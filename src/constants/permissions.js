@@ -49,6 +49,13 @@ export const PERMISSIONS = {
   // one, or retire one. Kept separate from manage_templates so the person who
   // curates observances need not also hold the email/template power.
   MANAGE_NIYAM_DHARMA: 'manage_niyam_dharma',
+  // Phase 45 — edit the Areas & Mandals screen (areas, mandals, levels and
+  // programmes) WITHOUT the global manage_users power. manage_users still opens
+  // the tab, so an Admin keeps it; this is the narrow grant for a role that
+  // should curate the taxonomy only. Kept OUT of the Admin preset
+  // (PRESET_EXCLUDED_PERMISSIONS) so it can't enlarge the preset set and break
+  // detectRoleKey's exact match — Admin reaches the tab via manage_users.
+  MANAGE_AREAS_MANDALS: 'manage_areas_mandals',
   // Phase 21 (Area/Mandal hierarchy) — ASSIGN_BATCHES used to mean both
   // "create batches" and "hand them out", which made an Area Moderator either
   // powerless or able to re-cut the whole city's roster. Split in two:
@@ -102,6 +109,7 @@ export const PERMISSION_LABELS = {
   [PERMISSIONS.SEND_EMAILS]: 'Send & Receive Report Emails',
   [PERMISSIONS.MANAGE_TEMPLATES]: 'Manage Message Templates & Email Settings',
   [PERMISSIONS.MANAGE_NIYAM_DHARMA]: 'Manage Niyam Dharma List',
+  [PERMISSIONS.MANAGE_AREAS_MANDALS]: 'Manage Areas & Mandals',
   [PERMISSIONS.GENERATE_BATCHES]: 'Generate Batches (cut new batches)',
   [PERMISSIONS.MANAGE_ATTENDANCE]: 'Mark Sabha Attendance',
   [PERMISSIONS.IMPORT_DATA]: 'Import Contacts & History (CSV)',
@@ -130,6 +138,7 @@ export const PERMISSION_SHORT_LABELS = {
   [PERMISSIONS.SEND_EMAILS]: 'Emails',
   [PERMISSIONS.MANAGE_TEMPLATES]: 'Templates',
   [PERMISSIONS.MANAGE_NIYAM_DHARMA]: 'Niyam Dharma',
+  [PERMISSIONS.MANAGE_AREAS_MANDALS]: 'Areas & Mandals',
   [PERMISSIONS.GENERATE_BATCHES]: 'Generate',
   [PERMISSIONS.MANAGE_ATTENDANCE]: 'Attendance',
   [PERMISSIONS.IMPORT_DATA]: 'Import',
@@ -156,6 +165,7 @@ export const PERMISSION_GROUPS = [
   { label: 'Administration', permissions: [
     PERMISSIONS.MANAGE_USERS, PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS, PERMISSIONS.MANAGE_ROLES,
     PERMISSIONS.SEND_EMAILS, PERMISSIONS.MANAGE_TEMPLATES, PERMISSIONS.MANAGE_NIYAM_DHARMA,
+    PERMISSIONS.MANAGE_AREAS_MANDALS,
   ] },
   // Opt-out toggles — ticking one HIDES a tab for this role (default off). Kept
   // in their own group so it reads differently from the grant-access boxes above.
@@ -189,6 +199,7 @@ export const PERMISSION_HELP = {
   [PERMISSIONS.SEND_EMAILS]: 'Run report emails on demand and receive the scheduled ones.',
   [PERMISSIONS.MANAGE_TEMPLATES]: 'Edit the WhatsApp message text, the calling outcome buttons and email settings.',
   [PERMISSIONS.MANAGE_NIYAM_DHARMA]: 'Edit the Niyam Dharma Agna list on the Areas & Mandals screen — the daily-observance checkboxes (Tulsi Kanthi, Mala Jaap…) shown on every contact. Lets someone re-spell, add or retire a niyam. Does not grant any contact-editing power on its own.',
+  [PERMISSIONS.MANAGE_AREAS_MANDALS]: 'Add, rename and organise Areas, Mandals, Levels and Programmes on the Areas & Mandals screen — without the full Manage Users power. An Admin already has this via Manage Users; grant it to a coordinator who should shape the taxonomy but not create logins or change roles.',
   [PERMISSIONS.HIDE_ALL_CONTACTS]: 'Removes the “All Contacts” tab for this role. Their assigned and calling contacts are untouched — this only takes away the browse-everything list. Leave OFF for most roles; tick it for a caller who should only work their queue.',
   [PERMISSIONS.HIDE_PAST_SABHAS]: 'In Events, shows only the upcoming sabha for attendance marking and hides the list of past sabhas. Tick it for a role that should mark today’s sabha but never reopen an old one.',
 };
@@ -210,7 +221,7 @@ export const VISIBILITY_HIDE_PERMISSIONS = [
   PERMISSIONS.HIDE_PAST_SABHAS,
 ];
 
-// Permissions deliberately kept OUT of the Admin "everything" preset, for two
+// Permissions deliberately kept OUT of the Admin "everything" preset, for three
 // different reasons:
 //   • the hide flags SUBTRACT access — sweeping them in would make the Admin hide
 //     its own tabs (VISIBILITY_HIDE_PERMISSIONS);
@@ -221,9 +232,14 @@ export const VISIBILITY_HIDE_PERMISSIONS = [
 //     suddenly read as "Custom" and the "standard roles missing" banner would
 //     offer to create a duplicate Admin. Excluding it holds the preset at its
 //     current shape, so stored Admin docs keep matching.
+//   • manage_areas_mandals is a NEW capability the Admin already covers via
+//     manage_users, so it would enlarge the preset set the same way and trip the
+//     same detectRoleKey exact-match. Excluded for that reason; a normal grant
+//     everywhere else.
 export const PRESET_EXCLUDED_PERMISSIONS = [
   ...VISIBILITY_HIDE_PERMISSIONS,
   PERMISSIONS.SAVE_CALL_OUTCOMES,
+  PERMISSIONS.MANAGE_AREAS_MANDALS,
 ];
 
 export const ALL_PERMISSIONS = Object.values(PERMISSIONS);

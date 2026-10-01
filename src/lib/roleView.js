@@ -174,7 +174,10 @@ const NAV = {
   },
   areas: {
     to: '/admin/areas-mandals', label: 'Areas & Mandals', icon: MapPin,
-    anyOf: ['manage_users'],
+    // manage_areas_mandals is the narrow grant that opens this tab for a role that
+    // curates the taxonomy (areas/mandals/levels/programmes) but isn't a full
+    // Admin; manage_users still qualifies, so Admin/Moderator keep it unchanged.
+    anyOf: ['manage_users', 'manage_areas_mandals'],
   },
   tools: {
     to: '/admin/tools', label: 'Admin Tools', icon: Wrench,
@@ -199,13 +202,15 @@ const LAYOUTS = {
   },
   moderator: {
     main: ['contacts', 'households', 'events', 'balMandal', 'padhramani', 'reminders', 'myContacts', 'calling'],
-    admin: ['dashboard', 'batches', 'volunteers', 'tools'],
+    admin: ['dashboard', 'batches', 'volunteers', 'areas', 'tools'],
     tabs: ['contacts', 'dashboard', 'batches', 'events'],
   },
   volunteer: {
     // A volunteer's job is the calling queue — it leads, and it is the landing page.
     main: ['calling', 'myContacts', 'households', 'events', 'balMandal', 'reminders', 'contacts'],
-    admin: [],
+    // 'areas' shows only if the role was granted manage_areas_mandals (allowed()
+    // gates it); a plain volunteer sees no Admin section at all.
+    admin: ['areas'],
     tabs: ['calling', 'myContacts', 'households', 'events'],
   },
   santo: {
@@ -215,7 +220,9 @@ const LAYOUTS = {
   },
   none: {
     main: ['households'],
-    admin: [],
+    // Same as volunteer: a role holding only manage_areas_mandals lands here and
+    // reaches the taxonomy screen; allowed() hides it for everyone else.
+    admin: ['areas'],
     tabs: ['households'],
   },
 };

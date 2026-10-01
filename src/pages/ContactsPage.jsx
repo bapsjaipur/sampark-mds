@@ -22,6 +22,7 @@ import { Input, Select } from "../components/ui/Input";
 import { Avatar } from "../components/ui/Avatar";
 import { VolunteerBadge, VolunteerRing } from "../components/ui/VolunteerBadge";
 import { Badge } from "../components/ui/Badge";
+import ChipMultiSelect from "../components/ui/ChipMultiSelect";
 
 const PAGE_SIZE = 20;
 
@@ -75,8 +76,10 @@ export default function ContactsPage() {
   const { colorClasses: statusColorClasses } = useCallOutcomes();
   // PHASE 42 — the live niyam list, for the CSV/PDF "Niyam Dharma" column. The
   // full list (not just enabled) so a retired niyam a contact still carries
-  // still resolves to its label instead of a bare key.
-  const { niyams } = useNiyamDharma();
+  // still resolves to its label instead of a bare key. `enabled` drives the
+  // multi-select filter below — a retired niyam should not be offered as a new
+  // filter even though its label still resolves in the export.
+  const { niyams, enabled: niyamChoices } = useNiyamDharma();
   // PHASE 21 — karyakartas appear in this list as ordinary contacts. The badge
   // and the tinted row make them findable without a separate volunteer screen.
   const { identify } = useVolunteerIdentity();
@@ -87,6 +90,11 @@ export default function ContactsPage() {
   const [birthdayMonth, setBirthdayMonth] = useState(false);
   const [anniversaryMonth, setAnniversaryMonth] = useState(false);
   const [missingPhotos, setMissingPhotos] = useState(false);
+  // PHASE 45 — multi-select niyam filter (union: a contact matches if it carries
+  // ANY of the chosen niyams) and a "has a calling note" filter. Both are pure
+  // in-memory slices of the already-loaded list, so no extra Firestore reads.
+  const [niyamFilter, setNiyamFilter] = useState([]);
+  const [hasNotes, setHasNotes] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [formModal, setFormModal] = useState({ open: false, contact: null });
   const [attachModal, setAttachModal] = useState(null);
@@ -116,15 +124,24 @@ export default function ContactsPage() {
     if (birthdayMonth) rows = rows.filter((c) => isThisMonth(c.dob));
     if (anniversaryMonth) rows = rows.filter((c) => isThisMonth(c.anniversary));
     if (missingPhotos) rows = rows.filter((c) => c.photoPending === true);
+    // Union match: contacts created before Phase 42 have no niyamDharma field, so
+    // guard the array before .includes.
+    if (niyamFilter.length) {
+      rows = rows.filter((c) => {
+        const held = Array.isArray(c.niyamDharma) ? c.niyamDharma : [];
+        return niyamFilter.some((k) => held.includes(k));
+      });
+    }
+    if (hasNotes) rows = rows.filter((c) => String(c.reference || "").trim().length > 0);
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       rows = rows.filter((c) => c.name?.toLowerCase().includes(q) || c.mobile?.includes(q) || c.displayAddress?.toLowerCase().includes(q));
     }
     return rows;
-  }, [contacts, search, mandalFilter, areaFilter, householdFilter, birthdayMonth, anniversaryMonth, missingPhotos, householdAddresses]);
+  }, [contacts, search, mandalFilter, areaFilter, householdFilter, birthdayMonth, anniversaryMonth, missingPhotos, niyamFilter, hasNotes, householdAddresses]);
 
   // Reset to page 1 on any filter change
-  useEffect(() => { setCurrentPage(1); }, [mandalFilter, areaFilter, householdFilter, birthdayMonth, anniversaryMonth, missingPhotos, search]);
+  useEffect(() => { setCurrentPage(1); }, [mandalFilter, areaFilter, householdFilter, birthdayMonth, anniversaryMonth, missingPhotos, niyamFilter, hasNotes, search]);
 
   // Drop selections that no longer appear in the filtered list
   useEffect(() => {
@@ -175,7 +192,7 @@ export default function ContactsPage() {
     if (ok) { setSelected(new Set()); setBulkDeleteOpen(false); }
   }
 
-  const hasActiveFilters = Boolean(search || mandalFilter || areaFilter || householdFilter || birthdayMonth || anniversaryMonth || missingPhotos);
+  const hasActiveFilters = Boolean(search || mandalFilter || areaFilter || householdFilter || birthdayMonth || anniversaryMonth || missingPhotos || niyamFilter.length || hasNotes);
   const totalCount = serverTotal ?? contacts.length;
 
   return (
@@ -220,7 +237,7 @@ export default function ContactsPage() {
           <option value="without">Not grouped yet</option>
         </Select>
         {hasActiveFilters && (
-          <button onClick={() => { setSearch(""); setMandalFilter(""); setAreaFilter(""); setHouseholdFilter(""); setBirthdayMonth(false); setAnniversaryMonth(false); setMissingPhotos(false); }}
+          <button onClick={() => { setSearch(""); setMandalFilter(""); setAreaFilter(""); setHouseholdFilter(""); setBirthdayMonth(false); setAnniversaryMonth(false); setMissingPhotos(false); setNiyamFilter([]); setHasNotes(false); }}
             className="text-xs text-orange-600 hover:underline">Clear all</button>
         )}
       </div>
@@ -242,7 +259,32 @@ export default function ContactsPage() {
           📷 Missing photos
           {missingPhotos && <X className="h-3 w-3" onClick={(e) => { e.stopPropagation(); setMissingPhotos(false); }} />}
         </button>
+        {/* PHASE 45 — a supervisor above the calling karyakartas can pull up every
+            contact that has a calling note and read what was said, to decide the
+            next step. The note itself shows inline on each row below. */}
+        <button onClick={() => setHasNotes((v) => !v)}
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition ${hasNotes ? "border-sky-400 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"}`}>
+          📝 Has calling notes
+          {hasNotes && <X className="h-3 w-3" onClick={(e) => { e.stopPropagation(); setHasNotes(false); }} />}
+        </button>
       </div>
+
+      {/* PHASE 45 — multi-select Niyam Dharma filter. Toggle chips (not a dropdown)
+          so several niyams can be picked on a phone; a contact matches if it holds
+          ANY selected niyam. Hidden entirely when no niyams are configured. */}
+      {niyamChoices.length > 0 && (
+        <div className="mb-4">
+          <p className="mb-1.5 text-xs font-medium text-slate-500">
+            Niyam Dharma <span className="font-normal text-slate-400">— matches any selected</span>
+          </p>
+          <ChipMultiSelect
+            options={niyamChoices.map((n) => ({ value: n.key, label: n.label }))}
+            value={niyamFilter}
+            onChange={setNiyamFilter}
+            allLabel="niyams"
+          />
+        </div>
+      )}
 
       {/* Selection bar */}
       {selected.size > 0 && (
@@ -315,6 +357,12 @@ export default function ContactsPage() {
                     {c.displayAddress ? c.displayAddress : (c.mobile || "No mobile")}
                     {c.mandal ? ` · ${c.mandal}` : ""}{c.area ? ` · ${c.area}` : ""}{c.dob ? ` · Born ${formatDate(c.dob)}` : ""}
                   </p>
+                  {/* PHASE 45 — the latest calling note, so a supervisor scanning
+                      the list reads it without opening each profile. Already
+                      visible on the contact profile, so this exposes nothing new. */}
+                  {c.reference && (
+                    <p className="truncate text-xs italic text-sky-700/80" title={c.reference}>📝 {c.reference}</p>
+                  )}
                 </div>
                 {!c.householdId && <Badge tone="yellow" className="hidden sm:inline-flex">Not grouped</Badge>}
                 {/* The call outcome STAYS on mobile — unlike "Not grouped" it is

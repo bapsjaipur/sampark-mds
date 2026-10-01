@@ -581,6 +581,16 @@ function MandalTable({ rows, loading, loadError, onNotice }) {
   );
 }
 
+// PHASE 45 — this screen had grown into one very long scroll: areas, mandals,
+// each with its own merge/unlisted fixer, then levels and the niyam list, all
+// stacked. These sub-tabs break it into one focused panel per job. Presentation
+// only — every panel below is the same component it always was.
+const SUBTABS = [
+  { key: 'areas', label: 'Areas' },
+  { key: 'mandals', label: 'Mandals' },
+  { key: 'levels', label: 'Levels & Niyam' },
+];
+
 function AreasMandalsManagerInner() {
   const [areas, setAreas] = useState([]);
   const [mandals, setMandals] = useState([]);
@@ -591,6 +601,7 @@ function AreasMandalsManagerInner() {
   const [progress, setProgress] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [tab, setTab] = useState('areas');
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'areas'), (snap) => {
@@ -737,41 +748,71 @@ function AreasMandalsManagerInner() {
         </div>
       )}
 
-      <AreaStats areas={areas} />
-      <AreaTable
-        areas={areas}
-        onRename={handleRenameArea}
-        onUpdateCode={(area, code) => updateDoc(doc(db, 'areas', area.id), { code })}
-        onDelete={handleAskDeleteArea}
-        onRenameSubArea={handleRenameSubArea}
-        onDeleteSubArea={handleDeleteSubArea}
-      />
-      <MergeTaxonomyPanel kind="area" rows={areas} onDone={announce} />
-      {/* Sits after Merge, deliberately: Merge handles two options that both
-          exist, this handles a name that only exists on records. Same fix, but
-          you only come looking for it after finding the option missing. */}
-      <UnlistedTaxonomyPanel kind="area" rows={areas} onDone={announce} />
+      <div className="flex flex-wrap gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1">
+        {SUBTABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            className={
+              'flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition-colors '
+              + (tab === t.key
+                ? 'bg-white text-orange-900 shadow-sm ring-1 ring-orange-200'
+                : 'text-slate-500 hover:text-slate-800')
+            }
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
-      <MandalTable rows={mandals} loading={mandalsLoading} loadError={mandalsError} onNotice={announce} />
-      <MergeTaxonomyPanel kind="mandal" rows={mandals} onDone={announce} />
-      <UnlistedTaxonomyPanel kind="mandal" rows={mandals} onDone={announce} />
+      {tab === 'areas' && (
+        <>
+          <AreaStats areas={areas} />
+          <AreaTable
+            areas={areas}
+            onRename={handleRenameArea}
+            onUpdateCode={(area, code) => updateDoc(doc(db, 'areas', area.id), { code })}
+            onDelete={handleAskDeleteArea}
+            onRenameSubArea={handleRenameSubArea}
+            onDeleteSubArea={handleDeleteSubArea}
+          />
+          <MergeTaxonomyPanel kind="area" rows={areas} onDone={announce} />
+          {/* Sits after Merge, deliberately: Merge handles two options that both
+              exist, this handles a name that only exists on records. Same fix, but
+              you only come looking for it after finding the option missing. */}
+          <UnlistedTaxonomyPanel kind="area" rows={areas} onDone={announce} />
+        </>
+      )}
 
-      <CodeTable
-        title="Levels"
-        collectionName="levels"
-        defaults={DEFAULT_LEVELS}
-        codeRequired={false}
-        kind="level"
-        onNotice={announce}
-      />
+      {tab === 'mandals' && (
+        <>
+          <MandalTable rows={mandals} loading={mandalsLoading} loadError={mandalsError} onNotice={announce} />
+          <MergeTaxonomyPanel kind="mandal" rows={mandals} onDone={announce} />
+          <UnlistedTaxonomyPanel kind="mandal" rows={mandals} onDone={announce} />
+        </>
+      )}
 
-      {/* PHASE 42 — Niyam Dharma Agna list. Lives here because this is where the
-          admin already curates the app's vocabulary; carries its own
-          manage_niyam_dharma gate (see NiyamDharmaEditor), so opening this screen
-          via manage_users is not enough to edit it. */}
-      <Card className="p-4">
-        <NiyamDharmaEditor />
-      </Card>
+      {tab === 'levels' && (
+        <>
+          <CodeTable
+            title="Levels"
+            collectionName="levels"
+            defaults={DEFAULT_LEVELS}
+            codeRequired={false}
+            kind="level"
+            onNotice={announce}
+          />
+
+          {/* PHASE 42 — Niyam Dharma Agna list. Lives here because this is where the
+              admin already curates the app's vocabulary; carries its own
+              manage_niyam_dharma gate (see NiyamDharmaEditor), so opening this screen
+              via manage_users is not enough to edit it. */}
+          <Card className="p-4">
+            <NiyamDharmaEditor />
+          </Card>
+        </>
+      )}
 
       <DeleteTaxonomyDialog
         pending={pendingDelete}
@@ -785,7 +826,7 @@ function AreasMandalsManagerInner() {
 
 export function AreasMandalsManager() {
   return (
-    <RequirePermission permission="manage_users" fallback={<div className="p-6 text-sm text-slate-500">You don't have permission to manage Areas & Mandals.</div>}>
+    <RequirePermission anyOf={['manage_users', 'manage_areas_mandals']} fallback={<div className="p-6 text-sm text-slate-500">You don't have permission to manage Areas & Mandals.</div>}>
       <AreasMandalsManagerInner />
     </RequirePermission>
   );

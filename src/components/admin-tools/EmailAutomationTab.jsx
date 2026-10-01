@@ -26,7 +26,7 @@ import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestor
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import {
   Mail, Send, RefreshCw, AlertTriangle, CheckCircle2, Users, FlaskConical, Clock, Lock,
-  CalendarClock, Info, CalendarPlus, Copy, MessageCircle, CalendarDays,
+  CalendarClock, Info, CalendarPlus, Copy, MessageCircle, CalendarDays, ChevronDown,
 } from 'lucide-react';
 import { db } from '../../lib/firebase';
 import { saveSettings, describeSettingsError } from '../../services/settingsService';
@@ -303,6 +303,13 @@ function EmailAutomationInner() {
   const [audience, setAudience] = useState(null);
   const [audienceLoading, setAudienceLoading] = useState(false);
   const [logs, setLogs] = useState([]);
+  // The report switches persist the instant they are flipped (see saveToggle);
+  // this holds the one key currently mid-write so it can't be double-clicked.
+  const [togglePending, setTogglePending] = useState('');
+  // Recent-sends: which page is shown, and which row is expanded to reveal its
+  // recipient list.
+  const [logPage, setLogPage] = useState(0);
+  const [expandedLogId, setExpandedLogId] = useState(null);
 
   // PHASE 35 — the subscribable calendar. Nothing loads on mount: minting a feed
   // link is a write, and rebuilding scans every contact, so both wait for a click.
@@ -339,7 +346,7 @@ function EmailAutomationInner() {
   }, [settings, draft]);
 
   useEffect(() => {
-    const q = query(collection(db, 'emailLogs'), orderBy('createdAt', 'desc'), limit(15));
+    const q = query(collection(db, 'emailLogs'), orderBy('createdAt', 'desc'), limit(50));
     return onSnapshot(
       q,
       (snap) => setLogs(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
@@ -473,6 +480,28 @@ function EmailAutomationInner() {
       showToast({ type: 'error', message: describeSettingsError(err, readDenied) });
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Persist ONE scheduled-report switch the moment it is flipped, rather than
+  // waiting for the distant "Save settings" button. The switches used to live only
+  // in `draft`, so an admin who flipped one and then moved to another Admin Tools
+  // sub-tab lost it: that tab unmounts EmailAutomationTab, the unsaved draft is
+  // discarded, and on return the switch re-seeds from the saved document — reading
+  // as if it had "turned itself off". A one-field merge write is a single cheap
+  // write and makes the switch behave like the live control it looks like. On
+  // failure the flip is rolled back and the reason shown.
+  async function saveToggle(key, value) {
+    if (!canEditSettings) return;
+    setDraft((d) => ({ ...d, [key]: value })); // optimistic
+    setTogglePending(key);
+    try {
+      await saveSettings('email', { [key]: value }, volunteer?.id);
+    } catch (err) {
+      setDraft((d) => ({ ...d, [key]: !value })); // roll the flip back
+      showToast({ type: 'error', message: describeSettingsError(err, readDenied) });
+    } finally {
+      setTogglePending('');
     }
   }
 
@@ -695,6 +724,13 @@ function EmailAutomationInner() {
   }, {});
   const scheduleOverlayText = JSON.stringify(scheduleOverlay, null, 2);
 
+  // Recent sends — paginate the (capped) log so the card list stays short, and
+  // clamp the page in case a fresh snapshot shrinks the list under our feet.
+  const LOGS_PER_PAGE = 8;
+  const pageCount = Math.max(1, Math.ceil(logs.length / LOGS_PER_PAGE));
+  const safePage = Math.min(logPage, pageCount - 1);
+  const pageLogs = logs.slice(safePage * LOGS_PER_PAGE, safePage * LOGS_PER_PAGE + LOGS_PER_PAGE);
+
   return (
     <div className="space-y-5">
       <SettingsRulesBanner show={readDenied} />
@@ -793,9 +829,9 @@ function EmailAutomationInner() {
               </div>
               <Toggle
                 checked={!!draft[t.key]}
-                onChange={(v) => set({ [t.key]: v })}
+                onChange={(v) => saveToggle(t.key, v)}
                 label={t.title}
-                disabled={!canEditSettings}
+                disabled={!canEditSettings || togglePending === t.key}
               />
             </div>
           ))}
@@ -1278,31 +1314,83 @@ function EmailAutomationInner() {
 
       {/* ── Log ───────────────────────────────────────────────────────────── */}
       <div>
-        <p className="mb-2 text-sm font-medium text-slate-700">Recent sends</p>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="text-sm font-medium text-slate-700">Recent sends</p>
+          {pageCount > 1 && (
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <button
+                type="button"
+                onClick={() => setLogPage(Math.max(0, safePage - 1))}
+                disabled={safePage === 0}
+                className="rounded-md border border-slate-200 px-2 py-1 font-medium hover:bg-slate-50 disabled:opacity-40"
+              >
+                Prev
+              </button>
+              <span className="tabular-nums">Page {safePage + 1} of {pageCount}</span>
+              <button
+                type="button"
+                onClick={() => setLogPage(Math.min(pageCount - 1, safePage + 1))}
+                disabled={safePage >= pageCount - 1}
+                className="rounded-md border border-slate-200 px-2 py-1 font-medium hover:bg-slate-50 disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </div>
         {logs.length === 0 ? (
           <p className="rounded-lg border border-dashed border-slate-200 py-8 text-center text-sm text-slate-400">
             Nothing sent yet.
           </p>
         ) : (
           <div className="space-y-2">
-            {logs.map((log) => (
-              <Card key={log.id} className="p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm font-medium text-slate-700">{KIND_LABELS[log.kind] || log.kind}</span>
-                  <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold', STATUS_STYLES[log.status] || 'bg-slate-100 text-slate-600')}>
-                    {log.status === 'queued' && <CheckCircle2 className="mr-1 inline h-3 w-3" />}
-                    {log.status}
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-slate-500">{log.subject}</p>
-                <p className="mt-1 text-[11px] text-slate-400">
-                  {formatTimestamp(log.createdAt)} · {log.recipientCount} recipient{log.recipientCount === 1 ? '' : 's'}
-                  {log.attachmentCount > 0 && ` · ${log.attachmentCount} attachment`}
-                  {log.truncated > 0 && ` · ${log.truncated} dropped by the cap`}
-                  {log.reason && ` · ${log.reason}`}
-                </p>
-              </Card>
-            ))}
+            {pageLogs.map((log) => {
+              const recipients = Array.isArray(log.recipients) ? log.recipients : [];
+              const expanded = expandedLogId === log.id;
+              return (
+                <Card key={log.id} className="p-3">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedLogId(expanded ? null : log.id)}
+                    className="flex w-full items-center justify-between gap-2 text-left"
+                    aria-expanded={expanded}
+                    title="Show who this went to"
+                  >
+                    <span className="text-sm font-medium text-slate-700">{KIND_LABELS[log.kind] || log.kind}</span>
+                    <span className="flex items-center gap-2">
+                      <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold', STATUS_STYLES[log.status] || 'bg-slate-100 text-slate-600')}>
+                        {log.status === 'queued' && <CheckCircle2 className="mr-1 inline h-3 w-3" />}
+                        {log.status}
+                      </span>
+                      <ChevronDown className={cn('h-4 w-4 shrink-0 text-slate-400 transition-transform', expanded && 'rotate-180')} />
+                    </span>
+                  </button>
+                  <p className="mt-1 text-xs text-slate-500">{log.subject}</p>
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    {formatTimestamp(log.createdAt)} · {log.recipientCount} recipient{log.recipientCount === 1 ? '' : 's'}
+                    {log.attachmentCount > 0 && ` · ${log.attachmentCount} attachment`}
+                    {log.truncated > 0 && ` · ${log.truncated} dropped by the cap`}
+                    {log.reason && ` · ${log.reason}`}
+                  </p>
+                  {expanded && (
+                    <div className="mt-2 border-t border-slate-100 pt-2">
+                      {recipients.length > 0 ? (
+                        <>
+                          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                            Sent to {recipients.length} address{recipients.length === 1 ? '' : 'es'}
+                          </p>
+                          <p className="mt-0.5 break-words text-xs text-slate-600">{recipients.join(', ')}</p>
+                        </>
+                      ) : (
+                        <p className="text-xs text-slate-400">
+                          No recipient addresses were recorded for this send{log.status === 'skipped' ? ' — it was skipped.' : '.'}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
           </div>
         )}
       </div>

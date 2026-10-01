@@ -195,6 +195,16 @@ service cloud.firestore {
       return c.perms.hasAny(['manage_users']);
     }
 
+    // Phase 45 — the Areas & Mandals taxonomy (areas/mandals/levels, and later
+    // programmes) gets a narrow write grant so a coordinator can curate it
+    // without manage_users. The write clauses OR it with canManageUsers(), so an
+    // Admin — and any role that hasn't re-saved to pick up the new permission —
+    // is never locked out of a table it could always edit.
+    function canManageAreasMandals() {
+      let c = ctx();
+      return c.perms.hasAny(['manage_areas_mandals']);
+    }
+
     // PHASE 21 — a Moderator (Area head) / Super Moderator (Mandal head) fixes
     // the details of the karyakartas under them without holding manage_users,
     // which is effectively full control (it can change anyone's role, including
@@ -724,23 +734,24 @@ service cloud.firestore {
     // ---------------------------------------------------------------------
     // areas/{id}: name, code   |   mandals/{id}: name, code   (Phase 11)
     // Read open to any signed-in volunteer (dropdowns need them everywhere).
-    // Write gated by manage_users — same admin tier as volunteer management,
-    // rather than inventing a new permission for a rarely-changed table.
+    // Write gated by manage_users OR the narrow manage_areas_mandals grant
+    // (Phase 45), so a taxonomy coordinator can curate this table without the
+    // full user-management power.
     // ---------------------------------------------------------------------
 
     match /areas/{areaId} {
       allow read: if volunteerExists();
-      allow write: if volunteerExists() && canManageUsers();
+      allow write: if volunteerExists() && (canManageUsers() || canManageAreasMandals());
     }
 
     match /mandals/{mandalId} {
       allow read: if volunteerExists();
-      allow write: if volunteerExists() && canManageUsers();
+      allow write: if volunteerExists() && (canManageUsers() || canManageAreasMandals());
     }
 
     match /levels/{levelId} {
       allow read: if volunteerExists();
-      allow write: if volunteerExists() && canManageUsers();
+      allow write: if volunteerExists() && (canManageUsers() || canManageAreasMandals());
     }
 
     // ---------------------------------------------------------------------

@@ -216,8 +216,16 @@ function scorePair(a, b) {
   if (samePhone) {
     if (exact) { confidence = 'certain'; reason = 'Same number, same name'; }
     else if (subset && !close) { confidence = 'certain'; reason = 'Same number, one name is missing a part'; }
-    else if (dist <= 1) { confidence = 'certain'; reason = 'Same number, name differs by one letter'; }
-    else { confidence = 'likely'; reason = 'Same number, name spelled differently'; }
+    // A shared handset with a genuinely different name — a one-letter flip like
+    // Ramesh/Rakesh, or a different spelling — is the FAMILY case the operator asked
+    // to leave alone: father and son on one phone are two people, not one entered
+    // twice. The old code promoted these to certain/likely, and merging them
+    // silently destroyed the second person. Return null so the pair forms no
+    // actionable group and instead surfaces in the families section
+    // (findDuplicatePhones), where the number can be verified without a delete.
+    // Only a name that actually matches — identical (exact), or one truncated to a
+    // subset of the other (Murli / Murli Sahu) — still merges on a shared number.
+    else return null;
   } else if (exact && bothPhones) {
     confidence = 'likely'; reason = 'Same name, two different numbers';
   } else if (exact) {
