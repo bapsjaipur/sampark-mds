@@ -13,7 +13,7 @@
 // stays exported for non-React callers that only need a static fallback.
 import { doc, collection, serverTimestamp } from 'firebase/firestore';
 // PHASE 24 — metered drop-ins (src/lib/fsMetered.js): same signatures, they count.
-import { setDoc, updateDoc, writeBatch } from '../lib/fsMetered';
+import { setDoc, updateDoc, writeBatch, deleteDoc } from '../lib/fsMetered';
 import { db } from '../lib/firebase';
 import { DEFAULT_STATUS_CHIPS } from '../lib/callingStatuses';
 import { toMonthDay } from '../lib/dateHelpers';
@@ -123,5 +123,26 @@ export async function createStandaloneContact({ data, volunteerId }) {
   } catch (err) {
     console.error('createStandaloneContact failed', err);
     return null;
+  }
+}
+
+/**
+ * Hard-deletes one individual and writes the audit row — the same operation the
+ * "All Contacts" page offers, but callable WITHOUT mounting useAllContacts, which
+ * subscribes to the whole `individuals` collection (~3,000 reads the Batches →
+ * Notes review cannot afford). fsMetered's deleteDoc bills the single delete; the
+ * activity row matches useAllContacts.deleteContact's `delete_individual` action.
+ *
+ * @returns {Promise<boolean>} true on success, false on failure (rules, offline).
+ */
+export async function deleteIndividual({ individualId, volunteerId }) {
+  if (!individualId) return false;
+  try {
+    await deleteDoc(doc(db, 'individuals', individualId));
+    logActivity({ volunteerId, individualId, action: 'delete_individual' });
+    return true;
+  } catch (err) {
+    console.error('deleteIndividual failed', err);
+    return false;
   }
 }

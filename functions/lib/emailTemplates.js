@@ -443,6 +443,18 @@ function buildBirthdayReport(data, opts = {}) {
   const heading = `Birthdays & anniversaries — ${data.dateLabel}`;
   const parts = [];
 
+  // Phase 48: a round photo thumbnail (when the contact has one) before the name, so
+  // the karyakar recognises who they're wishing. Remote <img> — no server fetch; a
+  // client that blocks remote images simply shows the name, exactly as before.
+  const nameCell = (p) => {
+    const photo = p.profilePhotoURL
+      ? `<img src="${esc(p.profilePhotoURL)}" width="28" height="28" alt="" `
+        + 'style="border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px;">'
+      : '';
+    const num = p.mobile ? `<div style="color:${MUTED};font-size:11px;">${esc(p.mobile)}</div>` : '';
+    return `${photo}<span style="vertical-align:middle;">${esc(p.name)}</span>${num}`;
+  };
+
   if (solo) {
     parts.push(`<div style="color:${MUTED};font-size:13px;margin-bottom:4px;">`
       + `Birthdays and anniversaries of contacts in your assigned area and mandal today — please send them your wishes.`
@@ -457,22 +469,24 @@ function buildBirthdayReport(data, opts = {}) {
 
   if (data.birthdays.length) {
     parts.push(sectionTitle(`Birthdays (${data.birthdays.length})`));
-    parts.push(table(['Name', 'Turning', 'Mandal', 'Wish'],
+    parts.push(table(['Name', 'Turning', 'Mandal', 'Area', 'Wish'],
       data.birthdays.map((p) => [
-        esc(p.name) + (p.mobile ? `<div style="color:${MUTED};font-size:11px;">${esc(p.mobile)}</div>` : ''),
+        nameCell(p),
         p.age != null ? String(p.age) : '-',
         esc(p.mandal || '-'),
+        esc(p.area || '-'),
         p.waUrl ? waButton(p.waUrl, 'WhatsApp') : '<span style="color:#94a3b8;font-size:12px;">no number</span>',
       ])));
   }
 
   if (data.anniversaries.length) {
     parts.push(sectionTitle(`Anniversaries (${data.anniversaries.length})`));
-    parts.push(table(['Name', 'Years', 'Mandal', 'Wish'],
+    parts.push(table(['Name', 'Years', 'Mandal', 'Area', 'Wish'],
       data.anniversaries.map((p) => [
-        esc(p.name) + (p.mobile ? `<div style="color:${MUTED};font-size:11px;">${esc(p.mobile)}</div>` : ''),
+        nameCell(p),
         p.years != null ? String(p.years) : '-',
         esc(p.mandal || '-'),
+        esc(p.area || '-'),
         p.waUrl ? waButton(p.waUrl, 'WhatsApp') : '<span style="color:#94a3b8;font-size:12px;">no number</span>',
       ])));
   }
@@ -491,10 +505,10 @@ function buildBirthdayReport(data, opts = {}) {
     heading,
     '',
     'Birthdays:',
-    ...(data.birthdays.length ? data.birthdays.map((p) => `  ${p.name}${p.age != null ? ` (turning ${p.age})` : ''} ${p.mobile || ''}`) : ['  none']),
+    ...(data.birthdays.length ? data.birthdays.map((p) => `  ${p.name}${p.age != null ? ` (turning ${p.age})` : ''}${p.area ? `, ${p.area}` : ''} ${p.mobile || ''}`) : ['  none']),
     '',
     'Anniversaries:',
-    ...(data.anniversaries.length ? data.anniversaries.map((p) => `  ${p.name}${p.years != null ? ` (${p.years} years)` : ''} ${p.mobile || ''}`) : ['  none']),
+    ...(data.anniversaries.length ? data.anniversaries.map((p) => `  ${p.name}${p.years != null ? ` (${p.years} years)` : ''}${p.area ? `, ${p.area}` : ''} ${p.mobile || ''}`) : ['  none']),
   ].join('\n');
 
   const subject = solo ? `Your birthdays & anniversaries to wish — ${data.dateLabel}` : heading;

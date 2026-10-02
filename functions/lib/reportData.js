@@ -514,6 +514,11 @@ async function buildBirthdayData({ now = new Date(), templates = {} } = {}) {
       mandal: i.mandal || '',
       // Phase 44: carry area so the per-volunteer birthday fan-out can scope by it.
       area: i.area || '',
+      // Phase 48: household members store no own `area` (it lives on the household);
+      // carry householdId so it can be resolved below. profilePhotoURL rides along for
+      // the email thumbnail — free, the document is already in hand.
+      householdId: i.householdId || null,
+      profilePhotoURL: i.profilePhotoURL || '',
       age,
       waUrl: buildWhatsAppUrl({ mobile: i.mobile, template: bTemplate, contact: i, extra: { age } }),
     };
@@ -529,10 +534,30 @@ async function buildBirthdayData({ now = new Date(), templates = {} } = {}) {
       mandal: i.mandal || '',
       // Phase 44: carry area so the per-volunteer birthday fan-out can scope by it.
       area: i.area || '',
+      householdId: i.householdId || null,
+      profilePhotoURL: i.profilePhotoURL || '',
       years,
       waUrl: buildWhatsAppUrl({ mobile: i.mobile, template: aTemplate, contact: i, extra: { years } }),
     };
   }).sort((a, b) => a.name.localeCompare(b.name));
+
+  // Phase 48: fill in the area for household members (who store it on the household,
+  // not the individual) so every row in the email and PDF names where the person is
+  // from. Only rows still missing an area are looked up; getDocsByIds reads each
+  // household once — a handful of reads on a day with household birthdays, none otherwise.
+  const needHousehold = [...new Set(
+    [...birthdays, ...anniversaries]
+      .filter((p) => !p.area && p.householdId)
+      .map((p) => p.householdId),
+  )];
+  if (needHousehold.length) {
+    const households = await getDocsByIds('households', needHousehold);
+    for (const p of [...birthdays, ...anniversaries]) {
+      if (!p.area && p.householdId && households[p.householdId]) {
+        p.area = households[p.householdId].area || '';
+      }
+    }
+  }
 
   return { dateKey: day.dateKey, dateLabel: day.label, monthDay: day.monthDay, birthdays, anniversaries };
 }

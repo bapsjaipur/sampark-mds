@@ -33,6 +33,7 @@ import { subscribeToBatches } from '../services/batchService';
 import BatchAssignment from '../components/sampark/BatchAssignment';
 import BatchGenerator from '../components/sampark/BatchGenerator';
 import BatchList from '../components/sampark/BatchList';
+import BatchNotesReview from '../components/sampark/BatchNotesReview';
 import BatchAdminTools from '../components/sampark/BatchAdminTools';
 import { cn } from '../lib/cn';
 
@@ -91,6 +92,10 @@ function BatchesPageInner() {
 
   const TABS = [
     { key: 'list', label: 'Batches', show: true },
+    // PHASE 48 — read the outcomes and notes volunteers recorded while calling a
+    // batch, and act on them (drop from calling / delete). Shown to everyone who
+    // can open the page; the row actions gate on edit/delete permissions inside.
+    { key: 'notes', label: 'Notes', show: true },
     // Shown even without generate_batches, with an explanation inside. Hiding it
     // was worse than useless: a role that lost the permission (or never had it)
     // saw three tabs and no way to tell whether the feature was missing, broken,
@@ -126,6 +131,9 @@ function BatchesPageInner() {
 
       {activeTab === 'list' && (
         <BatchList volunteers={volunteers} batches={batches} loading={batchesLoading} />
+      )}
+      {activeTab === 'notes' && (
+        <BatchNotesReview batches={batches} volunteers={volunteers} areas={areas} mandals={mandals} />
       )}
       {activeTab === 'generate' && (canGenerate
         ? <BatchGenerator areas={areas} mandals={mandals} scoped={scoped} batchRows={batches} />

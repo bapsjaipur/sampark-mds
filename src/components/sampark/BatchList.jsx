@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { collection, documentId, query, where } from 'firebase/firestore';
 import {
   RefreshCw, UserPlus, UserMinus, Trash2, Pencil, Check, X, AlertTriangle, Search, Users,
+  Zap, BarChart3, Eraser,
 } from 'lucide-react';
 import { db } from '../../lib/firebase';
 // Metered (src/lib/fsMetered.js): the status join below is a real read of up to
@@ -33,8 +34,9 @@ import { getDocs } from '../../lib/fsMetered';
 import { chunk } from '../../lib/firestoreHelpers';
 import {
   assignBatch, unassignBatch, deleteBatch, renameBatch, computeBatchStats,
-  filterBatchesByScope, canEditBatch,
+  filterBatchesByScope, canEditBatch, planAutoAssign, editBatchContacts,
 } from '../../services/batchService';
+import BatchAutoAssign from './BatchAutoAssign';
 import { useAuth } from '../../hooks/usePermissions';
 import { useToast } from '../../contexts/ToastContext';
 import { confirmDialog } from '../ui/ConfirmHost';
@@ -53,7 +55,16 @@ const FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'unassigned', label: 'Unassigned' },
   { key: 'assigned', label: 'Assigned' },
+  { key: 'stalled', label: 'Stalled' },
 ];
+
+// PHASE 49 — "stalled" = assigned at least a week ago and still under a quarter
+// worked. Both numbers are deliberately forgiving: a batch handed out on Sunday
+// is not stalled on Tuesday, and a caller who has reached a third of their list
+// is making progress. The point is to surface the handful that were taken and
+// then sat on, not to nag an ordinary week.
+const STALLED_DAYS = 7;
+const STALLED_PCT = 25;
 
 function Tile({ label, value, tone }) {
   return (
@@ -91,6 +102,33 @@ function readOnlyReason(batch) {
   return `${batch.area} · ${batch.mandal} sits outside your scope`;
 }
 
+/**
+ * assignedAt arrives as a Firestore Timestamp from the live doc, a Date after an
+ * optimistic local write, or occasionally an ISO string — reduce all three to
+ * epoch millis, and 0 for anything unreadable so "stalled since forever" never
+ * fires on a batch whose stamp we simply can't parse.
+ */
+function toMillis(ts) {
+  if (!ts) return 0;
+  if (typeof ts.toMillis === 'function') return ts.toMillis();
+  if (ts instanceof Date) return ts.getTime();
+  if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+  const n = Date.parse(ts);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+/** "3m ago" / "2h ago" / "4d ago" — how fresh the progress numbers are. */
+function sinceLabel(ms) {
+  if (!ms) return '';
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
 export default function BatchList({ volunteers, batches = [], loading = false }) {
   const { volunteer, scope } = useAuth();
   const { showToast } = useToast();
@@ -112,6 +150,15 @@ export default function BatchList({ volunteers, batches = [], loading = false })
   const [resetOnAssign, setResetOnAssign] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [showAll, setShowAll] = useState(false);
+  // PHASE 49 — when the progress numbers were last fetched, and whether they have
+  // been fetched at all. loadedOnce guards the orphan cleanup: before the first
+  // load `members` is empty, so every contact would look "missing" and the whole
+  // roster would offer to clean itself.
+  const [refreshedAt, setRefreshedAt] = useState(0);
+  const [loadedOnce, setLoadedOnce] = useState(false);
+  const [showWorkload, setShowWorkload] = useState(false);
+  const [autoOpen, setAutoOpen] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
 
   // PHASE 21 — a moderator sees the batches for their own territory plus any
   // batch handed to them personally. Applied before the stats so the tiles at
@@ -149,7 +196,8 @@ export default function BatchList({ volunteers, batches = [], loading = false })
         });
       }
       setMembers(map);
-    } catch (err) {
+      setRefreshedAt(Date.now());
+      setLoadedOnce(true);
       showToast({ type: 'error', message: `Couldn't load call progress — ${err.message}` });
     } finally {
       setStatsLoading(false);
@@ -220,15 +268,29 @@ export default function BatchList({ volunteers, batches = [], loading = false })
     return found;
   }, [search, perBatch, members, volunteerName]);
 
+  // PHASE 49 — a batch is stalled if it was assigned a while ago and is barely
+  // worked. A batch with no known contacts (all still loading, or all unknown)
+  // can't be judged, so it is never called stalled — better silent than a false
+  // red flag on a caller who hasn't been given a chance to load.
+  const isStalled = useCallback((b) => {
+    if (!b.assignedVolunteerId) return false;
+    if (b.called + b.pending === 0) return false;
+    const assignedMs = toMillis(b.assignedAt);
+    if (!assignedMs) return false;
+    const ageDays = (Date.now() - assignedMs) / 86400000;
+    return ageDays >= STALLED_DAYS && b.progressPct < STALLED_PCT;
+  }, []);
+
   const visible = useMemo(() => perBatch.filter((b) => {
     if (filter === 'unassigned' && b.assignedVolunteerId) return false;
     if (filter === 'assigned' && !b.assignedVolunteerId) return false;
+    if (filter === 'stalled' && !isStalled(b)) return false;
     if (volunteerFilter && b.assignedVolunteerId !== volunteerFilter) return false;
     if (areaFilter && b.area !== areaFilter) return false;
     if (mandalFilter && b.mandal !== mandalFilter) return false;
     if (matches && !matches.has(b.id)) return false;
     return true;
-  }), [perBatch, filter, volunteerFilter, areaFilter, mandalFilter, matches]);
+  }), [perBatch, filter, isStalled, volunteerFilter, areaFilter, mandalFilter, matches]);
 
   // 100 cards, each with a progress bar and an assign dropdown, is a slow first
   // paint for a list nobody scrolls to the bottom of. The cap is generous enough
@@ -238,6 +300,95 @@ export default function BatchList({ volunteers, batches = [], loading = false })
   // Looked up in perBatch, not in `visible`: typing in the search box while the
   // editor is open must not empty the modal it is filling.
   const editing = useMemo(() => perBatch.find((b) => b.id === editingId) || null, [perBatch, editingId]);
+
+  // PHASE 49 — the batches eligible for auto-assign: unassigned AND writable by
+  // this person. Filtering on canEditBatch here (not just in the modal) means a
+  // scoped moderator is never offered a city-wide batch the rules would refuse.
+  const autoPool = useMemo(
+    () => perBatch.filter((b) => !b.assignedVolunteerId && canEditBatch(b, scope)),
+    [perBatch, scope],
+  );
+
+  // How many batches each volunteer already holds, so the auto-assign dialog can
+  // say "holds 2 now" next to a name and spread the next round off that base.
+  const heldCountById = useMemo(() => {
+    const m = {};
+    perBatch.forEach((b) => {
+      if (b.assignedVolunteerId) m[b.assignedVolunteerId] = (m[b.assignedVolunteerId] || 0) + 1;
+    });
+    return m;
+  }, [perBatch]);
+
+  // PHASE 49 — orphan cleanup. A batch's `missing` count is the ids it lists that
+  // no longer resolve to a contact (deleted from the directory, re-imported under
+  // a new id) — the "N unknown" on a card. Gated on loadedOnce: before the first
+  // progress fetch `members` is empty, so EVERY id would look missing and the
+  // tool would offer to empty every batch. Only writable batches are included.
+  const orphanPlan = useMemo(() => {
+    if (!loadedOnce) return [];
+    return perBatch
+      .filter((b) => b.missing > 0 && canEditBatch(b, scope))
+      .map((b) => ({
+        batchId: b.id,
+        name: b.name,
+        remove: (b.individualIds || []).filter((id) => !members[id]),
+      }))
+      .filter((p) => p.remove.length > 0);
+  }, [perBatch, members, loadedOnce, scope]);
+  const orphanTotal = useMemo(() => orphanPlan.reduce((n, p) => n + p.remove.length, 0), [orphanPlan]);
+
+  // PHASE 49 — workload: one row per volunteer who holds a batch, so "who has the
+  // most on their plate, and who's been sitting on an old one" is answerable
+  // without opening every card. All from perBatch — no extra reads.
+  const workload = useMemo(() => {
+    const m = new Map();
+    perBatch.forEach((b) => {
+      const vid = b.assignedVolunteerId;
+      if (!vid) return;
+      const cur = m.get(vid) || { volunteerId: vid, batches: 0, contacts: 0, called: 0, pending: 0, oldest: 0 };
+      cur.batches += 1;
+      cur.contacts += b.total;
+      cur.called += b.called;
+      cur.pending += b.pending;
+      const ms = toMillis(b.assignedAt);
+      if (ms && (cur.oldest === 0 || ms < cur.oldest)) cur.oldest = ms;
+      m.set(vid, cur);
+    });
+    return [...m.values()]
+      .map((w) => ({
+        ...w,
+        name: volunteerName(w.volunteerId) || 'Unknown volunteer',
+        pct: w.called + w.pending ? Math.round((w.called / (w.called + w.pending)) * 100) : 0,
+      }))
+      .sort((a, b) => b.contacts - a.contacts);
+  }, [perBatch, volunteerName]);
+
+  async function handleCleanOrphans() {
+    if (!orphanPlan.length) return;
+    const ok = await confirmDialog({
+      title: `Remove ${orphanTotal} dead reference${orphanTotal === 1 ? '' : 's'}?`,
+      message: `${orphanTotal} contact${orphanTotal === 1 ? '' : 's'} across ${orphanPlan.length} batch${orphanPlan.length === 1 ? '' : 'es'} no longer exist in the directory but are still listed (the “N unknown” on a card). This drops only those dead references — no live contact is touched.`,
+      confirmText: 'Clean up',
+    });
+    if (!ok) return;
+    setCleaning(true);
+    let removed = 0;
+    const failures = [];
+    for (const p of orphanPlan) {
+      try {
+        await editBatchContacts({ batchId: p.batchId, remove: p.remove, editedBy: volunteer?.id });
+        removed += p.remove.length;
+      } catch (err) {
+        failures.push(err?.message || 'a batch could not be cleaned');
+      }
+    }
+    setCleaning(false);
+    if (removed) showToast({ type: 'success', message: `Removed ${removed} dead reference${removed === 1 ? '' : 's'}.` });
+    if (failures.length) {
+      showToast({ type: 'error', message: `${failures.length} batch${failures.length === 1 ? '' : 'es'} could not be cleaned — ${failures[0]}` });
+    }
+    loadMembers(allIds);
+  }
 
   async function handleAssign(batch, volunteerId) {
     if (!volunteerId) return;
@@ -351,6 +502,65 @@ export default function BatchList({ volunteers, batches = [], loading = false })
         <Tile label="Called" value={`${totals.progressPct}%`} tone="text-emerald-600" />
       </div>
 
+      {/* PHASE 49 — roster-level actions. Each shows only when it has something to
+          do: auto-assign when there are unassigned batches you can write, clean-up
+          when there are dead references. Workload is always offered. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {autoPool.length > 0 && (
+          <button
+            onClick={() => setAutoOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-100"
+          >
+            <Zap className="h-3.5 w-3.5" /> Auto-assign {autoPool.length} batch{autoPool.length === 1 ? '' : 'es'}
+          </button>
+        )}
+        <button
+          onClick={() => setShowWorkload((s) => !s)}
+          className={cn(
+            'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium',
+            showWorkload ? 'border-slate-300 bg-slate-900 text-white' : 'border-slate-200 text-slate-600 hover:bg-slate-50',
+          )}
+        >
+          <BarChart3 className="h-3.5 w-3.5" /> Workload
+        </button>
+        {orphanTotal > 0 && (
+          <button
+            onClick={handleCleanOrphans}
+            disabled={cleaning}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+          >
+            <Eraser className="h-3.5 w-3.5" /> {cleaning ? 'Cleaning…' : `Clean ${orphanTotal} unknown`}
+          </button>
+        )}
+      </div>
+
+      {showWorkload && (
+        <Card className="p-3.5">
+          <p className="mb-2.5 flex items-center gap-1.5 text-xs font-semibold text-slate-700">
+            <BarChart3 className="h-3.5 w-3.5 text-slate-400" /> Workload by volunteer
+          </p>
+          {workload.length === 0 ? (
+            <p className="py-4 text-center text-xs text-slate-400">No batches are assigned yet.</p>
+          ) : (
+            <div className="space-y-2.5">
+              {workload.map((w) => (
+                <div key={w.volunteerId} className="flex items-center gap-3">
+                  <span className="w-24 shrink-0 truncate text-xs font-medium text-slate-700 sm:w-28" title={w.name}>{w.name}</span>
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+                    <div className="h-full rounded-full bg-emerald-500" style={{ width: `${w.pct}%` }} />
+                  </div>
+                  <span className="w-9 shrink-0 text-right text-[11px] font-semibold text-slate-600">{w.pct}%</span>
+                  <span className="w-32 shrink-0 text-right text-[11px] leading-tight text-slate-400 sm:w-40">
+                    {w.batches} batch{w.batches === 1 ? '' : 'es'} · {w.contacts} contact{w.contacts === 1 ? '' : 's'}
+                    {w.oldest > 0 && <span className="block">oldest {sinceLabel(w.oldest)}</span>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
       {/* ── Search ───────────────────────────────────────────────────────────
           Its own row rather than sharing the filter line: it is the primary tool
           once the roster is long, and on a phone a fourth control on that line
@@ -418,14 +628,21 @@ export default function BatchList({ volunteers, batches = [], loading = false })
           />
         </div>
 
-        <button
-          onClick={() => loadMembers(allIds)}
-          disabled={statsLoading}
-          className="ml-auto flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 disabled:opacity-50"
-        >
-          <RefreshCw className={cn('h-3.5 w-3.5', statsLoading && 'animate-spin')} />
-          {statsLoading ? 'Refreshing…' : 'Refresh progress'}
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {/* PHASE 49 — how stale the numbers are, so a 0% batch reads as "nobody
+              has called" and not "the page hasn't refreshed since this morning". */}
+          {loadedOnce && refreshedAt > 0 && !statsLoading && (
+            <span className="text-[11px] text-slate-400">progress {sinceLabel(refreshedAt)}</span>
+          )}
+          <button
+            onClick={() => loadMembers(allIds)}
+            disabled={statsLoading}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', statsLoading && 'animate-spin')} />
+            {statsLoading ? 'Refreshing…' : 'Refresh progress'}
+          </button>
+        </div>
       </div>
 
       <label className="flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
@@ -652,6 +869,19 @@ export default function BatchList({ volunteers, batches = [], loading = false })
         members={members}
         batches={batches}
         onClose={() => setEditingId(null)}
+      />
+
+      {/* PHASE 49 — deals the unassigned batches across the ticked callers. Reads
+          the already-loaded pool/held counts; the commit is the ordinary
+          assignBatch per batch, so scope rules and the assignedAt stamp hold. */}
+      <BatchAutoAssign
+        open={autoOpen}
+        onClose={() => setAutoOpen(false)}
+        pool={autoPool}
+        volunteers={volunteers}
+        assignedBy={volunteer?.id}
+        heldCountById={heldCountById}
+        onAssigned={() => loadMembers(allIds)}
       />
     </div>
   );

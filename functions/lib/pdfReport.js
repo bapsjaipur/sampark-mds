@@ -407,8 +407,8 @@ function birthdayPdf(data) {
     doc.text(`Birthdays (${data.birthdays.length})`, 14, y);
     y += 3;
     y = autoTable(doc,
-      ['Name', 'Turning', 'Mandal', 'Mobile'],
-      data.birthdays.map((p) => [pdfName(p.name, p.mobile), p.age != null ? String(p.age) : '-', p.mandal || '-', p.mobile || '-']),
+      ['Name', 'Turning', 'Mandal', 'Area', 'Mobile'],
+      data.birthdays.map((p) => [pdfName(p.name, p.mobile), p.age != null ? String(p.age) : '-', p.mandal || '-', p.area || '-', p.mobile || '-']),
       y);
 
     doc.setFont('helvetica', 'bold');
@@ -416,8 +416,8 @@ function birthdayPdf(data) {
     doc.text(`Anniversaries (${data.anniversaries.length})`, 14, y);
     y += 3;
     autoTable(doc,
-      ['Name', 'Years', 'Mandal', 'Mobile'],
-      data.anniversaries.map((p) => [pdfName(p.name, p.mobile), p.years != null ? String(p.years) : '-', p.mandal || '-', p.mobile || '-']),
+      ['Name', 'Years', 'Mandal', 'Area', 'Mobile'],
+      data.anniversaries.map((p) => [pdfName(p.name, p.mobile), p.years != null ? String(p.years) : '-', p.mandal || '-', p.area || '-', p.mobile || '-']),
       y);
 
     footer(doc);
