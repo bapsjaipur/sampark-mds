@@ -167,6 +167,31 @@ export async function getIndividualsForTarget({ areas = [], mandals = [], allowF
   return rows.map((r) => ({ ...r, _area: r.area || areaByHousehold[r.householdId] || null }));
 }
 
+/**
+ * getIndividualsByIds(ids) — fetch specific individuals by document id, each with
+ * the resolved `_area` attached (own field for standalone contacts, else their
+ * household's), exactly as getIndividualsForTarget does.
+ *
+ * For the Batches → Notes review, which already holds a batch's individualIds and
+ * must NOT re-read the whole `individuals` collection (useAllContacts' cost). One
+ * chunked `documentId() in` query per 30 ids, metered, on demand — ~N reads for an
+ * N-name batch, nothing in the background.
+ */
+export async function getIndividualsByIds(ids = []) {
+  const unique = [...new Set((ids || []).filter(Boolean))];
+  if (!unique.length) return [];
+
+  const byId = new Map();
+  for (const c of chunk(unique, IN_LIMIT)) {
+    const iSnap = await getDocs(query(collection(db, 'individuals'), where(documentId(), 'in', c)));
+    iSnap.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+  }
+  const rows = [...byId.values()];
+  const hIds = [...new Set(rows.map((r) => r.householdId).filter(Boolean))];
+  const areaByHousehold = await areasForHouseholdIds(hIds);
+  return rows.map((r) => ({ ...r, _area: r.area || areaByHousehold[r.householdId] || null }));
+}
+
 export async function createBatch({
   name, area, mandal, individualIds, assignedVolunteerId, createdBy,
   eventId = null, eventDate = null,
@@ -1007,6 +1032,51 @@ export async function repointBatches({ batchIds, eventId = null, eventDate = nul
     await wb.commit();
   }
   return { updated: ids.length };
+}
+
+/**
+ * planAutoAssign({ batches, volunteerIds })
+ *
+ * PHASE 49 — AUTO-ASSIGN. After a Generate run there are a dozen unassigned batches
+ * and, until now, the only way to hand them out was to open each one and pick a
+ * name — eleven decisions that amount to "share these out evenly". This deals the
+ * UNASSIGNED batches among a chosen set of callers in one action.
+ *
+ * The request, verbatim: "auto assign after generating batches ... list of
+ * volunteers who is calling, then selection of volunteers checkbox then, auto
+ * assigned. sometimes 2 batch to one volunteer then also apply that thing."
+ *
+ * Deliberately a PURE planner: it returns the [{ batchId, volunteerId }] pairs so
+ * the UI can show the split before committing, and the commit is left to
+ * assignBatch() — one call per pair — so the scope rules, the assignedAt stamp and
+ * the (opt-in) reset path are the SAME ones a manual assign goes through. There is
+ * nothing new to trust on the server.
+ *
+ * HOW THE DEAL IS MADE. Greedy least-loaded: the batches are taken largest-first
+ * and each goes to whichever ticked volunteer is holding the fewest CONTACTS so far
+ * in this deal. When batches outnumber callers — the normal case, ~11 batches to ~6
+ * callers — the extra ones land on whoever is lightest rather than always the first
+ * name, so "two batches each" comes out even by contact count, not merely by count.
+ * Only unassigned batches are dealt; one that already has a caller is never moved.
+ */
+export function planAutoAssign({ batches = [], volunteerIds = [] } = {}) {
+  const vols = [...new Set((volunteerIds || []).filter(Boolean))];
+  if (!vols.length) return [];
+
+  const pool = (batches || [])
+    .filter((b) => b && b.id && !b.assignedVolunteerId)
+    .map((b) => ({ id: b.id, size: (b.individualIds || []).length }))
+    .sort((a, b) => b.size - a.size || String(a.id).localeCompare(String(b.id)));
+
+  const load = new Map(vols.map((v) => [v, 0]));
+  const pairs = [];
+  for (const b of pool) {
+    let pick = vols[0];
+    for (const v of vols) if (load.get(v) < load.get(pick)) pick = v;
+    load.set(pick, load.get(pick) + b.size);
+    pairs.push({ batchId: b.id, volunteerId: pick });
+  }
+  return pairs;
 }
 
 /**
