@@ -141,6 +141,21 @@ exports.disconnectGoogleCalendar = googleCalendar.disconnectGoogleCalendar;
 // ─────────────────────────────────────────────────────────────────────────────
 exports.scheduledOutcomeCleanup = require('./outcomeCleanup').scheduledOutcomeCleanup;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 48 — the in-app notification bell. Auto-notifications on four events
+// (batch assigned, sabha reminder, attendance marked, birthdays — the last folded
+// into the birthday email job at zero extra reads), each scoped to the recipient's
+// Area + Mandal + Role; plus a hand-sent bulk alert gated on the dynamic
+// send_notifications permission. Inbox = notifications/{uid}/inbox/{id}, written
+// server-side only. See functions/notifications.js + functions/lib/notify.js.
+// ─────────────────────────────────────────────────────────────────────────────
+const notifications = require('./notifications');
+exports.sendBulkNotification = notifications.sendBulkNotification;
+exports.onBatchAssigned = notifications.onBatchAssigned;
+exports.onAttendanceMarked = notifications.onAttendanceMarked;
+exports.scheduledSabhaReminder = notifications.scheduledSabhaReminder;
+exports.scheduledNotificationCleanup = notifications.scheduledNotificationCleanup;
+
 exports.backupDatabase = onCall({ region: 'us-central1', maxInstances: 1, timeoutSeconds: 540 }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Must be logged in.');
   const volDoc = await db.collection('volunteers').doc(request.auth.uid).get();

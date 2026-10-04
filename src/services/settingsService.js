@@ -87,7 +87,7 @@ export const DEFAULT_EMAIL_SETTINGS = {
   // DEFAULT_SCHEDULES in functions/lib/scheduleConfig.js and the mirror in
   // functions/lib/mailer.js.
   scheduleDailyCron: '5 22 * * *',            // daily calling report — 22:05 IST
-  schedulePostSabhaCron: '*/15 * * * *',      // post-sabha poll — every 15 minutes
+  schedulePostSabhaCron: '*/30 * * * *',      // post-sabha poll — every 30 minutes
   scheduleBirthdayCron: '10 6 * * *',         // birthday & anniversary — 06:10 IST
   scheduleSabhaDigestCron: '12 7 * * 1',      // weekly sabha coverage — Mon 07:12 IST
   scheduleSabhaGenerationCron: '7 4 * * 0',   // recurring-sabha generation — Sun 04:07 IST
@@ -139,11 +139,27 @@ export const DEFAULT_NIYAM_DHARMA_SETTINGS = {
 //     defaults to 12h, comfortably after the post-sabha reports have gone out.
 //     These two are ALSO mirrored functions-side in functions/outcomeCleanup.js
 //     (DEFAULT_APP_SETTINGS there) — keep the two copies in sync.
+//   notify* / sabhaReminderLeadHours / notificationRetentionDays — PHASE 48. The
+//     in-app notification bell. The four notify* booleans switch each auto-trigger's
+//     fan-out on or off (batch assigned, sabha reminder, attendance marked,
+//     birthdays); they do NOT gate who RECEIVES a bell — receiving is universal and
+//     auto-scoped, and sending a bulk alert is gated by the send_notifications
+//     permission, not a setting. sabhaReminderLeadHours is how many hours before a
+//     sabha its reminder fires; notificationRetentionDays is how long a SEEN item
+//     survives the nightly cleanup. All mirrored functions-side in
+//     functions/lib/appSettings.js (getAppSettings) — keep the two copies in sync.
 export const DEFAULT_APP_SETTINGS = {
   attendanceWindowEnforced: true,
   defaultBatchSize: 25,
   autoClearOutcomesEnabled: false,
   clearOutcomesAfterHours: 12,
+  // PHASE 48 — in-app notifications (see functions/lib/appSettings.js).
+  notifyBatchAssigned: true,
+  notifySabhaReminder: true,
+  notifyAttendanceMarked: true,
+  notifyBirthdays: true,
+  sabhaReminderLeadHours: 24,
+  notificationRetentionDays: 30,
 };
 
 const DEFAULTS = {

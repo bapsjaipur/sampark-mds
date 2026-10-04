@@ -285,6 +285,30 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
+    // notifications/{uid}/inbox/{itemId}: the in-app bell inbox
+    // ---------------------------------------------------------------------
+    // PHASE 48 — one inbox subcollection per recipient, keyed by auth uid (same
+    // key space as volunteers/{uid} and presence/{uid}). Every item is WRITTEN
+    // server-side only (the Admin SDK bypasses rules), so the fan-out — who is in
+    // scope for a batch, a sabha, a birthday, a bulk alert — is decided on the
+    // server and can never be forged from a browser. The owner may read their own
+    // inbox, mark an item seen, and delete it; nothing else is allowed.
+    //
+    // The update rule is pinned to exactly {seen, seenAt} with affectedKeys so a
+    // client can clear its badge but cannot rewrite the title, body, link or type
+    // of a notification the server sent it — the same shape guard used for call
+    // outcomes. `create: if false` keeps the collection server-only even though
+    // the Admin SDK never consults these rules; it documents the intent and blocks
+    // any client that tries.
+    match /notifications/{uid}/inbox/{itemId} {
+      allow read:   if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn() && request.auth.uid == uid
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen', 'seenAt']);
+      allow delete: if isSignedIn() && request.auth.uid == uid;
+      allow create: if false;
+    }
+
+    // ---------------------------------------------------------------------
     // households/{id}: address, area, level, totalFamilyMembers,
     //   samparkKaryakartaName, samparkKaryakartaNumber, remark, legacyId,
     //   createdAt, updatedAt

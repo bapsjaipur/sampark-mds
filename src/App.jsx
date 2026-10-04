@@ -47,6 +47,7 @@ const MyContactsPage = lazy(() => import("./pages/MyContactsPage"));
 const ProfilePage = lazy(() => import("./pages/ProfilePage"));
 const BalMandalDashboard = lazy(() => import("./pages/BalMandalDashboard"));
 const StandardPromotionPage = lazy(() => import("./pages/StandardPromotionPage"));
+const NotificationsPage = lazy(() => import("./pages/NotificationsPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 
 // Public routes render before AppLayout (and its Suspense) exist, so they need a
@@ -139,6 +140,11 @@ export default function App() {
                   <Route path="/admin/dashboard" element={<RequireRoute navPath="/admin/dashboard"><AdminDashboardPage /></RequireRoute>} />
                   <Route path="/admin/batches" element={<RequireRoute navPath="/admin/batches"><BatchesPage /></RequireRoute>} />
                   <Route path="/reminders" element={<RequireRoute navPath="/reminders"><RemindersDashboard /></RequireRoute>} />
+                  {/* PHASE 48 — the in-app notification inbox. navPath gate passes
+                      for everyone (the nav entry is universal), so any signed-in
+                      user reaches their own bell inbox; the send composer inside
+                      the page is gated separately on send_notifications. */}
+                  <Route path="/notifications" element={<RequireRoute navPath="/notifications"><NotificationsPage /></RequireRoute>} />
                   <Route path="/admin/roles" element={<RequireRoute navPath="/admin/roles"><RolesManager /></RequireRoute>} />
                   <Route path="/admin/volunteers" element={<RequireRoute navPath="/admin/volunteers"><VolunteerEditor /></RequireRoute>} />
                   <Route path="/admin/areas-mandals" element={<RequireRoute navPath="/admin/areas-mandals"><AreasMandalsManager /></RequireRoute>} />

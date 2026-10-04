@@ -38,6 +38,9 @@ const { onSchedule } = require('firebase-functions/v2/scheduler');
 const admin = require('firebase-admin');
 const { findEventsToReport } = require('./lib/reportData');
 const { schedules } = require('./lib/scheduleConfig');
+// PHASE 48 — settings/app now has ONE functions-side mirror (lib/appSettings.js),
+// shared with the notification jobs, instead of a two-field copy living here.
+const { DEFAULT_APP_SETTINGS, getAppSettings } = require('./lib/appSettings');
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -47,17 +50,6 @@ const TZ = 'Asia/Kolkata';
 const SCHEDULE_OPTS = { region: REGION, timeZone: TZ, timeoutSeconds: 300, memory: '512MiB' };
 
 const OUTCOME_CLEANUP_SCHEDULE = schedules.outcomeCleanup;
-
-/**
- * Mirror of the auto-clear knobs in DEFAULT_APP_SETTINGS
- * (src/services/settingsService.js). functions/ and src/ are separate packages
- * with no shared build, so the defaults are duplicated — KEEP THE TWO IN SYNC.
- * Only the two fields this job reads are mirrored here; settings/app carries more.
- */
-const DEFAULT_APP_SETTINGS = {
-  autoClearOutcomesEnabled: false,
-  clearOutcomesAfterHours: 12,
-};
 
 /** Bounds on the admin-set delay: at least an hour (never mid-sabha), at most 30
  *  days (a runaway value would only widen the event scan for no purpose). */
@@ -70,17 +62,6 @@ const MAX_CLEAR_ATTEMPTS = 3;
 const WRITE_BATCH_LIMIT = 450;
 // getAll fan-in for the "does this contact still carry an outcome" read.
 const READ_CHUNK = 300;
-
-async function getAppSettings() {
-  try {
-    const snap = await db.collection('settings').doc('app').get();
-    const data = snap.exists ? snap.data() : {};
-    return { ...DEFAULT_APP_SETTINGS, ...data };
-  } catch (err) {
-    console.error('[outcome-cleanup] could not read settings/app, using defaults:', err.message);
-    return { ...DEFAULT_APP_SETTINGS };
-  }
-}
 
 /**
  * Claim an event for outcome-clearing. Its OWN field, `outcomesClearedAt`, so it

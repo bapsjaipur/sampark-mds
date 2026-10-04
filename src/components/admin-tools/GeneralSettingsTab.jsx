@@ -25,7 +25,7 @@
 //     reset. See functions/outcomeCleanup.js; the toggle + delay write here.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, Layers, Eraser, CheckCircle2, Lock, Loader2 } from 'lucide-react';
+import { CalendarClock, Layers, Eraser, CheckCircle2, Lock, Loader2, Bell } from 'lucide-react';
 import { saveSettings, describeSettingsError } from '../../services/settingsService';
 import { useSettings } from '../../hooks/useSettings';
 import { useAuth } from '../../hooks/usePermissions';
@@ -61,6 +61,13 @@ export default function GeneralSettingsTab() {
   const [defaultBatchSize, setDefaultBatchSize] = useState(25);
   const [clearEnabled, setClearEnabled] = useState(false);
   const [clearDelayHours, setClearDelayHours] = useState(12);
+  // PHASE 48 — in-app notification knobs (same settings/app document).
+  const [notifyBatchAssigned, setNotifyBatchAssigned] = useState(true);
+  const [notifySabhaReminder, setNotifySabhaReminder] = useState(true);
+  const [notifyAttendanceMarked, setNotifyAttendanceMarked] = useState(true);
+  const [notifyBirthdays, setNotifyBirthdays] = useState(true);
+  const [reminderLeadHours, setReminderLeadHours] = useState(24);
+  const [retentionDays, setRetentionDays] = useState(30);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -70,6 +77,12 @@ export default function GeneralSettingsTab() {
     setDefaultBatchSize(Number(settings.defaultBatchSize) || 25);
     setClearEnabled(settings.autoClearOutcomesEnabled === true);
     setClearDelayHours(Number(settings.clearOutcomesAfterHours) || 12);
+    setNotifyBatchAssigned(settings.notifyBatchAssigned !== false);
+    setNotifySabhaReminder(settings.notifySabhaReminder !== false);
+    setNotifyAttendanceMarked(settings.notifyAttendanceMarked !== false);
+    setNotifyBirthdays(settings.notifyBirthdays !== false);
+    setReminderLeadHours(Number(settings.sabhaReminderLeadHours) || 24);
+    setRetentionDays(Number(settings.notificationRetentionDays) || 30);
     setDirty(false);
   }, [settings]);
 
@@ -85,8 +98,22 @@ export default function GeneralSettingsTab() {
     return null;
   }, [clearDelayHours]);
 
+  // The reminder sweep only looks 7 days ahead (REMINDER_MAX_LOOKAHEAD_DAYS in
+  // functions/notifications.js), so a lead longer than that could never fire.
+  const leadError = useMemo(() => {
+    const n = Number(reminderLeadHours);
+    if (!Number.isFinite(n) || n < 1 || n > 168) return 'Enter a whole number of hours between 1 and 168 (7 days).';
+    return null;
+  }, [reminderLeadHours]);
+
+  const retentionError = useMemo(() => {
+    const n = Number(retentionDays);
+    if (!Number.isFinite(n) || n < 1 || n > 365) return 'Enter a whole number of days between 1 and 365.';
+    return null;
+  }, [retentionDays]);
+
   async function handleSave() {
-    if (sizeError || delayError) return;
+    if (sizeError || delayError || leadError || retentionError) return;
     setSaving(true);
     try {
       await saveSettings('app', {
@@ -94,6 +121,12 @@ export default function GeneralSettingsTab() {
         defaultBatchSize: Math.max(1, Math.min(500, Math.round(Number(defaultBatchSize)))),
         autoClearOutcomesEnabled: clearEnabled,
         clearOutcomesAfterHours: Math.max(1, Math.min(720, Math.round(Number(clearDelayHours)))),
+        notifyBatchAssigned,
+        notifySabhaReminder,
+        notifyAttendanceMarked,
+        notifyBirthdays,
+        sabhaReminderLeadHours: Math.max(1, Math.min(168, Math.round(Number(reminderLeadHours)))),
+        notificationRetentionDays: Math.max(1, Math.min(365, Math.round(Number(retentionDays)))),
       }, volunteer?.id);
       setDirty(false);
       showToast({ type: 'success', message: 'App settings saved.' });
@@ -206,9 +239,77 @@ export default function GeneralSettingsTab() {
         </div>
       </Card>
 
+      {/* ── In-app notifications (PHASE 48) ────────────────────────────────── */}
+      <Card className="p-4">
+        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+          <Bell className="h-4 w-4 text-orange-600" /> In-app notifications
+        </h3>
+        <p className="mt-1 text-xs leading-relaxed text-slate-500">
+          The notification bell is on for everyone and only ever reaches people whose area, mandal
+          and role match — these switches just turn each automatic alert on or off. They do not
+          affect hand-sent bulk alerts, which are controlled by the “Send notifications” permission
+          in the Roles tab.
+        </p>
+
+        <div className="mt-3 divide-y divide-slate-100 rounded-lg border border-slate-100">
+          {[
+            ['notifyBatchAssigned', notifyBatchAssigned, setNotifyBatchAssigned,
+              'When a batch is assigned', 'The volunteer the batch is handed to gets one bell.'],
+            ['notifySabhaReminder', notifySabhaReminder, setNotifySabhaReminder,
+              'Sabha reminder', 'Everyone in that sabha’s scope is reminded before it starts.'],
+            ['notifyAttendanceMarked', notifyAttendanceMarked, setNotifyAttendanceMarked,
+              'When attendance starts', 'That sabha’s area / mandal leaders are told once, when the register is first marked.'],
+            ['notifyBirthdays', notifyBirthdays, setNotifyBirthdays,
+              'Birthdays & anniversaries', 'Each caller gets a bell listing their own contacts’ birthdays, alongside the daily email.'],
+          ].map(([key, value, setter, title, help]) => (
+            <div key={key} className="flex items-start justify-between gap-3 p-3">
+              <div className="min-w-0">
+                <p className="text-[13px] font-medium text-slate-800">{title}</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{help}</p>
+              </div>
+              <Toggle
+                checked={value}
+                disabled={!canEdit}
+                onChange={(v) => { setter(v); setDirty(true); }}
+                label={title}
+              />
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div>
+            <Label>Remind this many hours before a sabha</Label>
+            <Input
+              type="number" min={1} max={168} inputMode="numeric"
+              value={reminderLeadHours}
+              disabled={!canEdit || !notifySabhaReminder}
+              onChange={(e) => { setReminderLeadHours(e.target.value); setDirty(true); }}
+            />
+            {leadError && <p className="mt-1 text-[11px] text-rose-600">{leadError}</p>}
+            <p className="mt-1 text-[11px] text-slate-400">
+              The reminder lands on the first hourly sweep after a sabha enters this window. Up to 7 days.
+            </p>
+          </div>
+          <div>
+            <Label>Keep read notifications for (days)</Label>
+            <Input
+              type="number" min={1} max={365} inputMode="numeric"
+              value={retentionDays}
+              disabled={!canEdit}
+              onChange={(e) => { setRetentionDays(e.target.value); setDirty(true); }}
+            />
+            {retentionError && <p className="mt-1 text-[11px] text-rose-600">{retentionError}</p>}
+            <p className="mt-1 text-[11px] text-slate-400">
+              Items you’ve already seen are swept nightly after this long. Unread items are never auto-deleted.
+            </p>
+          </div>
+        </div>
+      </Card>
+
       {canEdit && (
         <div className="flex items-center gap-3">
-          <Button variant="accent" onClick={handleSave} disabled={!dirty || saving || Boolean(sizeError) || Boolean(delayError)}>
+          <Button variant="accent" onClick={handleSave} disabled={!dirty || saving || Boolean(sizeError) || Boolean(delayError) || Boolean(leadError) || Boolean(retentionError)}>
             {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</> : <><CheckCircle2 className="h-3.5 w-3.5" /> Save settings</>}
           </Button>
           {dirty && !saving && <span className="text-[11px] text-slate-400">Unsaved changes</span>}
