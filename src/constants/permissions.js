@@ -73,6 +73,14 @@ export const PERMISSIONS = {
   // batches, fix their details — without the global MANAGE_USERS power to
   // create accounts or change roles. This is the Moderator's day-to-day need.
   MANAGE_SCOPED_VOLUNTEERS: 'manage_scoped_volunteers',
+  // Phase 48 — send in-app bulk notifications (the bell inbox) to a Mandal, an
+  // Area, one or more Roles, specific volunteers, or everyone ("gather at this
+  // place at this time"). This is the right to SEND; RECEIVING a bell is
+  // universal and auto-scoped, so there is no receive gate. Enforced in the
+  // sendBulkNotification callable (functions/notifications.js). Admin auto-holds
+  // it (NOT in PRESET_EXCLUDED_PERMISSIONS) — grant it to Moderator / Super
+  // Moderator etc. from the Roles tab as needed.
+  SEND_NOTIFICATIONS: 'send_notifications',
   // ── Tab-visibility flags (Phase B) ──────────────────────────────────────────
   // These are the ONLY permissions that SUBTRACT access instead of granting it:
   // ticking one HIDES a tab for the role. They exist because those tabs cannot be
@@ -114,6 +122,7 @@ export const PERMISSION_LABELS = {
   [PERMISSIONS.MANAGE_ATTENDANCE]: 'Mark Sabha Attendance',
   [PERMISSIONS.IMPORT_DATA]: 'Import Contacts & History (CSV)',
   [PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS]: 'Manage Volunteers In My Area/Mandal',
+  [PERMISSIONS.SEND_NOTIFICATIONS]: 'Send Bulk Notifications',
   [PERMISSIONS.HIDE_ALL_CONTACTS]: 'Hide the All Contacts tab',
   [PERMISSIONS.HIDE_PAST_SABHAS]: 'Hide Past Sabhas (upcoming only)',
 };
@@ -143,6 +152,7 @@ export const PERMISSION_SHORT_LABELS = {
   [PERMISSIONS.MANAGE_ATTENDANCE]: 'Attendance',
   [PERMISSIONS.IMPORT_DATA]: 'Import',
   [PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS]: 'Scoped Users',
+  [PERMISSIONS.SEND_NOTIFICATIONS]: 'Notify',
   [PERMISSIONS.HIDE_ALL_CONTACTS]: 'Hide All Contacts',
   [PERMISSIONS.HIDE_PAST_SABHAS]: 'Hide Past Sabhas',
 };
@@ -164,8 +174,8 @@ export const PERMISSION_GROUPS = [
   ] },
   { label: 'Administration', permissions: [
     PERMISSIONS.MANAGE_USERS, PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS, PERMISSIONS.MANAGE_ROLES,
-    PERMISSIONS.SEND_EMAILS, PERMISSIONS.MANAGE_TEMPLATES, PERMISSIONS.MANAGE_NIYAM_DHARMA,
-    PERMISSIONS.MANAGE_AREAS_MANDALS,
+    PERMISSIONS.SEND_EMAILS, PERMISSIONS.SEND_NOTIFICATIONS, PERMISSIONS.MANAGE_TEMPLATES,
+    PERMISSIONS.MANAGE_NIYAM_DHARMA, PERMISSIONS.MANAGE_AREAS_MANDALS,
   ] },
   // Opt-out toggles — ticking one HIDES a tab for this role (default off). Kept
   // in their own group so it reads differently from the grant-access boxes above.
@@ -197,6 +207,7 @@ export const PERMISSION_HELP = {
   [PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS]: 'Edit volunteers inside their own area/mandal only. Cannot create logins or change roles.',
   [PERMISSIONS.MANAGE_ROLES]: 'Edit this screen. Anyone with it can grant themselves anything.',
   [PERMISSIONS.SEND_EMAILS]: 'Run report emails on demand and receive the scheduled ones.',
+  [PERMISSIONS.SEND_NOTIFICATIONS]: 'Send in-app bell notifications to a Mandal, Area, Role, chosen volunteers or everyone — the one-click “gather here at this time” alert. Everyone receives bells automatically and scoped to them; this is only the power to send to others.',
   [PERMISSIONS.MANAGE_TEMPLATES]: 'Edit the WhatsApp message text, the calling outcome buttons and email settings.',
   [PERMISSIONS.MANAGE_NIYAM_DHARMA]: 'Edit the Niyam Dharma Agna list on the Areas & Mandals screen — the daily-observance checkboxes (Tulsi Kanthi, Mala Jaap…) shown on every contact. Lets someone re-spell, add or retire a niyam. Does not grant any contact-editing power on its own.',
   [PERMISSIONS.MANAGE_AREAS_MANDALS]: 'Add, rename and organise Areas, Mandals, Levels and Programmes on the Areas & Mandals screen — without the full Manage Users power. An Admin already has this via Manage Users; grant it to a coordinator who should shape the taxonomy but not create logins or change roles.',

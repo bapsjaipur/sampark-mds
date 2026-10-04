@@ -44,6 +44,14 @@
     { "collectionGroup": "attendance", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "individualId", "order": "ASCENDING" },
       { "fieldPath": "markedAt", "order": "DESCENDING" }
+    ]},
+    { "collectionGroup": "inbox", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "seen", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ]},
+    { "collectionGroup": "inbox", "queryScope": "COLLECTION_GROUP", "fields": [
+      { "fieldPath": "seen", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "ASCENDING" }
     ]}
   ],
   "fieldOverrides": []

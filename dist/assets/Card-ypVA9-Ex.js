@@ -1,1 +1,0 @@
-import{j as s}from"./vendor-react-VPvy4NRb.js";import{k as t}from"./index-DFynR2Ab.js";function i({className:r,children:o,...e}){return s.jsx("div",{className:t("rounded-lg border border-slate-100 bg-white",r),...e,children:o})}export{i as C};

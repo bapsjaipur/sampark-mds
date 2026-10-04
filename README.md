@@ -80,7 +80,7 @@ functions/
 firestore.rules     Security rules      storage.rules   Storage rules
 firestore.indexes.json
 firebase.json       Firebase project config (Firestore, Storage, Functions)
-dist/               Built SPA (committed; Vercel also rebuilds on deploy)
+dist/               Built SPA — git-ignored; Vercel rebuilds on every deploy
 ```
 
 ---

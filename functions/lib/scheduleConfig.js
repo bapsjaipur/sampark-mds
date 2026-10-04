@@ -43,7 +43,7 @@ const path = require('path');
  *  reads queue behind each other, so a report at 22:05 beats a report at 22:00. */
 const DEFAULT_SCHEDULES = {
   daily: '5 22 * * *',        // scheduledDailyReport — 22:05 IST
-  postSabha: '*/15 * * * *',  // scheduledPostSabhaReports — every 15 minutes
+  postSabha: '*/30 * * * *',  // scheduledPostSabhaReports — every 30 minutes
   birthday: '10 6 * * *',     // scheduledBirthdaySummary — 06:10 IST
   sabhaDigest: '12 7 * * 1',  // scheduledSabhaDigest — Monday 07:12 IST
   sabhaGeneration: '7 4 * * 0', // scheduledSabhaGeneration — Sunday 04:07 IST
@@ -57,6 +57,15 @@ const DEFAULT_SCHEDULES = {
   // sweep is a single settings read and stops early while the feature is off, so
   // hourly costs almost nothing. See functions/outcomeCleanup.js.
   outcomeCleanup: '23 * * * *', // scheduledOutcomeCleanup — hourly at :23
+  // PHASE 48 — the in-app bell's two scheduled jobs (see functions/notifications.js).
+  // The reminder sweep runs hourly and claims each sabha once, so a sabha enters
+  // the lead window (settings/app.sabhaReminderLeadHours, 24h by default) and gets
+  // its reminder on the first tick after that. Off the hour for the usual reason.
+  sabhaReminder: '17 * * * *',      // scheduledSabhaReminder — hourly at :17
+  // Nightly delete of SEEN notifications past settings/app.notificationRetentionDays
+  // (30 by default). Runs when nothing else does, so its bounded collectionGroup
+  // query never competes with the report jobs for reads.
+  notificationCleanup: '43 2 * * *', // scheduledNotificationCleanup — 02:43 IST
 };
 
 /** A cron string this project would ever set: exactly five whitespace-separated

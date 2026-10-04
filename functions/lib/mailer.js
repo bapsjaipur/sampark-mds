@@ -105,7 +105,7 @@ const DEFAULT_EMAIL_SETTINGS = {
   // read and write them, and pull-schedules.js can copy them into the deploy.
   // KEEP IN SYNC with src/services/settingsService.js and lib/scheduleConfig.js.
   scheduleDailyCron: '5 22 * * *',
-  schedulePostSabhaCron: '*/15 * * * *',
+  schedulePostSabhaCron: '*/30 * * * *',
   scheduleBirthdayCron: '10 6 * * *',
   scheduleSabhaDigestCron: '12 7 * * 1',
   scheduleSabhaGenerationCron: '7 4 * * 0',
@@ -161,6 +161,25 @@ async function loadRolePermissions() {
  *   assignedAreas, assignedMandals, scopeKind, program, programs}>>}
  */
 async function loadMailableVolunteers() {
+  return annotateVolunteers({ requireDeliverableEmail: true });
+}
+
+/**
+ * PHASE 48 — the shared half of both loaders.
+ *
+ * The notification fan-out (functions/lib/notify.js) needs the SAME annotated
+ * volunteer list as the mailer, differing in exactly one respect: it must not
+ * require a deliverable reportEmail, because an in-app bell reaches everyone with
+ * a login whether or not anybody has typed an address onto their record. Rather
+ * than copy the role-union / scope-annotation loop into a second file (where the
+ * two would drift the first time a field is added), the pass lives here once and
+ * both entry points call it.
+ *
+ * @param {object}  opts
+ * @param {boolean} opts.requireDeliverableEmail  true for the mailer (only people
+ *   who can actually be posted to), false for the notifier (any active volunteer).
+ */
+async function annotateVolunteers({ requireDeliverableEmail } = {}) {
   const [vSnap, rolesSnap] = await Promise.all([
     db.collection('volunteers').get(),
     db.collection('roles').get(),
@@ -173,7 +192,7 @@ async function loadMailableVolunteers() {
   vSnap.forEach((d) => {
     const v = d.data();
     if (v.isActive === false) return;
-    if (!isDeliverable(v.reportEmail)) return;
+    if (requireDeliverableEmail && !isDeliverable(v.reportEmail)) return;
 
     const roles = volunteerRoleIds(v).map((id) => roleDocs[id]).filter(Boolean);
     const permissions = [...new Set(roles.flatMap((r) => (Array.isArray(r.permissions) ? r.permissions : [])))];
@@ -215,15 +234,32 @@ async function loadMailableVolunteers() {
  * `send_emails` doubles as "receives report emails" — the permission label in
  * src/constants/permissions.js says so. One permission for both directions
  * keeps the matrix honest: if you can trigger a report you can also see it.
+ *
+ * @param {object} settings  settings/email (loaded if omitted).
+ * @param {object} [opts]
+ * @param {Array}  [opts.volunteers]  a pre-loaded loadMailableVolunteers()
+ *   result to reuse, so a caller that already has the list does not read the
+ *   volunteers + roles collections a second time.
+ * @param {Set|Array} [opts.excludeEmails]  lowercased addresses to drop from the
+ *   send_emails audience. The birthday job uses it to keep a mandal/area-scoped
+ *   karyakar who receives their OWN scoped copy off the whole-city combined copy.
+ *   extraRecipients are NEVER excluded — they are the explicit city-wide list.
  */
-async function resolveReportRecipients(settings) {
+async function resolveReportRecipients(settings, { volunteers = null, excludeEmails = null } = {}) {
   const s = settings || (await getEmailSettings());
-  const volunteers = await loadMailableVolunteers();
+  const vols = volunteers || (await loadMailableVolunteers());
+  const exclude = excludeEmails instanceof Set
+    ? excludeEmails
+    : new Set((Array.isArray(excludeEmails) ? excludeEmails : []).map((a) => String(a || '').toLowerCase()));
 
   const addresses = new Map(); // lowercased address -> display name
-  volunteers
+  vols
     .filter((v) => v.permissions.includes('send_emails'))
-    .forEach((v) => addresses.set(v.email.toLowerCase(), v.name));
+    .forEach((v) => {
+      const key = v.email.toLowerCase();
+      if (exclude.has(key)) return;
+      addresses.set(key, v.name);
+    });
 
   (Array.isArray(s.extraRecipients) ? s.extraRecipients : [])
     .map((a) => String(a || '').trim())
@@ -351,6 +387,9 @@ module.exports = {
   getEmailSettings,
   isDeliverable,
   loadMailableVolunteers,
+  // PHASE 48 — the same pass without the "has a reportEmail" filter, so the
+  // in-app notifier (lib/notify.js) can reach every active volunteer.
+  annotateVolunteers,
   loadRolePermissions,
   resolveReportRecipients,
   queueMail,

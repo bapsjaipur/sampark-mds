@@ -25,6 +25,7 @@ import { auth } from '../lib/firebase';
 import { useAuth } from '../hooks/usePermissions';
 import { getRoleView } from '../lib/roleView';
 import { Avatar } from './ui/Avatar';
+import NotificationBell from './NotificationBell';
 import { cn } from '../lib/cn';
 
 // Screens that take over the whole viewport on mobile and manage their own
@@ -70,13 +71,21 @@ export function RoleBadge({ roleView, className }) {
   );
 }
 
-function SidebarContent({ collapsed, onNavigate, roleView }) {
+function SidebarContent({ collapsed, onNavigate, roleView, showBell = false }) {
   const { volunteer } = useAuth();
 
   return (
     <>
       <div className={`mb-2 flex items-center px-2.5 py-1 ${collapsed ? 'justify-center' : 'justify-between'}`}>
         {!collapsed && <p className="text-[13px] font-semibold tracking-tight text-slate-900 truncate">BAPS Jaipur MDS</p>}
+        {/* PHASE 48 — the bell lives at the TOP of the sidebar (not the footer):
+            the footer is pinned to the viewport bottom, where a downward-opening
+            dropdown would fall off-screen. `collapsed` anchors the dropdown to the
+            left so it opens rightward into the content, clear of the screen edge,
+            whether the sidebar is wide or icon-only. Only the desktop sidebar
+            passes showBell — the mobile drawer omits it (the mobile bell lives in
+            the top bar), so the shared listener is never mounted a third time. */}
+        {showBell && <NotificationBell collapsed />}
       </div>
 
       <nav className="flex-1 space-y-0.5 overflow-y-auto">
@@ -178,6 +187,7 @@ export default function AppLayout() {
           </button>
           <p className="text-[13px] font-semibold tracking-tight text-slate-900">BAPS Jaipur MDS</p>
           <div className="ml-auto flex items-center gap-2">
+            <NotificationBell />
             <RoleBadge roleView={roleView} />
             <Link to="/profile" aria-label="Profile"><Avatar src={volunteer?.profilePhotoURL} name={volunteer?.name} size="sm" /></Link>
           </div>
@@ -199,7 +209,7 @@ export default function AppLayout() {
 
       {/* Desktop sidebar — fixed to the viewport, independent scroll */}
       <aside className={`hidden md:fixed md:inset-y-0 md:left-0 md:flex md:flex-col md:border-r md:border-slate-100 md:bg-white md:px-3 md:py-4 md:transition-all ${collapsed ? 'md:w-16' : 'md:w-56'}`}>
-        <SidebarContent collapsed={collapsed} onNavigate={undefined} roleView={roleView} />
+        <SidebarContent collapsed={collapsed} onNavigate={undefined} roleView={roleView} showBell />
         <button
           onClick={() => setCollapsed((c) => !c)}
           className="mt-2 flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs text-slate-400 hover:bg-slate-50 hover:text-slate-600"

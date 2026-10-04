@@ -30,6 +30,11 @@ const admin = require('firebase-admin');
 const {
   getEmailSettings, resolveReportRecipients, loadMailableVolunteers, queueMail, isDeliverable,
 } = require('./lib/mailer');
+// PHASE 48 — the bell's audience is WIDER than the mailer's: a notification needs a
+// login, not a deliverable reportEmail. loadNotifiableVolunteers is the same volunteer
+// pass with that one filter dropped, so the birthday job loads the list once and
+// serves both channels from it.
+const { loadNotifiableVolunteers } = require('./lib/notify');
 const {
   buildDailyReport, buildPostSabhaReport, buildSkBatchReport, buildBirthdayReport,
 } = require('./lib/emailTemplates');
@@ -42,6 +47,12 @@ const { permissionsForVolunteer, volunteerRoleIds } = require('./lib/callerAcces
 // PHASE 44 — the per-volunteer birthday fan-out scopes each copy to the
 // recipient's assigned area/mandal. Same scope engine the sabha digest uses.
 const { resolveScope, matchesScope, programsCoverMandal } = require('./lib/volunteerScope');
+// PHASE 48 — the in-app bell. The birthday notification rides THIS job rather than
+// getting its own scheduled function: the scoped per-volunteer slices are already
+// computed below, so folding the fan-out in costs zero extra reads. See the
+// birthday block in runBirthdaySummary.
+const { NOTIFY_TYPES, writeNotifications } = require('./lib/notify');
+const { getAppSettings } = require('./lib/appSettings');
 // PHASE 38 — the per-karyakarta batch follow-up list. Shares the post-sabha tick
 // but nothing else; see runSkBatchReports below.
 const { buildSkBatchReports, MAX_SK_EMAILS_PER_EVENT } = require('./lib/skReport');
@@ -75,6 +86,11 @@ const BIRTHDAY_SCHEDULE = schedules.birthday;    // legacy birthday trigger ran 
 
 /** Bounded fan-out for the per-volunteer variants — see runDailyReport. */
 const MAX_PER_VOLUNTEER_EMAILS = 40;
+
+/** PHASE 48 — how many names a birthday bell lists before it says "and N more".
+ *  A notification is one line on a phone; the per-volunteer EMAIL below still
+ *  carries the full list. */
+const BIRTHDAY_NAME_CAP = 3;
 
 // ── Daily calling report ────────────────────────────────────────────────────
 
@@ -488,8 +504,51 @@ async function runBirthdaySummary({ now = new Date(), force = false } = {}) {
 
   const results = { date: data.dateKey, admin: null, volunteers: [] };
 
+  // Load volunteers + roles ONCE and reuse for both the admin digest audience
+  // and the scoped fan-out below. Each path used to call loadMailableVolunteers()
+  // independently, reading the two collections twice every run.
+  //
+  // PHASE 48 — requireDeliverableEmail:false so the bell can reach the karyakarta
+  // who has no reportEmail (most of them). One volunteers read + one roles read
+  // serve both the email fan-out and the notification fan-out; the bell adds no
+  // reads of its own.
+  const mailable = await loadNotifiableVolunteers();
+
+  // Bell settings read once, only if the bell is on. Kept off the hot path so an
+  // install that never uses notifications pays nothing extra here.
+  const appSettings = await getAppSettings();
+  const wantNotify = appSettings.notifyBirthdays !== false;
+
+  // PHASE 47 — the scoped fan-out audience, resolved before the admin block
+  // because the whole-city copy must EXCLUDE it. A mandal- or area-scoped
+  // Super Moderator who also holds send_emails was receiving BOTH their own
+  // scoped copy AND the combined all-mandal copy; the combined copy is for the
+  // unrestricted (All-Jaipur) audience only, so anyone who gets a scoped copy is
+  // removed from it. extraRecipients stay — they are the explicit city-wide list.
+  //
+  // PHASE 48 — resolved when EITHER the per-volunteer EMAIL or the in-app BELL
+  // wants it. The bell deliberately does NOT inherit the email job's
+  // autoBirthdayVolunteerEnabled switch: that flag exists because an email needs a
+  // deliverable reportEmail and nobody wanted to mail a hundred karyakartas before
+  // those were filled in, whereas the bell reaches everyone with a login for free.
+  // So the bell audience is the same scoped people, gated by its own setting.
+  const wantScopedAudience = (wantVolunteer || wantNotify) && !nobody;
+  const scopedPeople = wantScopedAudience
+    ? mailable
+        .filter((v) => v.permissions.includes('view_assigned_contacts'))
+        .map((v) => ({
+          person: v,
+          scope: resolveScope({ volunteer: v, roles: v.roles, permissions: v.permissions }),
+        }))
+        .filter(({ scope }) => !scope.unrestricted && !scope.empty)
+    : [];
+  // Every scoped person is kept OFF the whole-city copy even if only the bell uses
+  // them — otherwise the bell would be reaching someone the admin email also spat
+  // the entire city's list at.
+  const scopedEmails = new Set(scopedPeople.map(({ person }) => person.email.toLowerCase()));
+
   if (wantAdmin) {
-    const to = await resolveReportRecipients(settings);
+    const to = await resolveReportRecipients(settings, { volunteers: mailable, excludeEmails: scopedEmails });
     const { subject, html, text } = buildBirthdayReport(data);
     const pdf = birthdayPdf(data);
     results.admin = await queueMail({
@@ -504,34 +563,24 @@ async function runBirthdaySummary({ now = new Date(), force = false } = {}) {
     });
   }
 
-  // PHASE 44 — the per-volunteer copy the request is actually about: "send email
-  // on basis of there Assigned Mandal and Area contacts." One scoped email per
-  // karyakar, listing only the birthdays/anniversaries inside their own area and
-  // mandal. Costs no extra Firestore reads — buildBirthdayData already ran, and
-  // the slicing is in memory.
-  if (wantVolunteer && !nobody) {
-    const mailable = await loadMailableVolunteers();
-
-    const candidates = mailable
-      // view_assigned_contacts is the permission that makes somebody a scoped,
-      // contact-facing karyakar — precisely the audience whose "own" birthdays
-      // these are. An unrestricted volunteer (view_all_contacts) would receive
-      // the whole city twice, once here and once as the admin copy above; they
-      // ARE the admin audience.
-      .filter((v) => v.permissions.includes('view_assigned_contacts'))
-      .map((v) => ({
-        person: v,
-        scope: resolveScope({ volunteer: v, roles: v.roles, permissions: v.permissions }),
-      }))
-      .filter(({ scope }) => !scope.unrestricted && !scope.empty);
-
-    let sent = 0;
-    for (const { person, scope } of candidates) {
-      if (sent >= MAX_PER_VOLUNTEER_EMAILS) {
-        console.warn(`[birthday] per-volunteer cap of ${MAX_PER_VOLUNTEER_EMAILS} reached; ${candidates.length - sent} not mailed.`);
-        break;
-      }
-
+  // PHASE 44 / 48 — the per-volunteer copy, and the per-volunteer BELL, from the
+  // same slice. The request: "send email on basis of there Assigned Mandal and
+  // Area contacts." One email and/or one notification per karyakar, listing only
+  // the birthdays/anniversaries inside their own area and mandal. Costs no extra
+  // Firestore reads — buildBirthdayData already ran, the volunteer list was loaded
+  // once above, and the slicing is in memory.
+  //
+  // `scopedPeople` was resolved before the admin block so its members could be
+  // kept off the whole-city copy. view_assigned_contacts is the permission that
+  // makes somebody a scoped, contact-facing karyakar; an unrestricted volunteer
+  // (view_all_contacts) is filtered out there and stays the admin audience,
+  // receiving the combined copy instead.
+  if (wantScopedAudience) {
+    // The slice is computed once per person and then used by BOTH channels, so
+    // turning the bell on costs no additional filtering, reads or writes beyond
+    // the notification documents themselves.
+    const slices = [];
+    for (const { person, scope } of scopedPeople) {
       // matchesScope is the CONTACT predicate: a birthday is theirs when the
       // contact's area/mandal falls inside their assigned scope.
       //
@@ -545,30 +594,79 @@ async function runBirthdaySummary({ now = new Date(), force = false } = {}) {
       const birthdays = data.birthdays.filter((p) => matchesScope(scope, { area: p.area, mandal: p.mandal }) && inWing(p));
       const anniversaries = data.anniversaries.filter((p) => matchesScope(scope, { area: p.area, mandal: p.mandal }) && inWing(p));
       if (!birthdays.length && !anniversaries.length) continue; // nobody in their scope today
-
-      const slice = { ...data, birthdays, anniversaries };
-      const { subject, html, text } = buildBirthdayReport(slice, { forVolunteer: { id: person.id, name: person.name } });
-
-      /* eslint-disable no-await-in-loop */
-      const res = await queueMail({
-        to: [person.email],
-        subject,
-        html,
-        text,
-        // No per-volunteer PDF: the scoped list is short and the HTML carries it
-        // in full, keeping the mail doc small — same bargain as the daily and
-        // sabha-digest volunteer copies.
-        kind: 'birthday-volunteer',
-        meta: { date: data.dateKey, volunteerId: person.id, birthdays: birthdays.length, anniversaries: anniversaries.length },
-        settings,
-      });
-      /* eslint-enable no-await-in-loop */
-      results.volunteers.push({ volunteerId: person.id, ...res });
-      sent += 1;
+      slices.push({ person, birthdays, anniversaries });
     }
 
-    if (!results.volunteers.length) {
-      console.log('[birthday] no scoped volunteer had anyone to wish today.');
+    // ── In-app bell (PHASE 48) ────────────────────────────────────────────────
+    // One notification per karyakar, body naming the people they should wish. The
+    // per-recipient content rides writeNotifications' byUid override map, so the
+    // whole fan-out is still a single set of batches rather than N calls.
+    if (wantNotify && slices.length) {
+      const byUid = new Map();
+      for (const { person, birthdays, anniversaries } of slices) {
+        const names = [
+          ...birthdays.map((p) => `${p.name} (birthday)`),
+          ...anniversaries.map((p) => `${p.name} (anniversary)`),
+        ];
+        const shown = names.slice(0, BIRTHDAY_NAME_CAP).join(', ');
+        const more = names.length - Math.min(names.length, BIRTHDAY_NAME_CAP);
+        byUid.set(person.id, {
+          title: names.length === 1 ? 'One occasion today' : `${names.length} occasions today`,
+          body: `${shown}${more > 0 ? ` and ${more} more` : ''} — in your area and mandal today.`,
+          link: '/birthdays',
+          meta: { date: data.dateKey, birthdays: birthdays.length, anniversaries: anniversaries.length },
+        });
+      }
+      try {
+        results.notifications = await writeNotifications(
+          slices.map(({ person }) => ({ id: person.id })),
+          { type: NOTIFY_TYPES.BIRTHDAY, title: 'Occasions today', body: '', byUid },
+        );
+      } catch (err) {
+        // The bell is a courtesy; the emails below are the job. A notification
+        // failure must not cost the report.
+        console.error('[birthday] in-app notification fan-out failed:', err.message);
+      }
+    }
+
+    // ── Per-volunteer email (PHASE 44) ────────────────────────────────────────
+    if (wantVolunteer) {
+      let sent = 0;
+      for (const { person, birthdays, anniversaries } of slices) {
+        if (sent >= MAX_PER_VOLUNTEER_EMAILS) {
+          console.warn(`[birthday] per-volunteer cap of ${MAX_PER_VOLUNTEER_EMAILS} reached; ${slices.length - sent} not mailed.`);
+          break;
+        }
+        // The bell audience is wider than the mailable one (no reportEmail
+        // required), so skip anyone whose address is the synthetic login or
+        // missing — queueMail would silently drop them anyway, but skipping here
+        // keeps the "sent" count honest.
+        if (!isDeliverable(person.email)) continue;
+
+        const slice = { ...data, birthdays, anniversaries };
+        const { subject, html, text } = buildBirthdayReport(slice, { forVolunteer: { id: person.id, name: person.name } });
+
+        /* eslint-disable no-await-in-loop */
+        const res = await queueMail({
+          to: [person.email],
+          subject,
+          html,
+          text,
+          // No per-volunteer PDF: the scoped list is short and the HTML carries it
+          // in full, keeping the mail doc small — same bargain as the daily and
+          // sabha-digest volunteer copies.
+          kind: 'birthday-volunteer',
+          meta: { date: data.dateKey, volunteerId: person.id, birthdays: birthdays.length, anniversaries: anniversaries.length },
+          settings,
+        });
+        /* eslint-enable no-await-in-loop */
+        results.volunteers.push({ volunteerId: person.id, ...res });
+        sent += 1;
+      }
+
+      if (!results.volunteers.length) {
+        console.log('[birthday] no scoped volunteer had anyone to wish today.');
+      }
     }
   }
 

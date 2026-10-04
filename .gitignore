@@ -1,6 +1,11 @@
 # Dependencies
 node_modules/
 
+# Build output — Vercel rebuilds dist/ on every deploy, so the committed copy was
+# redundant churn (and tripped GitGuardian on the inlined Firebase web config key,
+# which is public by design). Untracked from here on; `npm run build` regenerates it.
+dist/
+
 # Environment variables
 .env
 

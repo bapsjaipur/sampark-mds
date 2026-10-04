@@ -23,6 +23,7 @@ const EXACT = {
   "/admin/dashboard": "Dashboard",
   "/admin/batches": "Batches",
   "/reminders": "Reminders",
+  "/notifications": "Notifications",
   "/admin/roles": "Roles",
   "/admin/volunteers": "Volunteers",
   "/admin/areas-mandals": "Areas & Mandals",

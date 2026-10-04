@@ -20,7 +20,7 @@
 import {
   Home, Users, CalendarDays, Bell, ListChecks, LayoutDashboard,
   ShieldCheck, UserCog, MapPin, Wrench, HeartHandshake, CalendarCheck,
-  PhoneCall, PhoneForwarded, GraduationCap,
+  PhoneCall, PhoneForwarded, GraduationCap, Inbox,
 } from 'lucide-react';
 import { classifyRole, ROLE_LABELS, ROLE_BADGE_CLASSES } from '../constants/roleTemplates';
 
@@ -153,6 +153,13 @@ const NAV = {
     to: '/reminders', label: 'Reminders', icon: Bell,
     anyOf: ['view_all_contacts', 'view_assigned_contacts', 'edit_contacts'],
   },
+  notifications: {
+    // PHASE 48 — the in-app bell inbox. Universal (anyOf: null): every signed-in
+    // volunteer has an inbox and may open it. Only SENDING bulk alerts is gated,
+    // and that gate lives inside the page (send_notifications), not here. Distinct
+    // Inbox icon because `reminders` already owns Bell.
+    to: '/notifications', label: 'Notifications', icon: Inbox, anyOf: null,
+  },
   batches: {
     to: '/admin/batches', label: 'Batches', icon: ListChecks,
     // Both permissions, because BatchesPage opens for either one: generate_batches
@@ -196,30 +203,30 @@ const NAV = {
 //            permission gate and appends a "Menu" button as the 5th slot.
 const LAYOUTS = {
   admin: {
-    main: ['contacts', 'households', 'events', 'balMandal', 'padhramani', 'reminders', 'myContacts', 'calling'],
+    main: ['contacts', 'households', 'events', 'balMandal', 'padhramani', 'reminders', 'myContacts', 'calling', 'notifications'],
     admin: ['dashboard', 'batches', 'volunteers', 'roles', 'areas', 'tools'],
     tabs: ['dashboard', 'contacts', 'households', 'batches'],
   },
   moderator: {
-    main: ['contacts', 'households', 'events', 'balMandal', 'padhramani', 'reminders', 'myContacts', 'calling'],
+    main: ['contacts', 'households', 'events', 'balMandal', 'padhramani', 'reminders', 'myContacts', 'calling', 'notifications'],
     admin: ['dashboard', 'batches', 'volunteers', 'areas', 'tools'],
     tabs: ['contacts', 'dashboard', 'batches', 'events'],
   },
   volunteer: {
     // A volunteer's job is the calling queue — it leads, and it is the landing page.
-    main: ['calling', 'myContacts', 'households', 'events', 'balMandal', 'reminders', 'contacts'],
+    main: ['calling', 'myContacts', 'households', 'events', 'balMandal', 'reminders', 'contacts', 'notifications'],
     // 'areas' shows only if the role was granted manage_areas_mandals (allowed()
     // gates it); a plain volunteer sees no Admin section at all.
     admin: ['areas'],
     tabs: ['calling', 'myContacts', 'households', 'events'],
   },
   santo: {
-    main: ['santoSchedule'],
+    main: ['santoSchedule', 'notifications'],
     admin: [],
     tabs: ['santoSchedule'],
   },
   none: {
-    main: ['households'],
+    main: ['households', 'notifications'],
     // Same as volunteer: a role holding only manage_areas_mandals lands here and
     // reaches the taxonomy screen; allowed() hides it for everyone else.
     admin: ['areas'],
