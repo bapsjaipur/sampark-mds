@@ -13,6 +13,16 @@
        washed the warmth back out, and on iOS Safari the area behind the rubber-band
        overscroll stayed white. See tailwind.config.js for the palette. */
     @apply bg-cream-100 text-slate-900 antialiased tracking-tight;
+    /* PHASE 49 — nothing should scroll the PAGE sideways on a phone. A single
+       stray wide element — a long unbroken phone number or URL, a flex row that
+       won't shrink, a table that forgot its scroll wrapper — used to make the
+       whole canvas pannable, which is exactly the "pinch-zoom shows it wider than
+       the screen" the tabs had. `overflow-x: clip` contains that WITHOUT creating
+       a scroll container, so every `position: sticky` header/footer keeps working
+       (plain `overflow-x: hidden` would have broken them). Genuinely wide content
+       — the admin tables — still scrolls inside its own `overflow-x-auto` box,
+       untouched. Degrades to today's behaviour on browsers without `clip`. */
+    overflow-x: clip;
   }
 }
 

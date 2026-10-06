@@ -225,6 +225,15 @@ const LAYOUTS = {
     admin: [],
     tabs: ['santoSchedule'],
   },
+  // Attendance Mantri — their whole job is marking who came. Events (to mark) and
+  // Notifications only; no contacts, dashboard or admin tools, even though
+  // view_all_contacts (needed to see the full roster) would otherwise reveal them.
+  // RequireRoute reads this same list, so those URLs are refused too, not just hidden.
+  attendance: {
+    main: ['events', 'notifications'],
+    admin: [],
+    tabs: ['events'],
+  },
   none: {
     main: ['households', 'notifications'],
     // Same as volunteer: a role holding only manage_areas_mandals lands here and
@@ -237,6 +246,7 @@ const LAYOUTS = {
 const HOME_PATHS = {
   admin: '/admin/dashboard',
   moderator: '/contacts',
+  attendance: '/events',
   volunteer: '/calling',
   santo: '/santo-schedule',
   none: '/households',

@@ -66,6 +66,15 @@ export const PERMISSIONS = {
   // Mark attendance at a sabha without being able to create or delete events.
   // The person on the door is rarely the person who runs the calendar.
   MANAGE_ATTENDANCE: 'manage_attendance',
+  // Phase 49 — widen the ATTENDANCE roster to every contact, in any area or
+  // mandal. By default the attendance screen shows only the marker's own scoped
+  // contacts; tick this and they can mark anyone present at any sabha. It widens
+  // the roster ONLY — it does not change which contacts they may edit, and grants
+  // no admin access (unlike view_all_contacts). Pair with manage_attendance. This
+  // is the core of the Attendance Mantri role, but it can be ticked onto ANY role
+  // that must take attendance city-wide. Honoured by EventsPage (the roster read)
+  // and accepted by canReadIndividual in firestore.rules.
+  ATTENDANCE_ALL_CONTACTS: 'attendance_all_contacts',
   // Bulk import of contacts / historical attendance. Distinct from
   // EDIT_CONTACTS: one bad CSV touches thousands of rows at once.
   IMPORT_DATA: 'import_data',
@@ -120,6 +129,7 @@ export const PERMISSION_LABELS = {
   [PERMISSIONS.MANAGE_AREAS_MANDALS]: 'Manage Areas & Mandals',
   [PERMISSIONS.GENERATE_BATCHES]: 'Generate Batches (cut new batches)',
   [PERMISSIONS.MANAGE_ATTENDANCE]: 'Mark Sabha Attendance',
+  [PERMISSIONS.ATTENDANCE_ALL_CONTACTS]: 'Attendance: All Areas & Mandals',
   [PERMISSIONS.IMPORT_DATA]: 'Import Contacts & History (CSV)',
   [PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS]: 'Manage Volunteers In My Area/Mandal',
   [PERMISSIONS.SEND_NOTIFICATIONS]: 'Send Bulk Notifications',
@@ -150,6 +160,7 @@ export const PERMISSION_SHORT_LABELS = {
   [PERMISSIONS.MANAGE_AREAS_MANDALS]: 'Areas & Mandals',
   [PERMISSIONS.GENERATE_BATCHES]: 'Generate',
   [PERMISSIONS.MANAGE_ATTENDANCE]: 'Attendance',
+  [PERMISSIONS.ATTENDANCE_ALL_CONTACTS]: 'Attendance: All',
   [PERMISSIONS.IMPORT_DATA]: 'Import',
   [PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS]: 'Scoped Users',
   [PERMISSIONS.SEND_NOTIFICATIONS]: 'Notify',
@@ -170,7 +181,8 @@ export const PERMISSION_GROUPS = [
   { label: 'Calling & Events', permissions: [
     PERMISSIONS.SAVE_CALL_OUTCOMES,
     PERMISSIONS.GENERATE_BATCHES, PERMISSIONS.ASSIGN_BATCHES,
-    PERMISSIONS.MANAGE_EVENTS, PERMISSIONS.MANAGE_ATTENDANCE, PERMISSIONS.VIEW_PADHRAMANI,
+    PERMISSIONS.MANAGE_EVENTS, PERMISSIONS.MANAGE_ATTENDANCE, PERMISSIONS.ATTENDANCE_ALL_CONTACTS,
+    PERMISSIONS.VIEW_PADHRAMANI,
   ] },
   { label: 'Administration', permissions: [
     PERMISSIONS.MANAGE_USERS, PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS, PERMISSIONS.MANAGE_ROLES,
@@ -202,6 +214,7 @@ export const PERMISSION_HELP = {
   [PERMISSIONS.ASSIGN_BATCHES]: 'Hand an existing batch to a volunteer, or take it back. Safe day-to-day Moderator work.',
   [PERMISSIONS.MANAGE_EVENTS]: 'Create, edit and delete sabhas in the calendar.',
   [PERMISSIONS.MANAGE_ATTENDANCE]: 'Mark who attended a sabha, without being able to change the calendar itself.',
+  [PERMISSIONS.ATTENDANCE_ALL_CONTACTS]: 'Shows EVERY contact on the attendance screen — any area, any mandal — so this role can mark anyone present, not just their own area. Pair it with Mark Sabha Attendance. It widens the attendance roster only: it does not change which contacts they can edit, and grants no admin access. This is what makes an "Attendance Mantri", but you can tick it onto any role that must take attendance city-wide.',
   [PERMISSIONS.VIEW_PADHRAMANI]: 'See their own Padhramani schedule only. Intended for Santo accounts.',
   [PERMISSIONS.MANAGE_USERS]: 'Create volunteer logins and change anyone’s role — including their own. Effectively full control.',
   [PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS]: 'Edit volunteers inside their own area/mandal only. Cannot create logins or change roles.',
@@ -251,6 +264,11 @@ export const PRESET_EXCLUDED_PERMISSIONS = [
   ...VISIBILITY_HIDE_PERMISSIONS,
   PERMISSIONS.SAVE_CALL_OUTCOMES,
   PERMISSIONS.MANAGE_AREAS_MANDALS,
+  // attendance_all_contacts is redundant for Admin (view_all_contacts already
+  // shows every contact on the attendance screen), so keep it out of the Admin
+  // preset for the same reason as the two above — including it would enlarge the
+  // preset set and break detectRoleKey's exact match against saved Admin docs.
+  PERMISSIONS.ATTENDANCE_ALL_CONTACTS,
 ];
 
 export const ALL_PERMISSIONS = Object.values(PERMISSIONS);

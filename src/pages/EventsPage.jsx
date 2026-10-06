@@ -118,12 +118,17 @@ export default function EventsPage() {
   const [view, setView] = useState('calendar');
   const [listQuery, setListQuery] = useState('');
   const [listMandal, setListMandal] = useState('');
+  const { volunteer, permissions, scope } = useAuth();
   // Scoped for a karyakarta, complete for an admin — and shared with the Contacts
-  // page either way, so opening this tab after that one costs nothing.
-  const { contacts: individuals, isViewAll } = useAllContacts();
+  // page either way, so opening this tab after that one costs nothing. A role with
+  // attendance_all_contacts reads the FULL roster here (any area/mandal) so it can
+  // mark anyone present at any sabha; the widening is read-only (useAllContacts
+  // forceAll), so edit scoping is unchanged.
+  const { contacts: individuals, isViewAll } = useAllContacts({
+    forceAll: permissions.includes('attendance_all_contacts'),
+  });
   const { volunteers } = useVolunteers();
   const { areas: areaDefs, mandals: mandalDefs } = useAreasAndMandals();
-  const { volunteer, permissions, scope } = useAuth();
   const { showToast } = useToast();
 
   const canSeeDashboard = permissions.includes('view_all_contacts') || permissions.includes('manage_events');

@@ -132,19 +132,30 @@ export function buildIndividualSpecs(scope, { limitCount = null } = {}) {
 }
 
 /**
- * @param {{ pageSize?: number }} [opts] — pass a pageSize (e.g. 20) to paginate
- *   the unrestricted list via a growing-limit listener. A SCOPED list ignores it:
- *   its query has no orderBy (see the header), so a limit would return an
- *   arbitrary slice, and the scoped set is small enough to load whole anyway.
+ * @param {{ pageSize?: number, forceAll?: boolean }} [opts] — pass a pageSize
+ *   (e.g. 20) to paginate the unrestricted list via a growing-limit listener. A
+ *   SCOPED list ignores it: its query has no orderBy (see the header), so a limit
+ *   would return an arbitrary slice, and the scoped set is small enough to load
+ *   whole anyway. Pass `forceAll` to widen the READ to every contact regardless of
+ *   the caller's own scope — the attendance roster uses it for a role holding
+ *   attendance_all_contacts. It widens reads only; the stored scope is untouched,
+ *   so write/edit scoping in firestore.rules is unchanged and the UI can never
+ *   offer an edit the server would refuse.
  */
-export function useAllContacts({ pageSize } = {}) {
+export function useAllContacts({ pageSize, forceAll = false } = {}) {
   const [contacts, setContacts] = useState([]);
   const [limitCount, setLimitCount] = useState(pageSize || null);
   // True counts fetched from the server (not limited to the loaded page).
   const [serverTotal, setServerTotal] = useState(null);
   const [serverUngrouped, setServerUngrouped] = useState(null);
   const { showToast } = useToast();
-  const { volunteer, scope } = useAuth();
+  const { volunteer, scope: authScope } = useAuth();
+  // forceAll reads everyone for the attendance roster without widening the
+  // caller's actual scope (edits stay scoped). A caller already unrestricted is
+  // left untouched.
+  const scope = forceAll && !authScope.unrestricted
+    ? { ...authScope, kind: SCOPE_KINDS.GLOBAL, unrestricted: true, empty: false }
+    : authScope;
 
   // view_all_contacts already resolves to an unrestricted scope (see
   // resolveScope), so the shape is the only thing worth asking about here.

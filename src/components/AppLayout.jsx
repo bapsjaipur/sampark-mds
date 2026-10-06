@@ -28,10 +28,14 @@ import { Avatar } from './ui/Avatar';
 import NotificationBell from './NotificationBell';
 import { cn } from '../lib/cn';
 
-// Screens that take over the whole viewport on mobile and manage their own
-// bottom action bar. Showing the tab bar here would stack two fixed bars on top
-// of each other and cover the primary action.
-const IMMERSIVE_MOBILE_ROUTES = ['/calling'];
+// PHASE 49 — My Calling used to be fully immersive on mobile: no top bar AND no
+// bottom tab bar, so a volunteer who opened their calling queue could not switch
+// to any other tab or get back — the browser's own back gesture was the only way
+// out. It now keeps the bottom TAB BAR (the app's mobile nav should always be one
+// tap away) and hides only the TOP bar, which the calling screen replaces with its
+// own calling header. CallingFlowPage insets itself by the tab-bar height so the
+// two never overlap.
+const HIDE_MOBILE_TOPBAR_ROUTES = ['/calling'];
 
 export function RequireAuth() {
   const { authUser, loading } = useAuth();
@@ -131,7 +135,7 @@ function SidebarContent({ collapsed, onNavigate, roleView, showBell = false }) {
 // comfortably above the 44px minimum.
 function BottomTabBar({ roleView, onOpenMenu }) {
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-slate-200 bg-white shadow-[0_-1px_6px_rgba(15,23,42,0.05)] pb-[env(safe-area-inset-bottom)] md:hidden">
       {roleView.mobileTabs.map((item) => (
         <NavLink
           key={item.to}
@@ -175,12 +179,14 @@ export default function AppLayout() {
   const location = useLocation();
   useEffect(() => setMobileOpen(false), [location.pathname]);
 
-  const immersive = IMMERSIVE_MOBILE_ROUTES.includes(location.pathname);
+  // My Calling keeps the bottom tab bar but hides the top bar (its own calling
+  // header stands in), so the app's nav is always one tap away on a phone.
+  const hideTopBar = HIDE_MOBILE_TOPBAR_ROUTES.includes(location.pathname);
 
   return (
     <div className="min-h-screen bg-cream-100">
-      {/* Mobile top bar — hidden on immersive screens, which supply their own header */}
-      {!immersive && (
+      {/* Mobile top bar — hidden on screens with their own header (My Calling) */}
+      {!hideTopBar && (
         <div className="sticky top-0 z-30 flex items-center gap-3 border-b border-slate-100 bg-white px-4 py-2.5 md:hidden">
           <button onClick={() => setMobileOpen(true)} aria-label="Open menu" className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100">
             <Menu className="h-5 w-5" />
@@ -222,7 +228,7 @@ export default function AppLayout() {
       {/* Main content — offset to clear the fixed desktop sidebar. The bottom
           padding clears the mobile tab bar; without it the last row of any list
           sits permanently underneath it and can't be tapped. */}
-      <main className={cn('min-w-0 transition-all', collapsed ? 'md:pl-16' : 'md:pl-56', !immersive && 'pb-14 md:pb-0')}>
+      <main className={cn('min-w-0 transition-all', collapsed ? 'md:pl-16' : 'md:pl-56', !hideTopBar && 'pb-14 md:pb-0')}>
         {/* PHASE 43 — the boundary for React.lazy() route chunks. It sits INSIDE
             the shell (sidebar + tab bar already rendered above/below), so a page
             arriving on its own chunk shows this line rather than blanking the
@@ -232,7 +238,7 @@ export default function AppLayout() {
         </Suspense>
       </main>
 
-      {!immersive && <BottomTabBar roleView={roleView} onOpenMenu={() => setMobileOpen(true)} />}
+      <BottomTabBar roleView={roleView} onOpenMenu={() => setMobileOpen(true)} />
     </div>
   );
 }
