@@ -26,18 +26,20 @@ import { useEffect, useMemo, useState } from 'react';
 import { collection, addDoc, deleteDoc, doc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where, writeBatch } from 'firebase/firestore';
 import {
   Sparkles, Trash2, AlertTriangle, ShieldAlert, Check, Pencil, X,
-  ChevronRight, Users, Eye, GitMerge, ArrowRight, Loader2, Info, RefreshCw,
+  ChevronRight, Users, Eye, GitMerge, ArrowRight, Loader2, Info, RefreshCw, Layers,
 } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { RequirePermission } from '../components/RequirePermission';
 import { usePermissions } from '../hooks/usePermissions';
 import { useVolunteers } from '../hooks/useVolunteers';
+import { useAreasAndMandals } from '../hooks/useAreasAndMandals';
 import {
   ALL_PERMISSIONS, PERMISSION_LABELS, PERMISSION_GROUPS, PERMISSION_HELP,
   DANGEROUS_PERMISSIONS, PERMISSIONS, isLegacyRole, expandLegacyPermissions,
 } from '../constants/permissions';
 import {
   ROLE_PRESETS, detectRoleKey, ROLE_LABELS, ROLE_BADGE_CLASSES, getPreset, DEFAULT_ROLE_RANK,
+  MANDAL_HIERARCHY_PRESET_KEYS, mandalShortCode, mandalRoleName,
 } from '../constants/roleTemplates';
 import { SCOPE_KINDS, SCOPE_KIND_META, ALL_SCOPE_KINDS, statedScopeKind, inferScopeKind, roleStatedScopeKind } from '../lib/scope';
 import { Input, Select, Label } from '../components/ui/Input';
@@ -876,7 +878,10 @@ function RolesManagerInner() {
   const [selectedId, setSelectedId] = useState(null);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
+  // "Create a Mandal's hierarchy" — the Mandal whose four roles to stamp out.
+  const [cloneMandal, setCloneMandal] = useState('');
   const { hasPermission } = usePermissions();
+  const { mandals } = useAreasAndMandals();
   const canManageUsers = hasPermission(PERMISSIONS.MANAGE_USERS);
 
   useEffect(() => {
@@ -1236,6 +1241,53 @@ function RolesManagerInner() {
     }
   }
 
+  // Stamp out one Mandal's full hierarchy — the four template roles, renamed with
+  // the Mandal's short code ("Nirdeshak (YM)" …). Each is a straight copy of its
+  // preset (permissions, scope, rank); only the name changes, which is exactly the
+  // "copy-paste the hierarchy and rename per Mandal" the roster is built from. Roles
+  // that already exist by that name are skipped, so it is safe to re-run and to run
+  // for a Mandal that is only half set up.
+  async function cloneHierarchyForMandal() {
+    const picked = mandals.find((m) => m.name === cloneMandal) || cloneMandal;
+    const code = mandalShortCode(picked);
+    if (!code) { setError('That Mandal has no short code — add one on the Areas & Mandals screen first.'); return; }
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      const existing = new Set(roles.map((r) => String(r.name || '').trim().toLowerCase()));
+      const planned = MANDAL_HIERARCHY_PRESET_KEYS
+        .map((key) => ({ preset: getPreset(key), name: mandalRoleName(key, code) }))
+        .filter(({ preset, name }) => preset && !existing.has(name.toLowerCase()));
+      if (!planned.length) {
+        setNotice(`All four ${code} roles already exist — nothing to create.`);
+        return;
+      }
+      const batch = writeBatch(db);
+      for (const { preset, name } of planned) {
+        batch.set(doc(collection(db, 'roles')), {
+          name,
+          permissions: [...preset.permissions],
+          // null, not the preset key: these are named copies, so detectRoleKey
+          // still labels them from their permissions while the base presets stay
+          // independent (the "standard roles missing" banner is unaffected).
+          presetKey: null,
+          scopeKind: preset.scopeKind,
+          scopeKindChosen: true,
+          permissionsMaterialized: true,
+          rank: preset.rank,
+          createdAt: serverTimestamp(),
+        });
+      }
+      await batch.commit();
+      const label = (typeof picked === 'object' ? picked.name : picked) || code;
+      setNotice(`Created ${planned.length} role(s) for ${label}: ${planned.map((p) => p.name).join(', ')}.`);
+      setCloneMandal('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function applyPreset(role, presetKey) {
     const preset = getPreset(presetKey);
     if (!preset) return;
@@ -1564,6 +1616,39 @@ function RolesManagerInner() {
       )}
 
       <HierarchyStrip roles={roles} selectedId={selectedId} onSelect={setSelectedId} />
+
+      {/* Create a Mandal's hierarchy — the four template roles, one wing at a time */}
+      <div className="mb-4 rounded-xl border border-orange-100 bg-orange-50/50 p-4">
+        <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
+          <Layers className="h-4 w-4 text-orange-500" /> Create a Mandal’s hierarchy
+        </p>
+        <p className="mt-0.5 text-xs text-slate-500">
+          Stamps out the four standard roles — <strong>Nirdeshak → Nirekshak → Sanchalak → Sampark Karyakar</strong> —
+          as copies renamed for one Mandal using its short code, e.g. “Nirdeshak (YM)”. Run it once per Mandal
+          (Yuvak, Bal, Sanyukt…). Each copy keeps the preset’s permissions and scope — only the name changes.
+        </p>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+          <Select value={cloneMandal} onChange={(e) => setCloneMandal(e.target.value)} className="min-w-0 flex-1">
+            <option value="">Choose a Mandal…</option>
+            {mandals.map((m) => (
+              <option key={m.id || m.name} value={m.name}>{m.name}{m.code ? ` (${m.code})` : ''}</option>
+            ))}
+          </Select>
+          <Button variant="accent" onClick={cloneHierarchyForMandal} disabled={!cloneMandal || busy}>
+            <Layers className="h-4 w-4" /> Create 4 roles
+          </Button>
+        </div>
+        {cloneMandal && (
+          <p className="mt-2 text-[11px] text-slate-500">
+            Will create:{' '}
+            <span className="font-medium text-slate-600">
+              {MANDAL_HIERARCHY_PRESET_KEYS
+                .map((k) => mandalRoleName(k, mandalShortCode(mandals.find((m) => m.name === cloneMandal) || cloneMandal)))
+                .join(', ')}
+            </span>
+          </p>
+        )}
+      </div>
 
       {/* Create a role */}
       <div className="mb-6 flex flex-col gap-2 sm:flex-row">

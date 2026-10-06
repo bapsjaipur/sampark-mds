@@ -60,6 +60,9 @@ export default function AttendanceMarking({ event, individuals = [], present = [
   // person is standing there to confirm it.
   const [editTarget, setEditTarget] = useState(null);
   const [windowState, setWindowState] = useState(() => getWindowState(event));
+  // Walk-ins added right here, kept in local state so they appear as present the
+  // instant the writes resolve — see the reconcile effect and handleWalkIn below.
+  const [walkIns, setWalkIns] = useState([]); // [{ id, name, mandal, area, profilePhotoURL, marked }]
 
   useEffect(() => {
     setWindowState(getWindowState(event));
@@ -83,6 +86,35 @@ export default function AttendanceMarking({ event, individuals = [], present = [
     [present, byId],
   );
 
+  // ── Walk-ins, shown optimistically ──────────────────────────────────────────
+  // The create and the mark are two writes that reach this screen only after two
+  // SEPARATE live listeners up in EventsPage (contacts + attendance) round-trip
+  // and converge — and presentPeople above drops any row whose contact hasn't
+  // loaded yet. On a sabha-hall connection that gap (or a dropped mark write) is
+  // exactly what made a just-added person look unmarked and sent the karyekar
+  // back to the search box. Holding them in local state shows them the instant
+  // the writes resolve; each clears once the real listeners catch up (the person
+  // is present AND loaded as a contact). Reset per event so a previous sabha's
+  // walk-ins don't bleed into the next one.
+  useEffect(() => { setWalkIns([]); }, [event?.id]);
+
+  useEffect(() => {
+    setWalkIns((cur) => {
+      if (!cur.length) return cur;
+      const next = cur.filter((w) => !(presentIds.has(w.id) && byId.has(w.id)));
+      return next.length === cur.length ? cur : next; // same ref when nothing converged → no loop
+    });
+  }, [presentIds, byId]);
+
+  const pendingWalkIns = useMemo(
+    () => walkIns.filter((w) => !(presentIds.has(w.id) && byId.has(w.id))),
+    [walkIns, presentIds, byId],
+  );
+
+  // Confirmed rows plus the optimistic walk-ins already marked — so the headline
+  // count never dips in the second between the save and the listener echo.
+  const markedCount = presentPeople.length + pendingWalkIns.filter((w) => w.marked).length;
+
   const searchResults = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return [];
@@ -102,31 +134,50 @@ export default function AttendanceMarking({ event, individuals = [], present = [
       ? { text: 'Attendance window is off in Admin settings — marking is open at any time.', tone: 'bg-sky-50 text-sky-700 border-sky-100' }
       : null);
 
+  // Marking can drop on a flaky sabha-hall connection; one quiet retry turns most
+  // of those into a success instead of a failure the karyekar has to notice and
+  // redo. markPresent is idempotent (deterministic doc id), so a retry is safe.
+  async function markWithRetry(individualId, attempts = 2) {
+    for (let i = 0; i < attempts; i += 1) {
+      try {
+        await markPresent({ eventId: event.id, individualId, markedBy: volunteer?.id });
+        return true;
+      } catch (err) {
+        if (i === attempts - 1) return false;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+    return false;
+  }
+
   async function handleMark(individual) {
-    try {
-      await markPresent({ eventId: event.id, individualId: individual.id, markedBy: volunteer?.id });
+    if (await markWithRetry(individual.id)) {
       showToast({ type: 'success', message: `${individual.name} marked present.` });
       setSearch('');
-    } catch (err) {
-      showToast({ type: 'error', message: 'Couldn’t mark attendance. Try again.' });
+    } else {
+      showToast({ type: 'error', message: 'Couldn’t mark attendance — check your connection and try again.' });
     }
   }
 
   async function handleUnmark(individual) {
     try {
       await unmarkPresent({ eventId: event.id, individualId: individual.id });
+      setWalkIns((cur) => cur.filter((w) => w.id !== individual.id));
     } catch (err) {
       showToast({ type: 'error', message: 'Couldn’t undo. Try again.' });
     }
   }
 
   /**
-   * Create-and-mark. The two writes are deliberately sequential and not a batch:
-   * `individuals` create needs edit_contacts and `attendance` create needs
-   * edit_contacts too, but a batch that fails halfway would roll back the
-   * contact as well — and a contact that exists without the attendance row is a
-   * far better failure than losing the person's details entirely. If the mark
-   * fails the toast says so and the karyekar can tap them in the list.
+   * Create-and-mark, the walk-in path. The two writes are deliberately sequential
+   * and not a batch: a batch that failed halfway would roll back the contact too,
+   * and a contact without its attendance row is a far better failure than losing
+   * the person's details. The new contact is shown as present IMMEDIATELY from
+   * local state (setWalkIns), so it no longer depends on the contacts/attendance
+   * listeners having converged — which is what used to make a just-added person
+   * look unmarked and send the karyekar back to the search box. If the mark write
+   * itself fails, the row stays with a one-tap "Mark present", so recovery never
+   * needs a search either.
    */
   async function handleWalkIn(payload) {
     const newId = await createStandaloneContact({ data: payload, volunteerId: volunteer?.id });
@@ -134,16 +185,39 @@ export default function AttendanceMarking({ event, individuals = [], present = [
       showToast({ type: 'error', message: 'Couldn’t save the new contact. Nothing was marked.' });
       return false;
     }
-    try {
-      await markPresent({ eventId: event.id, individualId: newId, markedBy: volunteer?.id });
+    setWalkIns((cur) => [
+      {
+        id: newId,
+        name: payload.name,
+        mandal: payload.mandal || null,
+        area: payload.area || null,
+        profilePhotoURL: payload.profilePhotoURL || null,
+        marked: true,
+      },
+      ...cur.filter((w) => w.id !== newId),
+    ]);
+
+    if (await markWithRetry(newId)) {
       showToast({ type: 'success', message: `${payload.name} added and marked present.` });
-    } catch (err) {
+    } else {
+      setWalkIns((cur) => cur.map((w) => (w.id === newId ? { ...w, marked: false } : w)));
       showToast({
         type: 'error',
-        message: `${payload.name} was saved as a contact, but marking them present failed. Search for them below.`,
+        message: `${payload.name} was saved. Marking them present didn’t go through — tap “Mark present” on their row to retry.`,
       });
     }
     return true;
+  }
+
+  // Retry the mark for a walk-in whose attendance write failed — one tap, no
+  // search, using the id we already hold.
+  async function handleRemarkWalkIn(w) {
+    if (await markWithRetry(w.id)) {
+      setWalkIns((cur) => cur.map((x) => (x.id === w.id ? { ...x, marked: true } : x)));
+      showToast({ type: 'success', message: `${w.name} marked present.` });
+    } else {
+      showToast({ type: 'error', message: 'Still couldn’t mark — check your connection and try again.' });
+    }
   }
 
   /**
@@ -168,7 +242,7 @@ export default function AttendanceMarking({ event, individuals = [], present = [
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-sm text-emerald-700">
-          <CheckCircle2 className="h-4 w-4" /> <strong>{presentPeople.length}</strong> marked present
+          <CheckCircle2 className="h-4 w-4" /> <strong>{markedCount}</strong> marked present
         </div>
         {presentPeople.length !== present.length && (
           <span className="text-[11px] text-slate-400">
@@ -266,12 +340,41 @@ export default function AttendanceMarking({ event, individuals = [], present = [
       {/* ── Present list ──────────────────────────────────────────────────── */}
       <div>
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-          Present ({presentPeople.length})
+          Present ({markedCount})
         </p>
-        {presentPeople.length === 0 ? (
+        {markedCount === 0 && pendingWalkIns.length === 0 ? (
           <p className="rounded-lg border border-dashed border-slate-200 py-8 text-center text-sm text-slate-400">No one marked yet.</p>
         ) : (
           <div className="space-y-1.5">
+            {/* Just-added walk-ins, straight from local state so a new contact
+                never looks unmarked while the listeners catch up. A row whose mark
+                write dropped carries a one-tap retry — no search needed. */}
+            {pendingWalkIns.map((w) => (
+              <div
+                key={`walkin-${w.id}`}
+                className={cn(
+                  'flex items-center justify-between gap-2 rounded-lg border px-2.5 py-2 sm:px-3',
+                  w.marked ? 'border-emerald-100 bg-emerald-50/40' : 'border-amber-200 bg-amber-50',
+                )}
+              >
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <Avatar src={w.profilePhotoURL} name={w.name} size="sm" />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-slate-900">{w.name}</p>
+                    <p className="truncate text-xs text-slate-400">
+                      {[w.mandal, w.area].filter(Boolean).join(' · ') || 'Just added'}
+                    </p>
+                  </div>
+                </div>
+                {w.marked ? (
+                  <span className="shrink-0 text-xs font-medium text-emerald-600">Present</span>
+                ) : (
+                  <Button variant="accent" size="sm" onClick={() => handleRemarkWalkIn(w)} className="shrink-0">
+                    Mark present
+                  </Button>
+                )}
+              </div>
+            ))}
             {presentPeople.map(({ person }) => {
               const sevak = identify(person);
               return (

@@ -441,7 +441,9 @@ service cloud.firestore {
     // anything outside their territory.
     function canReadIndividual() {
       let c = ctx();
-      return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts', 'edit_contacts']);
+      // attendance_all_contacts is accepted so an attendance-only role with no
+      // other read permission can still load the full roster to mark attendance.
+      return c.perms.hasAny(['view_all_contacts', 'view_assigned_contacts', 'edit_contacts', 'attendance_all_contacts']);
     }
 
     // create / update. `import_data` is accepted alongside `edit_contacts`

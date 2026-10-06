@@ -485,7 +485,12 @@ export default function CallingFlowPage() {
   }
 
   return (
-    <div className="mx-auto flex min-h-[100dvh] max-w-lg flex-col bg-white md:min-h-0 md:py-6">
+    // PHASE 49 — the mobile bottom TAB BAR now stays visible on this screen (so a
+    // karyakarta can switch tabs without the browser back gesture). The page
+    // therefore insets itself by the tab-bar height (h-14 = 3.5rem) plus the
+    // device safe-area, so its own sticky action footer sits just ABOVE the tab
+    // bar instead of behind it. Desktop is unchanged (md:min-h-0).
+    <div className="mx-auto flex min-h-[calc(100dvh_-_3.5rem_-_env(safe-area-inset-bottom))] max-w-lg flex-col bg-white md:min-h-0 md:py-6">
       {/* ── Sticky header ────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-20 shrink-0 border-b border-slate-100 bg-white/95 backdrop-blur">
         <div className="flex items-center gap-2 px-3 pt-2.5">
