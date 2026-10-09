@@ -54,6 +54,11 @@ export const DEFAULT_EMAIL_SETTINGS = {
   // contacts in that karyakar's assigned area/mandal. Off by default; switch on
   // once mandal heads have a reportEmail, like the other per-volunteer fan-outs.
   autoBirthdayVolunteerEnabled: false,
+  // PHASE 50 — the Santo copy of the birthday/anniversary list, narrowed to the
+  // KARYEKARS in the mandal(s) ticked on a Santo's record, sent to their
+  // reportEmail at ~5 AM IST. Off by default and inert until a Santo has both a
+  // reportEmail and mandal(s). Mirrored functions-side in functions/lib/mailer.js.
+  autoSantoVolunteerBirthdayEnabled: false,
   // Phase 33 — weekly sabha coverage digest, Monday morning. Reports on
   // COMPLETED weeks only: which area's sabha happened, which didn't, and who has
   // now missed two in a row.

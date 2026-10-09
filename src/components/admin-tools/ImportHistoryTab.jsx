@@ -242,7 +242,7 @@ export default function ImportHistoryTab() {
     setBusy(true);
     try {
       const a = await analyzeHistoryImport({
-        rows, mapping, dateColumns: includedCols, presentTokens: tokens, matchByName,
+        rows, mapping, dateColumns: includedCols, presentTokens: tokens, matchByName, defaults,
       });
       setAnalysis(a);
       setStep(3);
@@ -537,11 +537,20 @@ export default function ImportHistoryTab() {
             <p className="mb-3 text-xs text-slate-400">
               Used for the events, and for any contact whose row has no Area/Mandal of its own.
             </p>
+            <p className="mb-3 flex items-start gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                <span className="font-semibold">Pick the Mandal before importing.</span> Each Mandal’s sabhas are
+                kept separate even when they fall on the same date — so this sheet’s attendance only ever lands on
+                this Mandal’s events, never on another Mandal’s. Import one Mandal’s sheet at a time with its Mandal
+                set here.
+              </span>
+            </p>
             <div className="grid gap-3 sm:grid-cols-3">
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600">Mandal</label>
                 <Select value={defaults.mandal} onChange={(e) => setDefaults((d) => ({ ...d, mandal: e.target.value }))}>
-                  <option value="">— all mandals —</option>
+                  <option value="">— none (untagged) —</option>
                   {mandals.map((m) => <option key={m.id || m.name} value={m.name}>{m.name}</option>)}
                 </Select>
               </div>
@@ -620,7 +629,30 @@ export default function ImportHistoryTab() {
             </p>
           </Card>
 
-          {analysis.stats.matchedByName > 0 && (
+          {/* Mandal separation — the merge bug made visible before you commit. */}
+          {analysis.stats.sameDateOtherMandal > 0 && analysis.stats.targetMandal && (
+            <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>
+                {analysis.stats.sameDateOtherMandal} of these dates already have a sabha from another Mandal.
+                They will be created as <strong>separate {analysis.stats.targetMandal} events</strong> — this sheet’s
+                attendance stays on {analysis.stats.targetMandal}, never merged onto another Mandal’s sabha.
+              </p>
+            </div>
+          )}
+
+          {analysis.stats.sameDateOtherMandal > 0 && !analysis.stats.targetMandal && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>
+                <strong>No Mandal is set</strong>, and {analysis.stats.sameDateOtherMandal} of these dates already
+                have another Mandal’s sabha. Your events won’t merge into them, but they’ll be created
+                <strong> untagged</strong>. Go back and pick the Mandal (e.g. Sanyukt Mandal) so this sheet’s sabhas
+                are clearly its own.
+              </p>
+            </div>
+          )}
+
             <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <p>

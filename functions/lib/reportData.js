@@ -519,6 +519,10 @@ async function buildBirthdayData({ now = new Date(), templates = {} } = {}) {
       // the email thumbnail — free, the document is already in hand.
       householdId: i.householdId || null,
       profilePhotoURL: i.profilePhotoURL || '',
+      // Phase 50: the reverse volunteer link, so the Santo volunteer-birthday
+      // report can keep the list to karyekars only (contacts a login is attached
+      // to). Costs nothing — already on the document in hand.
+      volunteerId: i.volunteerId || null,
       age,
       waUrl: buildWhatsAppUrl({ mobile: i.mobile, template: bTemplate, contact: i, extra: { age } }),
     };
@@ -536,6 +540,8 @@ async function buildBirthdayData({ now = new Date(), templates = {} } = {}) {
       area: i.area || '',
       householdId: i.householdId || null,
       profilePhotoURL: i.profilePhotoURL || '',
+      // Phase 50: see the birthday block above — carried for the Santo report.
+      volunteerId: i.volunteerId || null,
       years,
       waUrl: buildWhatsAppUrl({ mobile: i.mobile, template: aTemplate, contact: i, extra: { years } }),
     };

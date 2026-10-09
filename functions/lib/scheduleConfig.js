@@ -45,6 +45,10 @@ const DEFAULT_SCHEDULES = {
   daily: '5 22 * * *',        // scheduledDailyReport — 22:05 IST
   postSabha: '*/30 * * * *',  // scheduledPostSabhaReports — every 30 minutes
   birthday: '10 6 * * *',     // scheduledBirthdaySummary — 06:10 IST
+  // PHASE 50 — the Santo volunteer-birthday report (functions/santoReports.js).
+  // Each Santo gets, at ~5 AM IST, the day's birthdays/anniversaries of the
+  // KARYEKARS in the mandal(s) ticked on their record. Off the hour as usual.
+  santoVolunteerBirthday: '7 5 * * *', // scheduledSantoVolunteerBirthday — 05:07 IST
   sabhaDigest: '12 7 * * 1',  // scheduledSabhaDigest — Monday 07:12 IST
   sabhaGeneration: '7 4 * * 0', // scheduledSabhaGeneration — Sunday 04:07 IST
   // PHASE 35 — rebuild the birthday/anniversary calendar dataset (Cloud Storage)

@@ -95,6 +95,12 @@ const TOGGLES = [
     description: 'Sends each karyakar only the birthdays and anniversaries of contacts in their assigned area and mandal — and only if there is someone in their scope to wish. Needs a report email on their volunteer record.',
   },
   {
+    key: 'autoSantoVolunteerBirthdayEnabled',
+    title: 'Volunteer birthdays to Santos',
+    when: 'Every morning at 5:07 am',
+    description: 'Emails each Santo the day’s birthdays and anniversaries of the KARYEKARS in the mandal(s) ticked on their record (under “Programmes” on the volunteer screen). A Santo with two mandals gets both in one email. Needs a report email on the Santo’s record, and the karyekar must be linked to a contact (that is where the birth date lives). Skipped when there is nobody to wish.',
+  },
+  {
     key: 'autoSabhaDigestEnabled',
     title: 'Weekly sabha coverage',
     cronKey: 'scheduleSabhaDigestCron',
@@ -456,6 +462,7 @@ function EmailAutomationInner() {
         autoSkBatchReportsEnabled: !!draft.autoSkBatchReportsEnabled,
         autoBirthdayEnabled: !!draft.autoBirthdayEnabled,
         autoBirthdayVolunteerEnabled: !!draft.autoBirthdayVolunteerEnabled,
+        autoSantoVolunteerBirthdayEnabled: !!draft.autoSantoVolunteerBirthdayEnabled,
         autoSabhaDigestEnabled: !!draft.autoSabhaDigestEnabled,
         autoSabhaDigestVolunteerEnabled: !!draft.autoSabhaDigestVolunteerEnabled,
         dryRun: !!draft.dryRun,
