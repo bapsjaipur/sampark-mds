@@ -450,6 +450,23 @@ function isPresent(cell, tokens) {
 }
 
 /**
+ * The key an existing sabha is matched on when deciding whether to REUSE it or
+ * create a new one: date AND mandal, never date alone.
+ *
+ * PHASE 50 — the merge bug. The importer used to match on date only, so bringing
+ * in Sanyukt Mandal's sheet landed its attendance on a Yuvak Mandal sabha that
+ * happened to fall on the same date — two mandals' registers folded into one
+ * event. Keying on (date, mandal) keeps every mandal's sabhas separate, and makes
+ * importing each new mandal the same way safe. An untagged event ('' mandal)
+ * matches only other untagged events, so even a mandal-less import can never merge
+ * into a tagged one. Lower-cased + trimmed because both sides come from the same
+ * Mandal dropdown; this only guards against stray case/whitespace.
+ */
+function eventMatchKey(date, mandal) {
+  return `${date}||${String(mandal || '').trim().toLowerCase()}`;
+}
+
+/**
  * The dry run. Resolves every row against the contacts already in Firestore and
  * every date column against the events already there, and reports exactly what
  * a real run would write — nothing is saved.
@@ -489,8 +506,12 @@ function isPresent(cell, tokens) {
  */
 export async function analyzeHistoryImport({
   rows, mapping, dateColumns, presentTokens = DEFAULT_PRESENT_TOKENS, matchByName = false,
+  defaults = {},
 }) {
   const tokens = presentTokens.map((t) => String(t).trim().toLowerCase()).filter(Boolean);
+  // PHASE 50 — the mandal this whole import is filed under (the "Defaults" card).
+  // Event reuse is scoped to it, so a Sanyukt import never reuses a Yuvak sabha.
+  const targetMandal = defaults.mandal || null;
 
   // ── What the sheet actually asks about ────────────────────────────────
   const wantedMobiles = new Set();
@@ -535,7 +556,13 @@ export async function analyzeHistoryImport({
   });
 
   // ── Events ───────────────────────────────────────────────────────────
-  const eventsByDate = new Map();
+  // Fetched by date (one indexed query), but indexed by (date, mandal) so reuse
+  // is scoped to this import's own mandal — see eventMatchKey / the merge bug.
+  const eventsByKey = new Map();
+  // date → Set(normalised mandal) of events that ALREADY exist on that date, so the
+  // dry run can say out loud when this sheet's dates overlap another mandal's
+  // sabhas — the exact situation that used to merge silently.
+  const mandalsByDate = new Map();
   const eventSnaps = await Promise.all(
     chunk(wantedDates, IN_LIMIT).map((slice) => getDocs(
       query(collection(db, 'events'), where('date', 'in', slice)),
@@ -545,7 +572,11 @@ export async function analyzeHistoryImport({
     reads += snap.size;
     snap.docs.forEach((d) => {
       const data = { id: d.id, ...d.data() };
-      if (data.date && !eventsByDate.has(data.date)) eventsByDate.set(data.date, data);
+      if (!data.date) return;
+      const key = eventMatchKey(data.date, data.mandal);
+      if (!eventsByKey.has(key)) eventsByKey.set(key, data);
+      if (!mandalsByDate.has(data.date)) mandalsByDate.set(data.date, new Set());
+      mandalsByDate.get(data.date).add(String(data.mandal || '').trim().toLowerCase());
     });
   });
 
@@ -583,24 +614,39 @@ export async function analyzeHistoryImport({
   // resolves it: an already-existing sabha satisfies at most ONE column, so a
   // second column on the same date still counts as new.
   //
+  // PHASE 50 — matched within THIS import's mandal (eventMatchKey), so a same-date
+  // sabha belonging to another mandal is never treated as already-existing here.
+  //
   // The user's own workbook is exactly this case: 35 sabha columns, 34 distinct
   // dates, because 2026-05-31 carries both `Sabha_2026-05-31_YuvaS` and
   // `Sabha_2026-05-31_2Yuva` — a morning and an evening session of the same Yuva
   // Shibir. Counting by date alone reported 34 events and quietly folded the
   // second sitting into the first, losing its title, speaker and the distinction
   // between who came to which.
-  const claimedDates = new Set();
+  const claimedKeys = new Set();
   const newEventColumns = dateColumns.filter((c) => {
-    if (eventsByDate.has(c.date) && !claimedDates.has(c.date)) {
-      claimedDates.add(c.date);
+    const key = eventMatchKey(c.date, targetMandal);
+    if (eventsByKey.has(key) && !claimedKeys.has(key)) {
+      claimedKeys.add(key);
       return false;
     }
     return true;
   });
 
+  // PHASE 50 — how many of this sheet's dates already carry a sabha of a DIFFERENT
+  // mandal. Under the old date-only matching these merged silently; now they are
+  // created as separate events, and this count lets the dry run SAY so (and warn
+  // when no target mandal is set, which is the one case that leaves them untagged).
+  const targetMandalNorm = String(targetMandal || '').trim().toLowerCase();
+  const sameDateOtherMandal = [...new Set(dateColumns.map((c) => c.date))].filter((date) => {
+    const present = mandalsByDate.get(date);
+    return present && [...present].some((m) => m !== targetMandalNorm);
+  }).length;
+
   return {
     plan,
-    eventsByDate,
+    eventsByKey,
+    targetMandal,
     tokens,
     stats: {
       rows: rows.length,
@@ -614,6 +660,11 @@ export async function analyzeHistoryImport({
       newEvents: newEventColumns.length,
       reusedEvents: dateColumns.length - newEventColumns.length,
       presentMarks,
+      // How many of these dates already hold another mandal's sabha — see above.
+      sameDateOtherMandal,
+      // The mandal this import files its events under ('' = untagged). Shown in the
+      // dry run so the separation is explicit.
+      targetMandal: targetMandal || '',
       // Documents this dry run actually read. Shown on screen next to the write
       // count, because on the free tier the analysis is not free either.
       reads,
@@ -652,7 +703,7 @@ export async function analyzeHistoryImport({
 export async function runHistoryImport({
   analysis, mapping, dateColumns, volunteerId, defaults = {}, fileName = '', onProgress,
 }) {
-  const { plan, eventsByDate } = analysis;
+  const { plan, eventsByKey } = analysis;
 
   const runRef = doc(collection(db, 'importRuns'));
   const importRunId = runRef.id;
@@ -706,7 +757,7 @@ export async function runHistoryImport({
     // Created first and in date order so the Events tab reads as a timeline even
     // if the run is interrupted partway.
     for (const col of dateColumns) {
-      const existing = eventsByDate.get(col.date);
+      const existing = eventsByKey.get(eventMatchKey(col.date, defaults.mandal));
       if (existing && !claimedEventIds.has(existing.id)) {
         claimedEventIds.add(existing.id);
         eventIdByColumn.set(col.header, existing.id);

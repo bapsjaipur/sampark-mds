@@ -91,6 +91,12 @@ const DEFAULT_EMAIL_SETTINGS = {
   // karyakar's assigned area/mandal. Default OFF: switch on once mandal heads
   // have a reportEmail, exactly like the other per-volunteer fan-outs.
   autoBirthdayVolunteerEnabled: false,
+  // PHASE 50 — the Santo copy: at ~5 AM IST, each Santo gets the day's birthdays
+  // and anniversaries of the KARYEKARS in the mandal(s) ticked on their record.
+  // Off by default; inert until a Santo has both a reportEmail and mandal(s), so
+  // turning it on cannot surprise anyone. KEEP IN SYNC with the mirror in
+  // src/services/settingsService.js.
+  autoSantoVolunteerBirthdayEnabled: false,
   // PHASE 33 — the weekly sabha coverage digest.
   autoSabhaDigestEnabled: true,
   autoSabhaDigestVolunteerEnabled: false,
@@ -222,6 +228,10 @@ async function annotateVolunteers({ requireDeliverableEmail } = {}) {
       programs: Array.isArray(v.programs)
         ? v.programs.filter((x) => typeof x === 'string' && x)
         : null,
+      // Phase 50: the contact this login is attached to, if any. The Santo
+      // volunteer-birthday report uses it to tell which of today's birthday
+      // contacts are actually karyekars. Already on the document — no extra read.
+      linkedIndividualId: v.linkedIndividualId || null,
     });
   });
   return out;

@@ -142,6 +142,16 @@ exports.disconnectGoogleCalendar = googleCalendar.disconnectGoogleCalendar;
 exports.scheduledOutcomeCleanup = require('./outcomeCleanup').scheduledOutcomeCleanup;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PHASE 50 — the Santo volunteer-birthday report. Each morning (~5 AM IST) a
+// Santo is emailed the day's birthdays/anniversaries of the KARYEKARS whose own
+// mandal is one of theirs (the mandals ticked in `programs` on the Santo's
+// record). Off by default (settings/email.autoSantoVolunteerBirthdayEnabled);
+// inert until a Santo has both a reportEmail and mandal(s). See
+// functions/santoReports.js.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.scheduledSantoVolunteerBirthday = require('./santoReports').scheduledSantoVolunteerBirthday;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PHASE 48 — the in-app notification bell. Auto-notifications on four events
 // (batch assigned, sabha reminder, attendance marked, birthdays — the last folded
 // into the birthday email job at zero extra reads), each scoped to the recipient's

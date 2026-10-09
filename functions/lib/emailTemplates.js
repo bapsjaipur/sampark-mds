@@ -440,6 +440,9 @@ function waButton(url, label) {
  */
 function buildBirthdayReport(data, opts = {}) {
   const solo = opts.forVolunteer || null;
+  // Phase 50 — the Santo copy: the same report, narrowed to KARYEKARS in the
+  // Santo's own mandal(s), with wording that says so. { name, mandals: [] }.
+  const santo = opts.forSanto || null;
   const heading = `Birthdays & anniversaries — ${data.dateLabel}`;
   const parts = [];
 
@@ -455,7 +458,13 @@ function buildBirthdayReport(data, opts = {}) {
     return `${photo}<span style="vertical-align:middle;">${esc(p.name)}</span>${num}`;
   };
 
-  if (solo) {
+  if (santo) {
+    const list = Array.isArray(santo.mandals) ? santo.mandals.filter(Boolean) : [];
+    parts.push(`<div style="color:${MUTED};font-size:13px;margin-bottom:4px;">`
+      + `Birthdays and anniversaries of karyekars in your mandal${list.length === 1 ? '' : 's'} today`
+      + `${list.length ? ` — ${esc(list.join(', '))}` : ''}. Please send them your blessings.`
+      + `</div>`);
+  } else if (solo) {
     parts.push(`<div style="color:${MUTED};font-size:13px;margin-bottom:4px;">`
       + `Birthdays and anniversaries of contacts in your assigned area and mandal today — please send them your wishes.`
       + `</div>`);
@@ -497,7 +506,7 @@ function buildBirthdayReport(data, opts = {}) {
 
   const html = shell({
     title: heading,
-    subtitle: solo ? esc(solo.name) : 'Jai Swaminarayan',
+    subtitle: santo ? esc(santo.name) : solo ? esc(solo.name) : 'Jai Swaminarayan',
     bodyHtml: parts.join(''),
   });
 
@@ -511,7 +520,9 @@ function buildBirthdayReport(data, opts = {}) {
     ...(data.anniversaries.length ? data.anniversaries.map((p) => `  ${p.name}${p.years != null ? ` (${p.years} years)` : ''}${p.area ? `, ${p.area}` : ''} ${p.mobile || ''}`) : ['  none']),
   ].join('\n');
 
-  const subject = solo ? `Your birthdays & anniversaries to wish — ${data.dateLabel}` : heading;
+  const subject = santo
+    ? `Volunteer birthdays & anniversaries — ${data.dateLabel}`
+    : solo ? `Your birthdays & anniversaries to wish — ${data.dateLabel}` : heading;
   return { subject, html, text };
 }
 
