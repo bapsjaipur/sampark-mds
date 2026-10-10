@@ -162,9 +162,18 @@ exports.scheduledSantoVolunteerBirthday = require('./santoReports').scheduledSan
 const notifications = require('./notifications');
 exports.sendBulkNotification = notifications.sendBulkNotification;
 exports.onBatchAssigned = notifications.onBatchAssigned;
-exports.onAttendanceMarked = notifications.onAttendanceMarked;
-exports.scheduledSabhaReminder = notifications.scheduledSabhaReminder;
 exports.scheduledNotificationCleanup = notifications.scheduledNotificationCleanup;
+// PHASE 53 — COST. onAttendanceMarked fired on EVERY attendance document created
+// (3,366×/day in the billing data — ~95% of all function invocations, since one
+// 455-person sabha is 455 cold-started firings and only the first does anything,
+// and a history import makes it thousands at once). The "attendance has started"
+// bell is not used, so the trigger is unregistered here — on the next
+// `firebase deploy --only functions` Firebase deletes the Cloud Run service and
+// those invocations stop entirely. scheduledSabhaReminder (hourly, unused) is
+// dropped for the same reason. BOTH handlers remain in functions/notifications.js
+// so re-enabling is just restoring these two lines:
+//   exports.onAttendanceMarked = notifications.onAttendanceMarked;
+//   exports.scheduledSabhaReminder = notifications.scheduledSabhaReminder;
 
 exports.backupDatabase = onCall({ region: 'us-central1', maxInstances: 1, timeoutSeconds: 540 }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Must be logged in.');
