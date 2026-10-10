@@ -94,6 +94,12 @@ export const ROLE_PRESETS = [
       P.MANAGE_SCOPED_VOLUNTEERS,
       P.SEND_EMAILS,
       P.SEND_NOTIFICATIONS,
+      // Phase 52 — city head is unrestricted, so these deliver the FULL city-wide
+      // report (the scoping is a no-op for a global role).
+      P.RECEIVE_DAILY_REPORT,
+      P.RECEIVE_BIRTHDAY_REPORT,
+      P.RECEIVE_POSTSABHA_REPORT,
+      P.RECEIVE_SABHA_COVERAGE,
     ],
   },
   {
@@ -116,6 +122,11 @@ export const ROLE_PRESETS = [
       P.MANAGE_SCOPED_VOLUNTEERS,
       P.SEND_EMAILS,
       P.SEND_NOTIFICATIONS,
+      // Phase 52 — report subscriptions, delivered scoped to this role's area/mandal(s).
+      P.RECEIVE_DAILY_REPORT,
+      P.RECEIVE_BIRTHDAY_REPORT,
+      P.RECEIVE_POSTSABHA_REPORT,
+      P.RECEIVE_SABHA_COVERAGE,
     ],
   },
   {
@@ -136,6 +147,11 @@ export const ROLE_PRESETS = [
       P.MANAGE_SCOPED_VOLUNTEERS,
       P.SEND_EMAILS,
       P.SEND_NOTIFICATIONS,
+      // Phase 52 — report subscriptions, delivered scoped to this role's mandal(s).
+      P.RECEIVE_DAILY_REPORT,
+      P.RECEIVE_BIRTHDAY_REPORT,
+      P.RECEIVE_POSTSABHA_REPORT,
+      P.RECEIVE_SABHA_COVERAGE,
     ],
   },
   {

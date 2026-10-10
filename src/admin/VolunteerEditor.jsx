@@ -981,6 +981,9 @@ function VolunteerEditorInner() {
         name: v.name || '',
         mobile: v.mobile || '',
         reportEmail: v.reportEmail || '',
+        // PHASE 51 — the "receive report emails" switch. Default ON for existing
+        // volunteers (field absent === true), so nothing changes until toggled off.
+        reportEmailEnabled: v.reportEmailEnabled !== false,
         roleRefs: roleIdsOf(v),
         isActive: v.isActive !== false, // default to true
         assignedAreas: Array.isArray(v.assignedAreas) ? v.assignedAreas : [],
@@ -1201,6 +1204,7 @@ function VolunteerEditorInner() {
         name: draft.name.trim(),
         mobile: draft.mobile.trim(),
         reportEmail: draft.reportEmail.trim(),
+        reportEmailEnabled: draft.reportEmailEnabled !== false,
         roleRefs: draft.roleRefs,
         roleRef: primaryRole?.id || null,
         scopeKind: savedScopeKind,
@@ -1242,6 +1246,9 @@ function VolunteerEditorInner() {
         scopeKind: savedScopeKind,
         programs: programsClean,
         program: programWing,
+        // PHASE 51 — carried in the fallback too, so the switch lands even against
+        // an un-redeployed callable (same reasoning as roleRefs/programs above).
+        reportEmailEnabled: draft.reportEmailEnabled !== false,
       });
     } catch (err) {
       setError(err.message);
@@ -1660,7 +1667,24 @@ function VolunteerEditorInner() {
             </div>
 
             <div>
-              <Label>Report email</Label>
+              <div className="flex items-center justify-between gap-3">
+                <Label>Report email</Label>
+                {/* PHASE 51 — pause/resume report emails for this volunteer without
+                    deleting the address or touching their login. OFF stops every
+                    automated report to them; the in-app bell is unaffected. */}
+                <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-500">
+                  <span>{draft.reportEmailEnabled !== false ? 'Sending' : 'Paused'}</span>
+                  <span className="relative inline-flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={draft.reportEmailEnabled !== false}
+                      onChange={(e) => setDraft({ ...draft, reportEmailEnabled: e.target.checked })}
+                      className="peer sr-only"
+                    />
+                    <span className="peer h-6 w-11 rounded-full bg-slate-200 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-orange-500 peer-checked:after:translate-x-full peer-checked:after:border-white" />
+                  </span>
+                </label>
+              </div>
               <Input
                 type="email"
                 value={draft.reportEmail}
@@ -1673,6 +1697,11 @@ function VolunteerEditorInner() {
                 Optional. Where the automated daily, post-sabha and birthday reports are sent. This is
                 <strong> not</strong> the login — volunteers still sign in with their mobile number. Leave it blank
                 and this volunteer simply receives no report emails.
+                {draft.reportEmailEnabled === false && (
+                  <span className="mt-1 block font-medium text-amber-600">
+                    Reports are paused — the address is kept but no automated emails are sent to this volunteer.
+                  </span>
+                )}
               </p>
             </div>
 

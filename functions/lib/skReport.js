@@ -197,11 +197,16 @@ async function buildSkBatchReports({ eventId, now = new Date() }) {
       kept += groups[key].length;
     }
 
+    // PHASE 51 — honour the per-volunteer "receive report emails" switch here too.
+    // skReport reads the volunteer docs raw (getDocsByIds), so it can't lean on
+    // the mailer loader's gate; a karyakar with the switch OFF gets no SK calling
+    // list, same as every other report. Default ON (undefined/true).
+    const emailOn = v.reportEmailEnabled !== false && isDeliverable(v.reportEmail);
     reports.push({
       volunteerId,
       volunteerName: v.name || 'Karyakarta',
-      email: isDeliverable(v.reportEmail) ? String(v.reportEmail).trim() : null,
-      deliverable: isDeliverable(v.reportEmail),
+      email: emailOn ? String(v.reportEmail).trim() : null,
+      deliverable: emailOn,
       batchNames: entry.batchNames,
       called: result.called,
       attended: result.attended,

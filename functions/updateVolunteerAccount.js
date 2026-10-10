@@ -117,6 +117,10 @@ exports.updateVolunteerAccount = onCall({ region: 'us-central1' }, async (reques
 
   const {
     volunteerId, name, mobile, roleRef, roleRefs, scopeKind, assignedAreas, assignedMandals, profilePhotoURL, reportEmail, isActive,
+    // PHASE 51 — the per-volunteer "receive report emails" switch. Like reportEmail
+    // itself, it is a mail preference, not an access control, so it rides the same
+    // path and does not require manage_users.
+    reportEmailEnabled,
     // PHASE 39 — the request half. `requestedMobile` is what a volunteer asks
     // for; `resolveMobileRequest` is how an admin answers ('approve' | 'decline').
     requestedMobile, resolveMobileRequest,
@@ -293,6 +297,9 @@ exports.updateVolunteerAccount = onCall({ region: 'us-central1' }, async (reques
     if (profilePhotoURL !== undefined) updateData.profilePhotoURL = profilePhotoURL;
 
     if (cleanReportEmail !== undefined) updateData.reportEmail = cleanReportEmail;
+    // PHASE 51 — store the switch as a strict boolean. Only when explicitly sent,
+    // so an older client that omits it never clobbers the stored preference.
+    if (reportEmailEnabled !== undefined) updateData.reportEmailEnabled = reportEmailEnabled !== false;
 
     // A number that has actually moved settles any outstanding request for it,
     // whether the admin approved the request or simply typed the number in.
