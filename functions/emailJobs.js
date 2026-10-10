@@ -28,7 +28,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const admin = require('firebase-admin');
 
 const {
-  getEmailSettings, resolveReportRecipients, loadMailableVolunteers, queueMail, isDeliverable,
+  getEmailSettings, resolveReportAudience, loadMailableVolunteers, queueMail, isDeliverable,
 } = require('./lib/mailer');
 // PHASE 48 — the bell's audience is WIDER than the mailer's: a notification needs a
 // login, not a deliverable reportEmail. loadNotifiableVolunteers is the same volunteer
@@ -46,7 +46,7 @@ const { dailyReportPdf, postSabhaPdf, skBatchPdf, birthdayPdf } = require('./lib
 const { permissionsForVolunteer, volunteerRoleIds } = require('./lib/callerAccess');
 // PHASE 44 — the per-volunteer birthday fan-out scopes each copy to the
 // recipient's assigned area/mandal. Same scope engine the sabha digest uses.
-const { resolveScope, matchesScope, programsCoverMandal } = require('./lib/volunteerScope');
+const { resolveScope, matchesScope, programsCoverMandal, expandMandalGroups } = require('./lib/volunteerScope');
 // PHASE 48 — the in-app bell. The birthday notification rides THIS job rather than
 // getting its own scheduled function: the scoped per-volunteer slices are already
 // computed below, so folding the fan-out in costs zero extra reads. See the
@@ -123,19 +123,46 @@ async function runDailyReport({ now = new Date(), force = false } = {}) {
   const results = { date: stats.dateKey, admin: null, volunteers: [] };
 
   if (wantAdmin) {
-    const to = await resolveReportRecipients(settings);
-    const { subject, html, text } = buildDailyReport(stats);
-    const pdf = dailyReportPdf(stats);
-    results.admin = await queueMail({
-      to,
-      subject,
-      html,
-      text,
-      attachments: pdf ? [pdf] : [],
-      kind: 'daily-admin',
-      meta: { date: stats.dateKey, contacts: stats.totals.contacts, calls: stats.totals.calls },
-      settings,
-    });
+    // PHASE 52 — recipients are now the holders of `receive_daily_report`, each
+    // mailed a copy scoped to their own mandal(s); an unrestricted role still gets
+    // the full city-wide copy (with the PDF). Replaces the old "every send_emails
+    // holder gets the whole city" that sent Yuvak's report to other mandals' heads.
+    //
+    // loadNotifiableVolunteers (ALL active volunteers, not just those with an
+    // email) is used for BOTH the mandal map and the audience: the per-volunteer
+    // activity rows must be tagged with every contributor's mandal — most
+    // karyekars have no reportEmail, so the mailable-only list would blank the map
+    // and scoped copies would come out empty. resolveReportAudience itself skips
+    // anyone whose email is '' (no address / paused), so passing the full list is safe.
+    const everyone = await loadNotifiableVolunteers();
+    const mandalsById = new Map(everyone.map((v) => [v.id, expandMandalGroups(Array.isArray(v.programs) ? v.programs : [])]));
+    stats.perVolunteer.forEach((r) => { r._mandals = mandalsById.get(r.volunteerId) || []; });
+
+    const buckets = await resolveReportAudience(settings, { permission: 'receive_daily_report', volunteers: everyone });
+    results.admin = [];
+    for (const bucket of buckets) {
+      const scoped = bucket.mandals || null;
+      const { subject, html, text } = buildDailyReport(stats, scoped ? { scopeMandals: scoped } : {});
+      // A scoped copy with no activity in that mandal today is not worth sending.
+      if (scoped && !stats.perVolunteer.some((r) => Array.isArray(r._mandals)
+        && r._mandals.some((m) => scoped.map((x) => x.toLowerCase()).includes(String(m).toLowerCase())))) continue;
+      // The PDF (full roster) rides only the city-wide copy; scoped copies are the
+      // short HTML table, same bargain as the per-volunteer copies.
+      const pdf = scoped ? null : dailyReportPdf(stats);
+      /* eslint-disable no-await-in-loop */
+      const res = await queueMail({
+        to: bucket.emails,
+        subject,
+        html,
+        text,
+        attachments: pdf ? [pdf] : [],
+        kind: 'daily-admin',
+        meta: { date: stats.dateKey, contacts: stats.totals.contacts, calls: stats.totals.calls, mandals: scoped || 'all' },
+        settings,
+      });
+      /* eslint-enable no-await-in-loop */
+      results.admin.push({ mandals: scoped || 'all', ...res });
+    }
   }
 
   if (wantVolunteer) {
@@ -255,7 +282,18 @@ async function runPostSabhaReports({ now = new Date(), force = false, eventId = 
 
     try {
       const report = await buildPostSabhaData({ eventId: event.id, now });
-      const to = wantAdmin ? await resolveReportRecipients(settings) : [];
+      // PHASE 52 — holders of receive_postsabha_report whose mandal matches THIS
+      // sabha's mandal (an unrestricted role always matches). The report is a single
+      // event, so this gates WHO receives it, not its content. A mandal-less
+      // (city-wide) sabha reaches only the unrestricted recipients.
+      let to = [];
+      if (wantAdmin) {
+        const evMandal = String(report.event.mandal || '').toLowerCase();
+        const buckets = await resolveReportAudience(settings, { permission: 'receive_postsabha_report' });
+        to = buckets
+          .filter((b) => b.mandals === null || b.mandals.some((m) => String(m).toLowerCase() === evMandal))
+          .flatMap((b) => b.emails);
+      }
       const attendanceTakers = wantVolunteer ? await volunteerEmailsFor(report) : [];
       const recipients = [...new Set([...to, ...attendanceTakers])];
 
@@ -548,19 +586,37 @@ async function runBirthdaySummary({ now = new Date(), force = false } = {}) {
   const scopedEmails = new Set(scopedPeople.map(({ person }) => person.email.toLowerCase()));
 
   if (wantAdmin) {
-    const to = await resolveReportRecipients(settings, { volunteers: mailable, excludeEmails: scopedEmails });
-    const { subject, html, text } = buildBirthdayReport(data);
-    const pdf = birthdayPdf(data);
-    results.admin = await queueMail({
-      to,
-      subject,
-      html,
-      text,
-      attachments: pdf ? [pdf] : [],
-      kind: 'birthday',
-      meta: { date: data.dateKey, birthdays: data.birthdays.length, anniversaries: data.anniversaries.length },
-      settings,
+    // PHASE 52 — holders of `receive_birthday_report`, each mailed only their own
+    // mandal(s)' birthdays; an unrestricted role gets the full combined list (+PDF).
+    // excludeEmails keeps anyone who already got a per-volunteer self-copy off this.
+    const buckets = await resolveReportAudience(settings, {
+      permission: 'receive_birthday_report', volunteers: mailable, excludeEmails: scopedEmails,
     });
+    results.admin = [];
+    for (const bucket of buckets) {
+      const scoped = bucket.mandals || null;
+      if (scoped) {
+        const set = new Set(scoped.map((m) => m.toLowerCase()));
+        const anyone = data.birthdays.some((p) => p.mandal && set.has(String(p.mandal).toLowerCase()))
+          || data.anniversaries.some((p) => p.mandal && set.has(String(p.mandal).toLowerCase()));
+        if (!anyone) continue; // nobody to wish in this mandal today
+      }
+      const { subject, html, text } = buildBirthdayReport(data, scoped ? { scopeMandals: scoped } : {});
+      const pdf = scoped ? null : birthdayPdf(data);
+      /* eslint-disable no-await-in-loop */
+      const res = await queueMail({
+        to: bucket.emails,
+        subject,
+        html,
+        text,
+        attachments: pdf ? [pdf] : [],
+        kind: 'birthday',
+        meta: { date: data.dateKey, birthdays: data.birthdays.length, anniversaries: data.anniversaries.length, mandals: scoped || 'all' },
+        settings,
+      });
+      /* eslint-enable no-await-in-loop */
+      results.admin.push({ mandals: scoped || 'all', ...res });
+    }
   }
 
   // PHASE 44 / 48 — the per-volunteer copy, and the per-volunteer BELL, from the
@@ -839,41 +895,71 @@ exports.sendManualEmail = onCall({ region: REGION, timeoutSeconds: 300, memory: 
 exports.previewEmailRecipients = onCall({ region: REGION }, async (request) => {
   await requirePermission(request, 'send_emails');
 
+  // PHASE 52 — recipients are now per-report (the receive_* permissions), each
+  // delivered scoped to the recipient's mandal(s). This preview shows, per report,
+  // how many get it and how many of those are city-wide vs mandal-scoped, plus the
+  // union of everyone who gets anything — so "I turned it on and nobody got it"
+  // stays diagnosable.
+  const RECEIVE_PERMS = {
+    daily: 'receive_daily_report',
+    birthday: 'receive_birthday_report',
+    postsabha: 'receive_postsabha_report',
+    coverage: 'receive_sabha_coverage',
+  };
+
   const settings = await getEmailSettings();
-  const [recipients, mailable, allVolunteers, rolesSnap] = await Promise.all([
-    resolveReportRecipients(settings),
+  const [mailable, allVolunteers, rolesSnap] = await Promise.all([
     loadMailableVolunteers(),
     db.collection('volunteers').get(),
     db.collection('roles').get(),
   ]);
 
+  const byReport = {};
+  const union = new Set();
+  for (const [key, perm] of Object.entries(RECEIVE_PERMS)) {
+    /* eslint-disable no-await-in-loop */
+    const buckets = await resolveReportAudience(settings, { permission: perm, volunteers: mailable });
+    /* eslint-enable no-await-in-loop */
+    let cityWide = 0;
+    let scoped = 0;
+    buckets.forEach((b) => {
+      b.emails.forEach((e) => union.add(e));
+      if (b.mandals === null) cityWide += b.emails.length; else scoped += b.emails.length;
+    });
+    byReport[key] = { count: cityWide + scoped, cityWide, scoped };
+  }
+
+  // Diagnostics across the full roster (loadMailableVolunteers already dropped
+  // anyone without a deliverable email, so missing-email must be found here).
   const rolePerms = {};
   rolesSnap.forEach((d) => { rolePerms[d.id] = d.data().permissions || []; });
+  const anyReceive = (perms) => Object.values(RECEIVE_PERMS).some((p) => perms.has(p));
 
   const missingEmail = [];
-  const noPermission = [];
+  const noMandalScoped = [];
   allVolunteers.forEach((d) => {
     const v = d.data();
     if (v.isActive === false) return;
-    // PHASE 33 — the union across roleRefs[], matching loadMailableVolunteers().
-    // Reading only the legacy `roleRef` meant this diagnostic reported a
-    // volunteer as fine while the sender skipped them, which is worse than no
-    // diagnostic: the screen exists precisely to explain "I turned it on and
-    // nobody got anything".
     const perms = new Set(volunteerRoleIds(v).flatMap((id) => rolePerms[id] || []));
-    if (!perms.has('send_emails')) return;
-    if (!isDeliverable(v.reportEmail)) missingEmail.push(v.name || d.id);
-  });
-  mailable.forEach((v) => {
-    if (!v.permissions.includes('send_emails')) noPermission.push(v.name);
+    if (!anyReceive(perms)) return;
+    if (v.reportEmailEnabled === false || !isDeliverable(v.reportEmail)) {
+      missingEmail.push(v.name || d.id);
+      return;
+    }
+    // Has a report subscription + a deliverable email, but is mandal-scoped with no
+    // Programmes ticked → nothing to scope to, so they receive nothing.
+    const scope = resolveScope({ volunteer: v, permissions: [...perms] });
+    const programs = Array.isArray(v.programs) ? v.programs.filter(Boolean) : [];
+    if (!scope.unrestricted && !expandMandalGroups(programs).length) noMandalScoped.push(v.name || d.id);
   });
 
   return {
-    recipients,
-    count: recipients.length,
+    byReport,
+    recipients: [...union],
+    count: union.size,
     extraRecipients: Array.isArray(settings.extraRecipients) ? settings.extraRecipients : [],
     missingEmail,
-    haveEmailButNoPermission: noPermission,
+    noMandalScoped,
     dryRun: !!settings.dryRun,
     maxRecipients: settings.maxRecipients,
   };

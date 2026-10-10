@@ -120,9 +120,32 @@ function table(headers, rows) {
  */
 function buildDailyReport(stats, opts = {}) {
   const solo = opts.forVolunteer || null;
+  // PHASE 52 — the mandal-scoped copy. Keep only the volunteers whose own
+  // mandal(s) (perVolunteer row `_mandals`, set by the caller) overlap the
+  // recipient's, and recompute the tiles/totals from that subset so a Yuvak head
+  // sees Yuvak's numbers, not the city's. Batch "pending" is city-wide, so it is
+  // dropped from a scoped copy rather than shown misleadingly.
+  const scopeMandals = Array.isArray(opts.scopeMandals) && opts.scopeMandals.length ? opts.scopeMandals : null;
+  let scopeLabel = '';
+  if (scopeMandals) {
+    const set = new Set(scopeMandals.map((m) => String(m).toLowerCase()));
+    const rows = (stats.perVolunteer || []).filter(
+      (v) => Array.isArray(v._mandals) && v._mandals.some((m) => set.has(String(m).toLowerCase())),
+    );
+    const statusCounts = {};
+    let contacts = 0;
+    let calls = 0;
+    rows.forEach((r) => {
+      contacts += r.contacts;
+      calls += r.calls;
+      Object.entries(r.statusCounts || {}).forEach(([k, n]) => { statusCounts[k] = (statusCounts[k] || 0) + n; });
+    });
+    stats = { ...stats, perVolunteer: rows, totals: { contacts, calls, statusCounts }, pending: { total: 0, unassignedBatches: 0 } };
+    scopeLabel = ` · ${scopeMandals.join(' + ')}`;
+  }
   const mine = solo ? (stats.perVolunteer.find((v) => v.volunteerId === solo.id) || null) : null;
 
-  const heading = solo ? `Your calling summary — ${stats.dateLabel}` : `Daily calling report — ${stats.dateLabel}`;
+  const heading = solo ? `Your calling summary — ${stats.dateLabel}` : `Daily calling report${scopeLabel} — ${stats.dateLabel}`;
   const parts = [];
 
   if (solo) {
@@ -443,7 +466,17 @@ function buildBirthdayReport(data, opts = {}) {
   // Phase 50 — the Santo copy: the same report, narrowed to KARYEKARS in the
   // Santo's own mandal(s), with wording that says so. { name, mandals: [] }.
   const santo = opts.forSanto || null;
-  const heading = `Birthdays & anniversaries — ${data.dateLabel}`;
+  // Phase 52 — the mandal-scoped admin copy: filter the lists to contacts whose
+  // mandal is one of these, so a Yuvak head's birthday email carries only Yuvak.
+  const scopeMandals = Array.isArray(opts.scopeMandals) && opts.scopeMandals.length ? opts.scopeMandals : null;
+  let scopeLabel = '';
+  if (scopeMandals) {
+    const set = new Set(scopeMandals.map((m) => String(m).toLowerCase()));
+    const keep = (p) => p.mandal && set.has(String(p.mandal).toLowerCase());
+    data = { ...data, birthdays: (data.birthdays || []).filter(keep), anniversaries: (data.anniversaries || []).filter(keep) };
+    scopeLabel = ` · ${scopeMandals.join(' + ')}`;
+  }
+  const heading = `Birthdays & anniversaries${scopeLabel} — ${data.dateLabel}`;
   const parts = [];
 
   // Phase 48: a round photo thumbnail (when the contact has one) before the name, so
@@ -467,6 +500,10 @@ function buildBirthdayReport(data, opts = {}) {
   } else if (solo) {
     parts.push(`<div style="color:${MUTED};font-size:13px;margin-bottom:4px;">`
       + `Birthdays and anniversaries of contacts in your assigned area and mandal today — please send them your wishes.`
+      + `</div>`);
+  } else if (scopeMandals) {
+    parts.push(`<div style="color:${MUTED};font-size:13px;margin-bottom:4px;">`
+      + `Birthdays and anniversaries in ${esc(scopeMandals.join(', '))} today — please send them your wishes.`
       + `</div>`);
   }
 
@@ -621,7 +658,7 @@ function buildSabhaCoverageReport(data, opts = {}) {
 
   const heading = solo
     ? `Your sabhas — ${data.periodLabel}`
-    : `Sabha coverage — ${data.periodLabel}`;
+    : `Sabha coverage${opts.scopeLabel ? ` · ${opts.scopeLabel}` : ''} — ${data.periodLabel}`;
   const subject = followUps.length
     ? `${heading} · ${followUps.length} need${followUps.length === 1 ? 's' : ''} a call`
     : heading;

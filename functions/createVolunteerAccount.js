@@ -111,6 +111,9 @@ exports.createVolunteerAccount = onCall({ region: 'us-central1' }, async (reques
       name,
       mobile: String(phone).replace(/\D/g, ''),
       reportEmail: cleanReportEmail,
+      // PHASE 51 — new volunteers receive report emails by default (if they have a
+      // reportEmail). An admin turns it off per volunteer on the Volunteers screen.
+      reportEmailEnabled: true,
       // Both fields: roleRefs[] is authoritative, roleRef is what firestore.rules
       // reads (it cannot iterate an array of get()s). See lib/callerAccess.js.
       roleRefs: roles.roleRefs,

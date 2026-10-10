@@ -34,7 +34,7 @@
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 
 const {
-  getEmailSettings, resolveReportRecipients, loadMailableVolunteers, queueMail,
+  getEmailSettings, resolveReportAudience, loadMailableVolunteers, queueMail,
 } = require('./lib/mailer');
 const { buildSabhaCoverageReport } = require('./lib/emailTemplates');
 const { loadSabhaCoverage, DEFAULT_WEEKS_BACK } = require('./lib/sabhaCoverage');
@@ -112,24 +112,54 @@ async function runSabhaDigest({ now = new Date(), force = false, weeksBack = DEF
   const results = { period: data.periodLabel, admin: null, volunteers: [] };
 
   if (wantAdmin) {
-    const recipients = to || (await resolveReportRecipients(settings));
-    const { subject, html, text } = buildSabhaCoverageReport(data, opts);
-    results.admin = await queueMail({
-      to: recipients,
-      subject,
-      html,
-      text,
-      kind: 'sabha-digest',
-      meta: {
-        from: data.from,
-        to: data.to,
-        schedules: data.totals.schedules,
-        held: data.totals.held,
-        missed: data.totals.missed,
-        followUp: data.totals.followUp,
-      },
-      settings,
-    });
+    if (to) {
+      // Manual "send now" to an explicit test address — one full copy, unchanged.
+      const { subject, html, text } = buildSabhaCoverageReport(data, opts);
+      results.admin = await queueMail({
+        to,
+        subject,
+        html,
+        text,
+        kind: 'sabha-digest',
+        meta: {
+          from: data.from, to: data.to, schedules: data.totals.schedules, held: data.totals.held, missed: data.totals.missed, followUp: data.totals.followUp,
+        },
+        settings,
+      });
+    } else {
+      // PHASE 52 — holders of receive_sabha_coverage, each mailed only their own
+      // mandal(s)' schedules; an unrestricted role gets the whole-city digest.
+      const buckets = await resolveReportAudience(settings, { permission: 'receive_sabha_coverage' });
+      results.admin = [];
+      for (const bucket of buckets) {
+        const scoped = bucket.mandals || null;
+        let dd = data;
+        if (scoped) {
+          const set = new Set(scoped.map((m) => m.toLowerCase()));
+          const mine = data.rows.filter((r) => {
+            const m = r.mandal === '—' ? '' : String(r.mandal || '').toLowerCase();
+            return m && set.has(m);
+          });
+          if (!mine.length) continue; // this mandal has no schedules in the window
+          dd = narrow(data, mine);
+        }
+        const { subject, html, text } = buildSabhaCoverageReport(dd, { ...opts, scopeLabel: scoped ? scoped.join(' + ') : '' });
+        /* eslint-disable no-await-in-loop */
+        const res = await queueMail({
+          to: bucket.emails,
+          subject,
+          html,
+          text,
+          kind: 'sabha-digest',
+          meta: {
+            from: data.from, to: data.to, schedules: (dd.totals || {}).schedules, held: (dd.totals || {}).held, missed: (dd.totals || {}).missed, followUp: (dd.totals || {}).followUp, mandals: scoped || 'all',
+          },
+          settings,
+        });
+        /* eslint-enable no-await-in-loop */
+        results.admin.push({ mandals: scoped || 'all', ...res });
+      }
+    }
   }
 
   if (wantVolunteer && data.rows.length) {

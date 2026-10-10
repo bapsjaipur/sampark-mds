@@ -90,6 +90,21 @@ export const PERMISSIONS = {
   // it (NOT in PRESET_EXCLUDED_PERMISSIONS) — grant it to Moderator / Super
   // Moderator etc. from the Roles tab as needed.
   SEND_NOTIFICATIONS: 'send_notifications',
+  // ── Report subscriptions (Phase 52) ─────────────────────────────────────────
+  // Who RECEIVES each automated report, and — because delivery is scoped by the
+  // recipient's Programmes (the mandals ticked on their volunteer record) — WHICH
+  // mandal's data they see. A role holding one of these gets that report filtered
+  // to its own mandal(s); an UNRESTRICTED role (Admin / view_all_contacts) gets
+  // the full city-wide copy. Replaces the old "everyone with send_emails gets the
+  // whole-city copy" so a Yuvak head never receives Sanyukt's figures. send_emails
+  // now means only "can run / preview reports", not "receives them". A scoped
+  // recipient with no Programmes set receives nothing (there is no mandal to scope
+  // to) — the one case to watch. Resolved server-side in resolveReportAudience
+  // (functions/lib/mailer.js). Admin auto-holds all four (NOT excluded).
+  RECEIVE_DAILY_REPORT: 'receive_daily_report',
+  RECEIVE_BIRTHDAY_REPORT: 'receive_birthday_report',
+  RECEIVE_POSTSABHA_REPORT: 'receive_postsabha_report',
+  RECEIVE_SABHA_COVERAGE: 'receive_sabha_coverage',
   // ── Tab-visibility flags (Phase B) ──────────────────────────────────────────
   // These are the ONLY permissions that SUBTRACT access instead of granting it:
   // ticking one HIDES a tab for the role. They exist because those tabs cannot be
@@ -133,6 +148,10 @@ export const PERMISSION_LABELS = {
   [PERMISSIONS.IMPORT_DATA]: 'Import Contacts & History (CSV)',
   [PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS]: 'Manage Volunteers In My Area/Mandal',
   [PERMISSIONS.SEND_NOTIFICATIONS]: 'Send Bulk Notifications',
+  [PERMISSIONS.RECEIVE_DAILY_REPORT]: 'Receive Daily Calling Report (their mandal)',
+  [PERMISSIONS.RECEIVE_BIRTHDAY_REPORT]: 'Receive Birthday & Anniversary Summary (their mandal)',
+  [PERMISSIONS.RECEIVE_POSTSABHA_REPORT]: 'Receive Post-Sabha Report (their mandal)',
+  [PERMISSIONS.RECEIVE_SABHA_COVERAGE]: 'Receive Weekly Sabha Coverage (their mandal)',
   [PERMISSIONS.HIDE_ALL_CONTACTS]: 'Hide the All Contacts tab',
   [PERMISSIONS.HIDE_PAST_SABHAS]: 'Hide Past Sabhas (upcoming only)',
 };
@@ -164,6 +183,10 @@ export const PERMISSION_SHORT_LABELS = {
   [PERMISSIONS.IMPORT_DATA]: 'Import',
   [PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS]: 'Scoped Users',
   [PERMISSIONS.SEND_NOTIFICATIONS]: 'Notify',
+  [PERMISSIONS.RECEIVE_DAILY_REPORT]: 'Daily report',
+  [PERMISSIONS.RECEIVE_BIRTHDAY_REPORT]: 'Birthday report',
+  [PERMISSIONS.RECEIVE_POSTSABHA_REPORT]: 'Post-sabha report',
+  [PERMISSIONS.RECEIVE_SABHA_COVERAGE]: 'Coverage report',
   [PERMISSIONS.HIDE_ALL_CONTACTS]: 'Hide All Contacts',
   [PERMISSIONS.HIDE_PAST_SABHAS]: 'Hide Past Sabhas',
 };
@@ -188,6 +211,13 @@ export const PERMISSION_GROUPS = [
     PERMISSIONS.MANAGE_USERS, PERMISSIONS.MANAGE_SCOPED_VOLUNTEERS, PERMISSIONS.MANAGE_ROLES,
     PERMISSIONS.SEND_EMAILS, PERMISSIONS.SEND_NOTIFICATIONS, PERMISSIONS.MANAGE_TEMPLATES,
     PERMISSIONS.MANAGE_NIYAM_DHARMA, PERMISSIONS.MANAGE_AREAS_MANDALS,
+  ] },
+  // Report subscriptions (Phase 52) — which automated reports this role receives,
+  // each delivered scoped to the recipient's own mandal(s). Its own group so it
+  // reads as "what lands in my inbox", separate from "what I can do".
+  { label: 'Report subscriptions (scoped to their mandal)', permissions: [
+    PERMISSIONS.RECEIVE_DAILY_REPORT, PERMISSIONS.RECEIVE_BIRTHDAY_REPORT,
+    PERMISSIONS.RECEIVE_POSTSABHA_REPORT, PERMISSIONS.RECEIVE_SABHA_COVERAGE,
   ] },
   // Opt-out toggles — ticking one HIDES a tab for this role (default off). Kept
   // in their own group so it reads differently from the grant-access boxes above.
@@ -221,6 +251,10 @@ export const PERMISSION_HELP = {
   [PERMISSIONS.MANAGE_ROLES]: 'Edit this screen. Anyone with it can grant themselves anything.',
   [PERMISSIONS.SEND_EMAILS]: 'Run report emails on demand and receive the scheduled ones.',
   [PERMISSIONS.SEND_NOTIFICATIONS]: 'Send in-app bell notifications to a Mandal, Area, Role, chosen volunteers or everyone — the one-click “gather here at this time” alert. Everyone receives bells automatically and scoped to them; this is only the power to send to others.',
+  [PERMISSIONS.RECEIVE_DAILY_REPORT]: 'Emails this role the daily calling report, showing only the volunteers of their own mandal(s) (set under Programmes on the volunteer). An Admin / view-all role gets the whole city. Needs a report email on the record.',
+  [PERMISSIONS.RECEIVE_BIRTHDAY_REPORT]: 'Emails this role the daily birthday & anniversary list for their own mandal(s) only. An Admin / view-all role gets every mandal. Needs a report email on the record.',
+  [PERMISSIONS.RECEIVE_POSTSABHA_REPORT]: 'Emails this role the post-sabha attendance report, but only for sabhas of their own mandal(s). An Admin / view-all role gets every sabha. Needs a report email on the record.',
+  [PERMISSIONS.RECEIVE_SABHA_COVERAGE]: 'Emails this role the weekly sabha-coverage digest for their own mandal(s) only. An Admin / view-all role gets the whole city. Needs a report email on the record.',
   [PERMISSIONS.MANAGE_TEMPLATES]: 'Edit the WhatsApp message text, the calling outcome buttons and email settings.',
   [PERMISSIONS.MANAGE_NIYAM_DHARMA]: 'Edit the Niyam Dharma Agna list on the Areas & Mandals screen — the daily-observance checkboxes (Tulsi Kanthi, Mala Jaap…) shown on every contact. Lets someone re-spell, add or retire a niyam. Does not grant any contact-editing power on its own.',
   [PERMISSIONS.MANAGE_AREAS_MANDALS]: 'Add, rename and organise Areas, Mandals, Levels and Programmes on the Areas & Mandals screen — without the full Manage Users power. An Admin already has this via Manage Users; grant it to a coordinator who should shape the taxonomy but not create logins or change roles.',

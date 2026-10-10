@@ -30,6 +30,7 @@
 
 const admin = require('firebase-admin');
 const { volunteerRoleIds } = require('./callerAccess');
+const { resolveScope, expandMandalGroups } = require('./volunteerScope');
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -198,7 +199,16 @@ async function annotateVolunteers({ requireDeliverableEmail } = {}) {
   vSnap.forEach((d) => {
     const v = d.data();
     if (v.isActive === false) return;
-    if (requireDeliverableEmail && !isDeliverable(v.reportEmail)) return;
+    // PHASE 51 — per-volunteer "receive report emails" switch. OFF keeps the login
+    // and the address on file but stops ALL automated reports, by treating the
+    // address as undeliverable HERE — the one place every report job resolves its
+    // recipients from. Default ON (undefined/true), so existing volunteers are
+    // unaffected. The in-app bell path (requireDeliverableEmail:false) still
+    // includes them: it reaches people by uid, not email, and is never gated on this.
+    const email = v.reportEmailEnabled === false
+      ? ''
+      : (isDeliverable(v.reportEmail) ? String(v.reportEmail).trim() : '');
+    if (requireDeliverableEmail && !email) return;
 
     const roles = volunteerRoleIds(v).map((id) => roleDocs[id]).filter(Boolean);
     const permissions = [...new Set(roles.flatMap((r) => (Array.isArray(r.permissions) ? r.permissions : [])))];
@@ -206,7 +216,7 @@ async function annotateVolunteers({ requireDeliverableEmail } = {}) {
     out.push({
       id: d.id,
       name: v.name || 'Volunteer',
-      email: String(v.reportEmail).trim(),
+      email,
       mobile: v.mobile || '',
       permissions,
       // The role DOCUMENTS, not just their ids — the sabha digest needs
@@ -264,7 +274,7 @@ async function resolveReportRecipients(settings, { volunteers = null, excludeEma
 
   const addresses = new Map(); // lowercased address -> display name
   vols
-    .filter((v) => v.permissions.includes('send_emails'))
+    .filter((v) => v.email && v.permissions.includes('send_emails'))
     .forEach((v) => {
       const key = v.email.toLowerCase();
       if (exclude.has(key)) return;
@@ -277,6 +287,67 @@ async function resolveReportRecipients(settings, { volunteers = null, excludeEma
     .forEach((a) => { if (!addresses.has(a.toLowerCase())) addresses.set(a.toLowerCase(), a); });
 
   return [...addresses.keys()];
+}
+
+/**
+ * resolveReportAudience(settings, { permission, volunteers, excludeEmails }) — the
+ * PHASE 52 recipient resolver. Replaces "everyone with send_emails gets the
+ * whole-city copy" with "everyone whose role holds `permission`, each delivered a
+ * copy scoped to THEIR mandal(s)".
+ *
+ * Returns an array of buckets: `[{ mandals, emails }]`.
+ *   • `mandals: null`  → the city-wide bucket (unrestricted recipients +
+ *                        extraRecipients). The caller builds the FULL report.
+ *   • `mandals: [..]`  → a scoped bucket; the caller builds a copy filtered to
+ *                        exactly those mandal names. One bucket per distinct
+ *                        mandal-set in use, so N heads of the same mandal are one
+ *                        build and one send.
+ *
+ * A recipient is unrestricted when resolveScope says so (Admin / view_all). A
+ * scoped recipient's mandal set is their Programmes (`programs`), expanded for
+ * Bal⇄Sishu; a scoped recipient with NO programmes is dropped — there is nothing
+ * to scope the report to, and sending them the whole city is the bug this fixes.
+ *
+ * @param {object} settings  settings/email.
+ * @param {object} p
+ * @param {string} p.permission  the receive_* permission to gate on.
+ * @param {Array}  [p.volunteers]  pre-loaded loadMailableVolunteers() to reuse.
+ * @param {Set|Array} [p.excludeEmails]  lowercased addresses to drop (e.g. people
+ *   who already got a per-volunteer self-copy), so nobody is mailed twice.
+ */
+async function resolveReportAudience(settings, { permission, volunteers = null, excludeEmails = null } = {}) {
+  const s = settings || (await getEmailSettings());
+  const vols = volunteers || (await loadMailableVolunteers());
+  const exclude = excludeEmails instanceof Set
+    ? excludeEmails
+    : new Set((Array.isArray(excludeEmails) ? excludeEmails : []).map((a) => String(a || '').toLowerCase()));
+
+  const cityWide = new Set();          // lowercased address
+  const byMandalKey = new Map();       // key -> { mandals:[], emails:Set }
+
+  vols.forEach((v) => {
+    if (!v.email || !v.permissions.includes(permission)) return;
+    const key = v.email.toLowerCase();
+    if (exclude.has(key)) return;
+    const scope = resolveScope({ volunteer: v, roles: v.roles, permissions: v.permissions });
+    if (scope.unrestricted) { cityWide.add(key); return; }
+    const mandals = expandMandalGroups(Array.isArray(v.programs) ? v.programs.filter(Boolean) : []);
+    if (!mandals.length) return; // scoped recipient with no Programmes → nothing to scope to
+    const bucketKey = mandals.map((m) => String(m).toLowerCase()).sort().join('|');
+    if (!byMandalKey.has(bucketKey)) byMandalKey.set(bucketKey, { mandals, emails: new Set() });
+    byMandalKey.get(bucketKey).emails.add(key);
+  });
+
+  // extraRecipients are external addresses with no scope — always city-wide.
+  (Array.isArray(s.extraRecipients) ? s.extraRecipients : [])
+    .map((a) => String(a || '').trim())
+    .filter(isDeliverable)
+    .forEach((a) => { const k = a.toLowerCase(); if (!exclude.has(k)) cityWide.add(k); });
+
+  const buckets = [];
+  if (cityWide.size) buckets.push({ mandals: null, emails: [...cityWide] });
+  byMandalKey.forEach((b) => buckets.push({ mandals: b.mandals, emails: [...b.emails] }));
+  return buckets;
 }
 
 /**
@@ -402,6 +473,7 @@ module.exports = {
   annotateVolunteers,
   loadRolePermissions,
   resolveReportRecipients,
+  resolveReportAudience,
   queueMail,
   db,
 };

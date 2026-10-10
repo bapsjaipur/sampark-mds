@@ -763,8 +763,8 @@ function EmailAutomationInner() {
               <Users className="h-4 w-4 text-slate-400" /> Who receives these
             </h3>
             <p className="mt-0.5 text-xs text-slate-500">
-              Anyone whose role grants <em>Send &amp; Receive Report Emails</em> and has a report email set, plus the
-              extra addresses below.
+              Each report goes to the roles that have its <em>Receive…</em> permission (Roles tab), delivered scoped to
+              each recipient’s own mandal(s). An Admin / view-all role gets the whole city. Plus the extra addresses below.
             </p>
           </div>
           <button
@@ -780,24 +780,54 @@ function EmailAutomationInner() {
 
         {audience && (
           <div className="space-y-2">
+            {/* PHASE 52 — per-report breakdown: how many receive each, and how many
+                of those are mandal-scoped vs the full city-wide copy. */}
+            {audience.byReport && (
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                {[
+                  ['daily', 'Daily calling'],
+                  ['birthday', 'Birthday'],
+                  ['postsabha', 'Post-sabha'],
+                  ['coverage', 'Coverage'],
+                ].map(([k, label]) => {
+                  const r = audience.byReport[k] || { count: 0, scoped: 0, cityWide: 0 };
+                  return (
+                    <div key={k} className="rounded-lg border border-slate-100 bg-slate-50/60 px-2.5 py-2">
+                      <p className="text-[11px] font-medium text-slate-500">{label}</p>
+                      <p className="text-sm font-semibold text-slate-800">{r.count}</p>
+                      <p className="text-[10px] text-slate-400">
+                        {r.scoped} by mandal{r.cityWide ? ` · ${r.cityWide} city-wide` : ''}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {audience.count === 0 ? (
               <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs text-rose-800">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
-                  <strong>Nobody would receive a report right now.</strong> Add a report email to a volunteer whose
-                  role has the emails permission, or add an address to the extra recipients below.
+                  <strong>Nobody would receive any report right now.</strong> Tick a <em>Receive…</em> permission on a
+                  role (Roles tab), make sure those volunteers have a report email and their Programmes set, or add an
+                  address to the extra recipients below.
                 </span>
               </div>
             ) : (
               <div className="rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2.5">
-                <p className="text-xs font-medium text-slate-600">{audience.count} recipient{audience.count === 1 ? '' : 's'}</p>
+                <p className="text-xs font-medium text-slate-600">{audience.count} volunteer{audience.count === 1 ? '' : 's'} receive at least one report</p>
                 <p className="mt-1 break-words text-xs text-slate-500">{audience.recipients.join(', ')}</p>
               </div>
             )}
 
             {audience.missingEmail?.length > 0 && (
               <p className="text-xs text-amber-700">
-                No report email set (so they get nothing): {audience.missingEmail.join(', ')}
+                Subscribed but no report email / paused (so they get nothing): {audience.missingEmail.join(', ')}
+              </p>
+            )}
+            {audience.noMandalScoped?.length > 0 && (
+              <p className="text-xs text-amber-700">
+                Subscribed but no Programmes set — nothing to scope to, so they get nothing until a mandal is ticked on their record: {audience.noMandalScoped.join(', ')}
               </p>
             )}
             {audience.dryRun && (

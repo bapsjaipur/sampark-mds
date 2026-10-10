@@ -243,7 +243,16 @@ exports.onBatchAssigned = onDocumentWritten({ ...TRIGGER_OPTS, document: 'batche
  */
 exports.onAttendanceMarked = onDocumentCreated({ ...TRIGGER_OPTS, document: 'attendance/{attnId}' }, async (event) => {
   const row = event.data && event.data.data ? event.data.data() : null;
-  const eventId = row && row.eventId ? String(row.eventId) : '';
+  if (!row) return;
+  // COST GUARD. A bulk history import creates thousands of attendance docs in one
+  // go, and each fires this trigger. Left unguarded, every one reads settings + the
+  // event, and the first mark on each imported sabha loads the ENTIRE volunteer list
+  // and notifies leaders about a sabha that happened long ago — thousands of
+  // invocations and tens of thousands of reads for one import, plus spurious alerts.
+  // Imported marks carry source:'history-import'; skip them before ANY read. This
+  // trigger is for a LIVE register being marked in the app, never migrated history.
+  if (row.source === 'history-import') return;
+  const eventId = row.eventId ? String(row.eventId) : '';
   if (!eventId) return;
 
   const settings = await getAppSettings();

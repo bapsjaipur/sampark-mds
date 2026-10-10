@@ -286,6 +286,13 @@ async function findEventsToReport({
   snap.forEach((d) => {
     const e = { id: d.id, ...d.data() };
     if (e[claimField]) return;
+    // COST + CORRECTNESS GUARD. Imported historical sabhas must not drive the live
+    // report/cleanup automation (post-sabha emails, SK calling lists, outcome
+    // auto-clear). A bulk history import adds many at once; auto-processing each
+    // would load its attendance/batches/contacts and email a report for a sabha
+    // that already happened. The manual "Send report" button passes eventId
+    // directly and never calls this, so a report is still available on demand.
+    if (e.isHistorical || e.source === 'history-import') return;
     const start = istInstant(e.date, e.time);
     if (!start) return;
     const end = new Date(start.getTime() + (Number(e.durationMinutes) || 120) * 60000);
